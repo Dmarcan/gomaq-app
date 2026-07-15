@@ -1,22 +1,15 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 const multer = require('multer');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
+const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 
 const router = express.Router();
 
-const uploadDir = path.join(__dirname, '..', '..', 'uploads', 'facturas');
-fs.mkdirSync(uploadDir, { recursive: true });
+const upload = multer({ storage: multer.memoryStorage() });
+const URL_EXPIRACION_SEGUNDOS = 3600;
 
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
-});
-const upload = multer({ storage });
-
-// POST /api/ordenes-trabajo/:id/factura - subir PDF de factura ya emitida en el SII
+// POST /api/ordenes-trabajo/:id/factura - subir PDF de factura ya emitida en el SII (va a Supabase Storage)
 router.post('/:id/factura', verifyToken, requireRole('administrativo'), upload.single('archivo'), async (req, res) => {
     const { id } = req.params;
     const { folio, monto, fecha_emision } = req.body;
@@ -24,12 +17,17 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), upload.s
         return res.status(400).json({ error: 'folio y archivo (PDF) son requeridos' });
     }
     try {
-        const archivoUrl = `/uploads/facturas/${req.file.filename}`;
+        const rutaStorage = `facturas/${id}/${Date.now()}-${req.file.originalname}`;
+        const { error: errorSubida } = await supabase.storage
+            .from(BUCKET_DOCUMENTOS)
+            .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });
+        if (errorSubida) throw errorSubida;
+
         const result = await pool.query(
             `INSERT INTO facturas (orden_trabajo_id, folio, archivo_url, monto, fecha_emision)
              VALUES ($1, $2, $3, $4, $5)
              RETURNING *`,
-            [id, folio, archivoUrl, monto || null, fecha_emision || null]
+            [id, folio, rutaStorage, monto || null, fecha_emision || null]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -38,14 +36,20 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), upload.s
     }
 });
 
-// GET /api/ordenes-trabajo/:id/factura - listar facturas de una OT
+// GET /api/ordenes-trabajo/:id/factura - listar facturas de una OT, con URL firmada temporal
 router.get('/:id/factura', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
         const result = await pool.query(
             'SELECT * FROM facturas WHERE orden_trabajo_id = $1 ORDER BY created_at DESC',
             [req.params.id]
         );
-        res.json(result.rows);
+        const conUrlFirmada = await Promise.all(result.rows.map(async (fila) => {
+            const { data, error } = await supabase.storage
+                .from(BUCKET_DOCUMENTOS)
+                .createSignedUrl(fila.archivo_url, URL_EXPIRACION_SEGUNDOS);
+            return { ...fila, url: error ? null : data.signedUrl };
+        }));
+        res.json(conUrlFirmada);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar facturas' });

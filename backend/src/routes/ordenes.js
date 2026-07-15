@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { verificarDuenoOrden } = require('../utils/ordenes');
+const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 
 const router = express.Router();
 
@@ -64,7 +65,18 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
              ORDER BY ot.fecha_creacion DESC`,
             [req.user.cliente_id]
         );
-        res.json(result.rows);
+
+        // factura_url guarda la ruta dentro del bucket privado, no una URL directa;
+        // se reemplaza por una URL firmada temporal (1h) antes de responder
+        const conUrlFirmada = await Promise.all(result.rows.map(async (fila) => {
+            if (!fila.factura_url) return fila;
+            const { data, error } = await supabase.storage
+                .from(BUCKET_DOCUMENTOS)
+                .createSignedUrl(fila.factura_url, 3600);
+            return { ...fila, factura_url: error ? null : data.signedUrl };
+        }));
+
+        res.json(conUrlFirmada);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar su historial' });

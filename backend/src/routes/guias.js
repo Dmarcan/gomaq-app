@@ -1,22 +1,14 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
 const multer = require('multer');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
+const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 
 const router = express.Router();
 
-const uploadDir = path.join(__dirname, '..', '..', 'uploads', 'guias');
-fs.mkdirSync(uploadDir, { recursive: true });
+const upload = multer({ storage: multer.memoryStorage() });
 
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
-});
-const upload = multer({ storage });
-
-// POST /api/maquinarias/:id/guias - subir guia de despacho o recepcion
+// POST /api/maquinarias/:id/guias - subir guia de despacho o recepcion (PDF va a Supabase Storage)
 router.post('/:id/guias', verifyToken, requireRole('administrativo'), upload.single('archivo'), async (req, res) => {
     const { id } = req.params;
     const { tipo, fecha } = req.body;
@@ -28,12 +20,17 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), upload.sin
         return res.status(400).json({ error: 'archivo (PDF) es requerido' });
     }
     try {
-        const archivoUrl = `/uploads/guias/${req.file.filename}`;
+        const rutaStorage = `guias/${id}/${Date.now()}-${req.file.originalname}`;
+        const { error: errorSubida } = await supabase.storage
+            .from(BUCKET_DOCUMENTOS)
+            .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });
+        if (errorSubida) throw errorSubida;
+
         const result = await pool.query(
             `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha)
              VALUES ($1, $2::tipo_guia, $3, COALESCE($4, CURRENT_DATE))
              RETURNING *`,
-            [id, tipo, archivoUrl, fecha || null]
+            [id, tipo, rutaStorage, fecha || null]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
