@@ -58,6 +58,24 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> encolarInsumo(int ordenId, int insumoId, String insumoNombre, double cantidad) async {
+    final db = await _db;
+    final insumoLocalId = await db.insert('insumos_locales', {
+      'orden_trabajo_id': ordenId,
+      'insumo_id': insumoId,
+      'insumo_nombre': insumoNombre,
+      'cantidad': cantidad,
+      'sincronizado': 0,
+      'creado_en': DateTime.now().toIso8601String(),
+    });
+    await _encolar(ordenId, 'insumo', {
+      'insumo_local_id': insumoLocalId,
+      'insumo_id': insumoId,
+      'cantidad': cantidad,
+    });
+    notifyListeners();
+  }
+
   Future<void> _encolar(int ordenId, String tipo, Map<String, dynamic> payload) async {
     final db = await _db;
     await db.insert('cola_sincronizacion', {
@@ -87,6 +105,7 @@ class SyncService extends ChangeNotifier {
     try {
       await _push();
       await _pull();
+      await _pullCatalogoInsumos();
     } finally {
       _sincronizando = false;
       notifyListeners();
@@ -108,6 +127,18 @@ class SyncService extends ChangeNotifier {
       final orden = OrdenTrabajo.fromApiJson(item);
       if (idsConPendientes.contains(orden.id)) continue;
       await db.insert('ordenes_locales', orden.toLocalMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+  }
+
+  Future<void> _pullCatalogoInsumos() async {
+    final data = await ApiClient.instance.get('/api/insumos');
+    final db = await _db;
+    for (final item in (data as List)) {
+      await db.insert(
+        'insumos_catalogo_local',
+        {'id': item['id'], 'nombre': item['nombre'], 'unidad_medida': item['unidad_medida']},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
     }
   }
 
@@ -156,6 +187,9 @@ class SyncService extends ChangeNotifier {
       case 'evidencia':
         await _subirEvidencia(ordenId, payload);
         break;
+      case 'insumo':
+        await _registrarInsumo(ordenId, payload);
+        break;
       default:
         throw Exception('Tipo de tarea desconocido: $tipo');
     }
@@ -196,6 +230,24 @@ class SyncService extends ChangeNotifier {
         {'sincronizado': 1},
         where: 'id = ?',
         whereArgs: [evidenciaLocalId],
+      );
+    }
+  }
+
+  Future<void> _registrarInsumo(int ordenId, Map<String, dynamic> payload) async {
+    await ApiClient.instance.post('/api/insumos/orden/$ordenId', {
+      'insumo_id': payload['insumo_id'],
+      'cantidad': payload['cantidad'],
+    });
+
+    final db = await _db;
+    final insumoLocalId = payload['insumo_local_id'];
+    if (insumoLocalId != null) {
+      await db.update(
+        'insumos_locales',
+        {'sincronizado': 1},
+        where: 'id = ?',
+        whereArgs: [insumoLocalId],
       );
     }
   }

@@ -20,7 +20,11 @@ class OrdenDetailScreen extends StatefulWidget {
 class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   OrdenTrabajo? _orden;
   final _diagnosticoCtrl = TextEditingController();
+  final _cantidadInsumoCtrl = TextEditingController();
   List<Map<String, dynamic>> _fotosLocales = [];
+  List<Map<String, dynamic>> _insumosLocales = [];
+  List<Map<String, dynamic>> _catalogoInsumos = [];
+  int? _insumoSeleccionadoId;
 
   static const estadosDisponibles = ['en_terreno', 'en_reparacion'];
 
@@ -34,11 +38,18 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     final db = await LocalDatabase.instance.database;
     final rows = await db.query('ordenes_locales', where: 'id = ?', whereArgs: [widget.ordenId]);
     final fotos = await db.query('evidencias_locales', where: 'orden_trabajo_id = ?', whereArgs: [widget.ordenId]);
+    final insumos = await db.query('insumos_locales', where: 'orden_trabajo_id = ?', whereArgs: [widget.ordenId]);
+    final catalogo = await db.query('insumos_catalogo_local', orderBy: 'nombre ASC');
     if (!mounted || rows.isEmpty) return;
     setState(() {
       _orden = OrdenTrabajo.fromLocalMap(rows.first);
       _diagnosticoCtrl.text = _orden!.diagnostico ?? '';
       _fotosLocales = fotos;
+      _insumosLocales = insumos;
+      _catalogoInsumos = catalogo;
+      if (_insumoSeleccionadoId == null && catalogo.isNotEmpty) {
+        _insumoSeleccionadoId = catalogo.first['id'] as int;
+      }
     });
   }
 
@@ -78,6 +89,22 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     await File(foto.path).copy(rutaLocal);
 
     await syncService.encolarEvidencia(widget.ordenId, rutaLocal);
+    await _cargar();
+    _intentarSincronizarAhora();
+  }
+
+  Future<void> _agregarInsumo() async {
+    final insumoId = _insumoSeleccionadoId;
+    final cantidad = double.tryParse(_cantidadInsumoCtrl.text.replaceAll(',', '.'));
+    if (insumoId == null || cantidad == null || cantidad <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selecciona un insumo y una cantidad valida')),
+      );
+      return;
+    }
+    final insumo = _catalogoInsumos.firstWhere((i) => i['id'] == insumoId);
+    await context.read<SyncService>().encolarInsumo(widget.ordenId, insumoId, insumo['nombre'] as String, cantidad);
+    _cantidadInsumoCtrl.clear();
     await _cargar();
     _intentarSincronizarAhora();
   }
@@ -182,6 +209,53 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
               ),
             ],
           ),
+
+          const SizedBox(height: 24),
+          const Text('Insumos utilizados', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 8),
+          if (_catalogoInsumos.isEmpty)
+            const Text('Sin senal para cargar el catalogo de insumos todavia', style: TextStyle(color: Colors.grey))
+          else
+            Row(
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<int>(
+                    initialValue: _insumoSeleccionadoId,
+                    decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
+                    items: [
+                      for (final insumo in _catalogoInsumos)
+                        DropdownMenuItem(
+                          value: insumo['id'] as int,
+                          child: Text('${insumo['nombre']} (${insumo['unidad_medida']})'),
+                        ),
+                    ],
+                    onChanged: (v) => setState(() => _insumoSeleccionadoId = v),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 80,
+                  child: TextField(
+                    controller: _cantidadInsumoCtrl,
+                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                    decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true, hintText: 'Cant.'),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(onPressed: _agregarInsumo, icon: const Icon(Icons.add_circle)),
+              ],
+            ),
+          const SizedBox(height: 8),
+          for (final insumo in _insumosLocales)
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: const Icon(Icons.build_circle_outlined),
+              title: Text('${insumo['insumo_nombre']} - ${insumo['cantidad']}'),
+              trailing: insumo['sincronizado'] == 0
+                  ? const Icon(Icons.cloud_upload, size: 16, color: Colors.orange)
+                  : const Icon(Icons.cloud_done, size: 16, color: Colors.green),
+            ),
 
           const SizedBox(height: 32),
           if (orden.estado != 'finalizada')

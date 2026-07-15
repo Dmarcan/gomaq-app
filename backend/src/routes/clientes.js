@@ -17,14 +17,14 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
 
 // POST /api/clientes - crear cliente
 router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
-    const { nombre, rut, email, telefono } = req.body;
+    const { nombre, rut, email, telefono, ejecutivo_id } = req.body;
     if (!nombre) {
         return res.status(400).json({ error: 'nombre es requerido' });
     }
     try {
         const result = await pool.query(
-            'INSERT INTO clientes (nombre, rut, email, telefono) VALUES ($1, $2, $3, $4) RETURNING *',
-            [nombre, rut || null, email || null, telefono || null]
+            'INSERT INTO clientes (nombre, rut, email, telefono, ejecutivo_id) VALUES ($1, $2, $3, $4, $5) RETURNING *',
+            [nombre, rut || null, email || null, telefono || null, ejecutivo_id || null]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {

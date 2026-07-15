@@ -12,6 +12,7 @@ class DashboardScreen extends StatefulWidget {
 
 class _DashboardScreenState extends State<DashboardScreen> {
   Map<String, dynamic>? _resumen;
+  Map<String, dynamic>? _ventasPorEjecutivo;
   bool _cargando = true;
   String? _error;
 
@@ -28,8 +29,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     });
     try {
       final data = await ApiClient.instance.get('/api/dashboard/resumen');
+      final ventas = await ApiClient.instance.get('/api/dashboard/ventas-por-ejecutivo');
       if (!mounted) return;
-      setState(() => _resumen = data);
+      setState(() {
+        _resumen = data;
+        _ventasPorEjecutivo = ventas;
+      });
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } finally {
@@ -77,6 +82,37 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _filaEjecutivo(String nombre, double monto, double porcentaje) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          SizedBox(width: 140, child: Text(nombre, style: const TextStyle(fontSize: 13))),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: porcentaje / 100,
+                minHeight: 10,
+                backgroundColor: Colors.grey.shade200,
+                color: GomaqColors.primario,
+              ),
+            ),
+          ),
+          const SizedBox(width: 12),
+          SizedBox(
+            width: 110,
+            child: Text(
+              '\$${monto.toStringAsFixed(0)} (${porcentaje.toStringAsFixed(0)}%)',
+              textAlign: TextAlign.right,
+              style: const TextStyle(fontSize: 12, color: Colors.black54),
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -132,7 +168,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
               _tarjetaAtajo('${atajos['notificaciones_error']}', 'Notificaciones en error', () => widget.onNavegar(8)),
             ],
           ),
-          const SizedBox(height: 32),
+          const SizedBox(height: 24),
+
+          if (_ventasPorEjecutivo != null && (_ventasPorEjecutivo!['ejecutivos'] as List).isNotEmpty) ...[
+            const Text('VENTAS POR EJECUTIVO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+            const SizedBox(height: 12),
+            for (final fila in (_ventasPorEjecutivo!['ejecutivos'] as List))
+              _filaEjecutivo(
+                fila['ejecutivo_nombre'] as String,
+                (fila['monto'] as num).toDouble(),
+                (fila['porcentaje'] as num).toDouble(),
+              ),
+            const SizedBox(height: 24),
+          ],
 
           Row(
             children: [

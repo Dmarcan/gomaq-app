@@ -42,4 +42,37 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
     }
 });
 
+// GET /api/dashboard/ventas-por-ejecutivo?desde=&hasta= - cuanto de lo facturado corresponde
+// a cada ejecutivo en terreno (reemplazo del comparativo manual que la administrativa arma en Excel)
+router.get('/ventas-por-ejecutivo', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    const { desde, hasta } = req.query;
+    try {
+        const result = await pool.query(
+            `SELECT e.id AS ejecutivo_id, COALESCE(e.nombre, 'Directo') AS ejecutivo_nombre,
+                    COALESCE(SUM(f.monto), 0) AS monto
+             FROM facturas f
+             JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
+             LEFT JOIN clientes c ON c.id = ot.cliente_id
+             LEFT JOIN ejecutivos e ON e.id = c.ejecutivo_id
+             WHERE ($1::date IS NULL OR f.fecha_emision >= $1::date)
+               AND ($2::date IS NULL OR f.fecha_emision <= $2::date)
+             GROUP BY e.id, e.nombre
+             ORDER BY monto DESC`,
+            [desde || null, hasta || null]
+        );
+
+        const totalGeneral = result.rows.reduce((acc, fila) => acc + Number(fila.monto), 0);
+        const filas = result.rows.map((fila) => ({
+            ...fila,
+            monto: Number(fila.monto),
+            porcentaje: totalGeneral > 0 ? Number(fila.monto) / totalGeneral * 100 : 0,
+        }));
+
+        res.json({ total_general: totalGeneral, ejecutivos: filas });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al calcular ventas por ejecutivo' });
+    }
+});
+
 module.exports = router;

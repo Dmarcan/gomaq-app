@@ -38,28 +38,48 @@ class _ClientesScreenState extends State<ClientesScreen> {
   }
 
   Future<void> _abrirDialogoCrear() async {
+    List<dynamic> ejecutivos = [];
+    try {
+      ejecutivos = await ApiClient.instance.get('/api/ejecutivos');
+    } on ApiException catch (_) {
+      // si falla la carga de ejecutivos igual se puede crear el cliente como "directo"
+    }
+
     final nombreCtrl = TextEditingController();
     final rutCtrl = TextEditingController();
     final emailCtrl = TextEditingController();
     final telefonoCtrl = TextEditingController();
+    int? ejecutivoId;
 
+    if (!mounted) return;
     final creado = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Nuevo cliente'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            TextField(controller: nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre / Razon social')),
-            TextField(controller: rutCtrl, decoration: const InputDecoration(labelText: 'RUT (opcional)')),
-            TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email (opcional)')),
-            TextField(controller: telefonoCtrl, decoration: const InputDecoration(labelText: 'Telefono (opcional, formato +569...)')),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Nuevo cliente'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(controller: nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre / Razon social')),
+              TextField(controller: rutCtrl, decoration: const InputDecoration(labelText: 'RUT (opcional)')),
+              TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email (opcional)')),
+              TextField(controller: telefonoCtrl, decoration: const InputDecoration(labelText: 'Telefono (opcional, formato +569...)')),
+              DropdownButtonFormField<int?>(
+                initialValue: ejecutivoId,
+                decoration: const InputDecoration(labelText: 'Ejecutivo asignado'),
+                items: [
+                  const DropdownMenuItem<int?>(value: null, child: Text('Directo (sin ejecutivo)')),
+                  for (final e in ejecutivos) DropdownMenuItem<int?>(value: e['id'], child: Text(e['nombre'])),
+                ],
+                onChanged: (v) => setDialogState(() => ejecutivoId = v),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Crear')),
           ],
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Crear')),
-        ],
       ),
     );
 
@@ -70,6 +90,7 @@ class _ClientesScreenState extends State<ClientesScreen> {
         'rut': rutCtrl.text.trim().isEmpty ? null : rutCtrl.text.trim(),
         'email': emailCtrl.text.trim().isEmpty ? null : emailCtrl.text.trim(),
         'telefono': telefonoCtrl.text.trim().isEmpty ? null : telefonoCtrl.text.trim(),
+        'ejecutivo_id': ejecutivoId,
       });
       _cargar();
     } on ApiException catch (e) {

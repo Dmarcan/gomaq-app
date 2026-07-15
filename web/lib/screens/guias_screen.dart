@@ -17,6 +17,9 @@ class _GuiasScreenState extends State<GuiasScreen> {
   PlatformFile? _archivo;
   bool _subiendo = false;
   bool _cargando = true;
+  DateTime _fecha = DateTime.now();
+  TimeOfDay _hora = TimeOfDay.now();
+  bool _fallido = false;
 
   @override
   void initState() {
@@ -42,19 +45,38 @@ class _GuiasScreenState extends State<GuiasScreen> {
     }
   }
 
+  Future<void> _elegirFecha() async {
+    final elegida = await showDatePicker(
+      context: context,
+      initialDate: _fecha,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(2100),
+    );
+    if (elegida != null) setState(() => _fecha = elegida);
+  }
+
+  Future<void> _elegirHora() async {
+    final elegida = await showTimePicker(context: context, initialTime: _hora);
+    if (elegida != null) setState(() => _hora = elegida);
+  }
+
   Future<void> _guardar() async {
     if (_seleccionada == null || _archivo == null) return;
     setState(() => _subiendo = true);
     try {
+      final fechaHora = DateTime(_fecha.year, _fecha.month, _fecha.day, _hora.hour, _hora.minute);
       await ApiClient.instance.postMultipart(
         '/api/maquinarias/${_seleccionada!['id']}/guias',
         bytes: _archivo!.bytes!,
         filename: _archivo!.name,
-        fields: {'tipo': _tipo},
+        fields: {'tipo': _tipo, 'fecha_hora': fechaHora.toIso8601String(), 'fallido': _fallido.toString()},
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Guia guardada correctamente')));
-        setState(() => _archivo = null);
+        setState(() {
+          _archivo = null;
+          _fallido = false;
+        });
       }
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
@@ -104,6 +126,35 @@ class _GuiasScreenState extends State<GuiasScreen> {
               ],
             ),
             const SizedBox(height: 20),
+            const Text('FECHA Y HORA DE SALIDA/LLEGADA', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _elegirFecha,
+                    icon: const Icon(Icons.calendar_today, size: 16),
+                    label: Text('${_fecha.day}/${_fecha.month}/${_fecha.year}'),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: _elegirHora,
+                    icon: const Icon(Icons.access_time, size: 16),
+                    label: Text(_hora.format(context)),
+                  ),
+                ),
+              ],
+            ),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              title: Text(_tipo == 'despacho' ? 'Marcar como despacho fallido' : 'Marcar como retiro fallido'),
+              subtitle: const Text('El equipo no se usó o el retiro no se concretó: no se factura ni cuenta como día de arriendo'),
+              value: _fallido,
+              onChanged: (v) => setState(() => _fallido = v ?? false),
+            ),
+            const SizedBox(height: 8),
             const Text('DOCUMENTO PDF', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             InkWell(
