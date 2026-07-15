@@ -47,6 +47,30 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
     }
 });
 
+// GET /api/ordenes-trabajo/mias - portal cliente: su historial de OT con facturas vinculadas
+router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
+    if (!req.user.cliente_id) {
+        return res.status(400).json({ error: 'Su usuario no esta vinculado a ninguna empresa cliente' });
+    }
+    try {
+        const result = await pool.query(
+            `SELECT ot.id, ot.estado, ot.motivo, ot.diagnostico, ot.fecha_creacion, ot.fecha_cierre,
+                    m.codigo AS maquinaria_codigo, m.tipo AS maquinaria_tipo,
+                    f.id AS factura_id, f.folio AS factura_folio, f.archivo_url AS factura_url
+             FROM ordenes_trabajo ot
+             JOIN maquinarias m ON m.id = ot.maquinaria_id
+             LEFT JOIN facturas f ON f.orden_trabajo_id = ot.id
+             WHERE ot.cliente_id = $1
+             ORDER BY ot.fecha_creacion DESC`,
+            [req.user.cliente_id]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al consultar su historial' });
+    }
+});
+
 // GET /api/ordenes-trabajo/:id - detalle
 router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     try {

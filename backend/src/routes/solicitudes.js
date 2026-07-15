@@ -1,15 +1,30 @@
 const express = require('express');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
+const uploadDir = path.join(__dirname, '..', '..', 'uploads', 'solicitudes');
+fs.mkdirSync(uploadDir, { recursive: true });
+
+const storage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, uploadDir),
+    filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
+});
+const upload = multer({ storage });
+
+const TIPOS_VALIDOS = ['falla', 'mantencion_preventiva'];
+
 // POST /api/solicitudes - el cliente reporta una falla o pide mantencion sobre su propia maquinaria
-router.post('/', verifyToken, requireRole('cliente'), async (req, res) => {
-    const { maquinaria_id, descripcion } = req.body;
+router.post('/', verifyToken, requireRole('cliente'), upload.single('evidencia'), async (req, res) => {
+    const { maquinaria_id, descripcion, tipo } = req.body;
     if (!maquinaria_id || !descripcion) {
         return res.status(400).json({ error: 'maquinaria_id y descripcion son requeridos' });
     }
+    const tipoFinal = tipo && TIPOS_VALIDOS.includes(tipo) ? tipo : 'falla';
     if (!req.user.cliente_id) {
         return res.status(400).json({ error: 'Su usuario no esta vinculado a ninguna empresa cliente' });
     }
@@ -21,14 +36,41 @@ router.post('/', verifyToken, requireRole('cliente'), async (req, res) => {
         if (maquinaria.rows.length === 0) {
             return res.status(403).json({ error: 'Esa maquinaria no pertenece a su empresa' });
         }
+        const evidenciaUrl = req.file ? `/uploads/solicitudes/${req.file.filename}` : null;
         const result = await pool.query(
-            'INSERT INTO solicitudes (cliente_id, maquinaria_id, descripcion) VALUES ($1, $2, $3) RETURNING *',
-            [req.user.cliente_id, maquinaria_id, descripcion]
+            `INSERT INTO solicitudes (cliente_id, maquinaria_id, descripcion, tipo, evidencia_url)
+             VALUES ($1, $2, $3, $4::tipo_solicitud, $5) RETURNING *`,
+            [req.user.cliente_id, maquinaria_id, descripcion, tipoFinal, evidenciaUrl]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al crear solicitud' });
+    }
+});
+
+// GET /api/solicitudes/mias - el cliente ve sus propias solicitudes con el estado de la OT vinculada
+router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
+    if (!req.user.cliente_id) {
+        return res.status(400).json({ error: 'Su usuario no esta vinculado a ninguna empresa cliente' });
+    }
+    try {
+        const result = await pool.query(
+            `SELECT s.*, m.codigo AS maquinaria_codigo,
+                    ot.id AS ot_id, ot.estado AS ot_estado,
+                    u.nombre AS mecanico_nombre
+             FROM solicitudes s
+             JOIN maquinarias m ON m.id = s.maquinaria_id
+             LEFT JOIN ordenes_trabajo ot ON ot.id = s.orden_trabajo_id
+             LEFT JOIN usuarios u ON u.id = ot.mecanico_id
+             WHERE s.cliente_id = $1
+             ORDER BY s.created_at DESC`,
+            [req.user.cliente_id]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al consultar sus solicitudes' });
     }
 });
 

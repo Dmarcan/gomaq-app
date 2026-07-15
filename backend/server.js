@@ -13,6 +13,7 @@ const evidenciasRouter = require('./src/routes/evidencias');
 const notificacionesRouter = require('./src/routes/notificaciones');
 const usuariosRouter = require('./src/routes/usuarios');
 const solicitudesRouter = require('./src/routes/solicitudes');
+const dashboardRouter = require('./src/routes/dashboard');
 const { iniciarWorker } = require('./src/workers/notificaciones');
 
 const app = express();
@@ -44,6 +45,7 @@ app.use('/api/ordenes-trabajo', evidenciasRouter);
 app.use('/api/notificaciones', notificacionesRouter);
 app.use('/api/usuarios', usuariosRouter);
 app.use('/api/solicitudes', solicitudesRouter);
+app.use('/api/dashboard', dashboardRouter);
 
 // fallback de SPA: cualquier ruta que no sea /api ni /uploads devuelve el index.html
 // del panel web (si existe), para que el enrutamiento propio de Flutter Web funcione

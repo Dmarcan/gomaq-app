@@ -52,4 +52,45 @@ router.get('/:id/factura', verifyToken, requireRole('administrativo', 'gerente')
     }
 });
 
+// POST /api/ordenes-trabajo/:id/factura/:facturaId/autorizar-envio
+// Encola el envio del correo con la factura al cliente (patron Outbox, igual que WhatsApp).
+// El envio real de correo aun no esta configurado, asi que quedara pendiente/error
+// hasta que se agregue el proveedor SMTP - mismo comportamiento que las notificaciones de WhatsApp.
+router.post('/:id/factura/:facturaId/autorizar-envio', verifyToken, requireRole('administrativo'), async (req, res) => {
+    const { id, facturaId } = req.params;
+    try {
+        const result = await pool.query(
+            `SELECT f.folio, f.archivo_url, f.monto, ot.id AS orden_trabajo_id, c.nombre AS cliente_nombre, c.email AS cliente_email
+             FROM facturas f
+             JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
+             LEFT JOIN clientes c ON c.id = ot.cliente_id
+             WHERE f.id = $1 AND f.orden_trabajo_id = $2`,
+            [facturaId, id]
+        );
+        const factura = result.rows[0];
+        if (!factura) {
+            return res.status(404).json({ error: 'Factura no encontrada para esta orden de trabajo' });
+        }
+        if (!factura.cliente_email) {
+            return res.status(400).json({ error: 'El cliente no tiene un correo registrado' });
+        }
+
+        await pool.query(
+            `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ('email', $1, $2)`,
+            [factura.cliente_email, JSON.stringify({
+                tipo: 'factura_emitida',
+                orden_trabajo_id: factura.orden_trabajo_id,
+                folio: factura.folio,
+                monto: factura.monto,
+                cliente_nombre: factura.cliente_nombre,
+            })]
+        );
+
+        res.json({ ok: true, mensaje: 'Envio de correo encolado' });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al autorizar el envio de la factura' });
+    }
+});
+
 module.exports = router;
