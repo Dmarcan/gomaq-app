@@ -4,6 +4,17 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
+// GET /api/clientes - listado
+router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    try {
+        const result = await pool.query('SELECT * FROM clientes ORDER BY nombre');
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al consultar clientes' });
+    }
+});
+
 // POST /api/clientes - crear cliente
 router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { nombre, rut, email, telefono } = req.body;

@@ -21,6 +21,23 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
     }
 });
 
+// GET /api/maquinarias/mias - portal cliente: solo su propia flota
+router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
+    if (!req.user.cliente_id) {
+        return res.status(400).json({ error: 'Su usuario no esta vinculado a ninguna empresa cliente' });
+    }
+    try {
+        const result = await pool.query(
+            'SELECT id, codigo, tipo, estado, ubicacion FROM maquinarias WHERE cliente_id = $1 ORDER BY codigo',
+            [req.user.cliente_id]
+        );
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al consultar su flota' });
+    }
+});
+
 // POST /api/maquinarias - crear maquinaria
 // Permisos: Administrativo tiene Lectura/Escritura sobre Control de Flota
 router.post('/', verifyToken, requireRole('administrativo'), async (req, res) => {

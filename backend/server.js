@@ -11,6 +11,8 @@ const guiasRouter = require('./src/routes/guias');
 const facturasRouter = require('./src/routes/facturas');
 const evidenciasRouter = require('./src/routes/evidencias');
 const notificacionesRouter = require('./src/routes/notificaciones');
+const usuariosRouter = require('./src/routes/usuarios');
+const solicitudesRouter = require('./src/routes/solicitudes');
 const { iniciarWorker } = require('./src/workers/notificaciones');
 
 const app = express();
@@ -35,6 +37,8 @@ app.use('/api/ordenes-trabajo', ordenesRouter);
 app.use('/api/ordenes-trabajo', facturasRouter);
 app.use('/api/ordenes-trabajo', evidenciasRouter);
 app.use('/api/notificaciones', notificacionesRouter);
+app.use('/api/usuarios', usuariosRouter);
+app.use('/api/solicitudes', solicitudesRouter);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
