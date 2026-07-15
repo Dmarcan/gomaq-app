@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
+import '../theme/gomaq_theme.dart';
 
 class SolicitudesScreen extends StatefulWidget {
   const SolicitudesScreen({super.key});
@@ -47,17 +48,6 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
     }
   }
 
-  Color _colorEstado(String estado) {
-    switch (estado) {
-      case 'pendiente':
-        return Colors.orange;
-      case 'convertida':
-        return Colors.green;
-      default:
-        return Colors.grey;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
@@ -82,7 +72,8 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
                               )
                             : Chip(
                                 label: Text(s['estado']),
-                                backgroundColor: _colorEstado(s['estado']).withValues(alpha: 0.15),
+                                backgroundColor: GomaqColors.fondoChip(s['estado']),
+                                labelStyle: TextStyle(color: GomaqColors.colorEstado(s['estado'])),
                               ),
                       ),
                     );

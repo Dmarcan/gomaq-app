@@ -6,6 +6,7 @@ import '../models/orden_trabajo.dart';
 import '../services/auth_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/sync_service.dart';
+import '../theme/gomaq_theme.dart';
 import 'orden_detail_screen.dart';
 
 class OrdenesListScreen extends StatefulWidget {
@@ -130,7 +131,11 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
                         return ListTile(
                           title: Text(orden.maquinariaCodigo ?? 'OT #${orden.id}'),
                           subtitle: Text(orden.motivo ?? ''),
-                          trailing: Chip(label: Text(orden.estado)),
+                          trailing: Chip(
+                            label: Text(orden.estado),
+                            backgroundColor: GomaqColors.fondoChip(orden.estado),
+                            labelStyle: TextStyle(color: GomaqColors.colorEstado(orden.estado)),
+                          ),
                           onTap: () async {
                             await Navigator.push(
                               context,

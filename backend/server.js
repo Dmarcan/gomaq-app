@@ -20,6 +20,11 @@ app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
+// build de produccion del panel web (Flutter Web), servido en la raiz para
+// reutilizar la misma URL/tunel que la API (ver `npm run build:web` / db/README)
+const publicDir = path.join(__dirname, 'public');
+app.use(express.static(publicDir));
+
 app.get('/api/health', async (req, res) => {
     try {
         await pool.query('SELECT 1');
@@ -39,6 +44,15 @@ app.use('/api/ordenes-trabajo', evidenciasRouter);
 app.use('/api/notificaciones', notificacionesRouter);
 app.use('/api/usuarios', usuariosRouter);
 app.use('/api/solicitudes', solicitudesRouter);
+
+// fallback de SPA: cualquier ruta que no sea /api ni /uploads devuelve el index.html
+// del panel web (si existe), para que el enrutamiento propio de Flutter Web funcione
+app.get('*', (req, res, next) => {
+    if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) return next();
+    res.sendFile(path.join(publicDir, 'index.html'), (err) => {
+        if (err) next();
+    });
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

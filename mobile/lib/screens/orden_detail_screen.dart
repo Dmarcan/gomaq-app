@@ -7,6 +7,7 @@ import '../db/local_database.dart';
 import '../models/orden_trabajo.dart';
 import '../services/connectivity_service.dart';
 import '../services/sync_service.dart';
+import '../theme/gomaq_theme.dart';
 
 class OrdenDetailScreen extends StatefulWidget {
   final int ordenId;
@@ -118,7 +119,11 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
           const SizedBox(height: 4),
           Text('Motivo: ${orden.motivo ?? "-"}'),
           const SizedBox(height: 4),
-          Chip(label: Text('Estado: ${orden.estado}')),
+          Chip(
+            label: Text('Estado: ${orden.estado}'),
+            backgroundColor: GomaqColors.fondoChip(orden.estado),
+            labelStyle: TextStyle(color: GomaqColors.colorEstado(orden.estado)),
+          ),
           const SizedBox(height: 24),
 
           const Text('Diagnostico', style: TextStyle(fontWeight: FontWeight.bold)),

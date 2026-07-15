@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
+import '../theme/gomaq_theme.dart';
 import 'flota_screen.dart';
 import 'clientes_screen.dart';
 import 'ordenes_screen.dart';
@@ -17,12 +18,12 @@ class AdminDashboardScreen extends StatefulWidget {
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _seccion = 0;
 
-  static const _destinos = [
-    NavigationRailDestination(icon: Icon(Icons.local_shipping), label: Text('Flota')),
-    NavigationRailDestination(icon: Icon(Icons.people), label: Text('Clientes')),
-    NavigationRailDestination(icon: Icon(Icons.assignment), label: Text('Ordenes de Trabajo')),
-    NavigationRailDestination(icon: Icon(Icons.support_agent), label: Text('Solicitudes')),
-    NavigationRailDestination(icon: Icon(Icons.notifications), label: Text('Notificaciones')),
+  static const _items = [
+    (icon: Icons.local_shipping, label: 'Flota'),
+    (icon: Icons.people, label: 'Clientes'),
+    (icon: Icons.assignment, label: 'Ordenes de Trabajo'),
+    (icon: Icons.support_agent, label: 'Solicitudes'),
+    (icon: Icons.notifications, label: 'Notificaciones'),
   ];
 
   static const _pantallas = [
@@ -37,27 +38,101 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('GOMAQ - Panel de Gestion'),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Center(child: Text('${auth.nombre ?? ''} (${auth.rol ?? ''})')),
-          ),
-          IconButton(icon: const Icon(Icons.logout), onPressed: () => auth.logout()),
-        ],
-      ),
       body: Row(
         children: [
-          NavigationRail(
-            selectedIndex: _seccion,
-            onDestinationSelected: (i) => setState(() => _seccion = i),
-            labelType: NavigationRailLabelType.all,
-            destinations: _destinos,
+          Container(
+            width: 240,
+            color: GomaqColors.sidebarOscuro,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(20, 28, 20, 20),
+                  child: Row(
+                    children: [
+                      Container(
+                        width: 36,
+                        height: 36,
+                        decoration: BoxDecoration(
+                          color: GomaqColors.primario,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: const Icon(Icons.business, color: Colors.white, size: 20),
+                      ),
+                      const SizedBox(width: 10),
+                      const Text('GOMAQ Panel', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                    ],
+                  ),
+                ),
+                const Divider(color: Colors.white24, height: 1),
+                const SizedBox(height: 12),
+                for (var i = 0; i < _items.length; i++) _itemMenu(i),
+                const Spacer(),
+                const Divider(color: Colors.white24, height: 1),
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(auth.nombre ?? '', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                            Text(auth.rol ?? '', style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                          ],
+                        ),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.logout, color: Colors.white70, size: 18),
+                        onPressed: () => auth.logout(),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
           ),
-          const VerticalDivider(width: 1),
-          Expanded(child: _pantallas[_seccion]),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
+                  child: Text(_items[_seccion].label, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                ),
+                Expanded(child: _pantallas[_seccion]),
+              ],
+            ),
+          ),
         ],
+      ),
+    );
+  }
+
+  Widget _itemMenu(int i) {
+    final activo = i == _seccion;
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+      child: Material(
+        color: activo ? GomaqColors.sidebarResaltado : Colors.transparent,
+        borderRadius: BorderRadius.circular(8),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(8),
+          onTap: () => setState(() => _seccion = i),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+            child: Row(
+              children: [
+                Icon(_items[i].icon, color: activo ? GomaqColors.primario : Colors.white70, size: 20),
+                const SizedBox(width: 12),
+                Text(
+                  _items[i].label,
+                  style: TextStyle(color: activo ? Colors.white : Colors.white70, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
     );
   }

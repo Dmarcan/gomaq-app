@@ -3,6 +3,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
+import '../theme/gomaq_theme.dart';
 
 class FlotaScreen extends StatefulWidget {
   const FlotaScreen({super.key});
@@ -107,16 +108,6 @@ class _FlotaScreenState extends State<FlotaScreen> {
     }
   }
 
-  Color _colorEstado(String estado) {
-    switch (estado) {
-      case 'operativa':
-        return Colors.green;
-      case 'en_mantencion':
-        return Colors.orange;
-      default:
-        return Colors.red;
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -156,8 +147,8 @@ class _FlotaScreenState extends State<FlotaScreen> {
                                 ),
                               Chip(
                                 label: Text(m['estado']),
-                                backgroundColor: _colorEstado(m['estado']).withValues(alpha: 0.15),
-                                labelStyle: TextStyle(color: _colorEstado(m['estado'])),
+                                backgroundColor: GomaqColors.fondoChip(m['estado']),
+                                labelStyle: TextStyle(color: GomaqColors.colorEstado(m['estado'])),
                               ),
                             ],
                           ),

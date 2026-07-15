@@ -5,6 +5,7 @@ import 'services/connectivity_service.dart';
 import 'services/sync_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/ordenes_list_screen.dart';
+import 'theme/gomaq_theme.dart';
 
 void main() {
   runApp(const GomaqMecanicoApp());
@@ -23,7 +24,7 @@ class GomaqMecanicoApp extends StatelessWidget {
       ],
       child: MaterialApp(
         title: 'GOMAQ Mecanico',
-        theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepOrange)),
+        theme: construirTemaGomaq(),
         home: const _Raiz(),
       ),
     );

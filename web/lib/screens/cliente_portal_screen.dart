@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
+import '../theme/gomaq_theme.dart';
 
 class ClientePortalScreen extends StatefulWidget {
   const ClientePortalScreen({super.key});
@@ -34,17 +35,6 @@ class _ClientePortalScreenState extends State<ClientePortalScreen> {
       setState(() => _error = e.message);
     } finally {
       if (mounted) setState(() => _cargando = false);
-    }
-  }
-
-  Color _colorEstado(String estado) {
-    switch (estado) {
-      case 'operativa':
-        return Colors.green;
-      case 'en_mantencion':
-        return Colors.orange;
-      default:
-        return Colors.red;
     }
   }
 
@@ -89,43 +79,59 @@ class _ClientePortalScreenState extends State<ClientePortalScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('GOMAQ - Mi Flota'),
-        actions: [
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 12),
-            child: Center(child: Text(auth.nombre ?? '')),
-          ),
-          IconButton(icon: const Icon(Icons.logout), onPressed: () => auth.logout()),
-        ],
-      ),
-      body: RefreshIndicator(
-        onRefresh: _cargar,
-        child: _cargando
-            ? const Center(child: CircularProgressIndicator())
-            : _error != null
-                ? Center(child: Text('Error: $_error'))
-                : _maquinarias.isEmpty
-                    ? const Center(child: Text('No tienes maquinarias registradas'))
-                    : ListView.builder(
-                        padding: const EdgeInsets.all(16),
-                        itemCount: _maquinarias.length,
-                        itemBuilder: (context, i) {
-                          final m = _maquinarias[i];
-                          return Card(
-                            child: ListTile(
-                              title: Text('${m['codigo']} - ${m['tipo']}'),
-                              subtitle: Text(m['ubicacion'] ?? 'Sin ubicacion registrada'),
-                              trailing: Chip(
-                                label: Text(m['estado']),
-                                backgroundColor: _colorEstado(m['estado']).withValues(alpha: 0.15),
-                                labelStyle: TextStyle(color: _colorEstado(m['estado'])),
-                              ),
-                              onTap: () => _solicitarAsistencia(m),
-                            ),
-                          );
-                        },
+      backgroundColor: GomaqColors.fondoCalido,
+      body: SafeArea(
+        child: RefreshIndicator(
+          onRefresh: _cargar,
+          child: ListView(
+            padding: const EdgeInsets.all(16),
+            children: [
+              Container(
+                padding: const EdgeInsets.all(20),
+                decoration: BoxDecoration(color: GomaqColors.primario, borderRadius: BorderRadius.circular(16)),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          const Text('Hola,', style: TextStyle(color: Colors.white70, fontSize: 14)),
+                          Text(auth.nombre ?? '', style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.bold)),
+                        ],
                       ),
+                    ),
+                    CircleAvatar(
+                      backgroundColor: Colors.white24,
+                      child: Text((auth.nombre ?? '?').substring(0, 1).toUpperCase(), style: const TextStyle(color: Colors.white)),
+                    ),
+                    IconButton(icon: const Icon(Icons.logout, color: Colors.white), onPressed: () => auth.logout()),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+              if (_cargando)
+                const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()))
+              else if (_error != null)
+                Center(child: Text('Error: $_error'))
+              else if (_maquinarias.isEmpty)
+                const Center(child: Padding(padding: EdgeInsets.all(32), child: Text('No tienes maquinarias registradas')))
+              else
+                for (final m in _maquinarias)
+                  Card(
+                    child: ListTile(
+                      title: Text('${m['codigo']} - ${m['tipo']}'),
+                      subtitle: Text(m['ubicacion'] ?? 'Sin ubicacion registrada'),
+                      trailing: Chip(
+                        label: Text(m['estado']),
+                        backgroundColor: GomaqColors.fondoChip(m['estado']),
+                        labelStyle: TextStyle(color: GomaqColors.colorEstado(m['estado'])),
+                      ),
+                      onTap: () => _solicitarAsistencia(m),
+                    ),
+                  ),
+            ],
+          ),
+        ),
       ),
     );
   }

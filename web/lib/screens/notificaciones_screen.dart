@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
+import '../theme/gomaq_theme.dart';
 
 class NotificacionesScreen extends StatefulWidget {
   const NotificacionesScreen({super.key});
@@ -35,17 +36,6 @@ class _NotificacionesScreenState extends State<NotificacionesScreen> {
     }
   }
 
-  Color _colorEstado(String estado) {
-    switch (estado) {
-      case 'enviado':
-        return Colors.green;
-      case 'error':
-        return Colors.red;
-      default:
-        return Colors.orange;
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
@@ -63,7 +53,7 @@ class _NotificacionesScreenState extends State<NotificacionesScreen> {
                         final n = _notificaciones[i];
                         return Card(
                           child: ListTile(
-                            leading: Icon(Icons.circle, size: 12, color: _colorEstado(n['estado'])),
+                            leading: Icon(Icons.circle, size: 12, color: GomaqColors.colorEstado(n['estado'])),
                             title: Text('${n['canal']} -> ${n['destinatario']}'),
                             subtitle: Text(
                               n['estado'] == 'error'

@@ -4,6 +4,7 @@ import 'services/auth_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/cliente_portal_screen.dart';
+import 'theme/gomaq_theme.dart';
 
 void main() {
   runApp(const GomaqWebApp());
@@ -18,7 +19,7 @@ class GomaqWebApp extends StatelessWidget {
       create: (_) => AuthService()..restaurarSesion(),
       child: MaterialApp(
         title: 'GOMAQ - Panel de Gestion',
-        theme: ThemeData(colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepOrange), useMaterial3: true),
+        theme: construirTemaGomaq(),
         home: const _Raiz(),
       ),
     );

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../services/api_client.dart';
+import '../theme/gomaq_theme.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -35,6 +36,7 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: GomaqColors.fondoCalido,
       body: Center(
         child: Card(
           child: Padding(
@@ -44,8 +46,13 @@ class _LoginScreenState extends State<LoginScreen> {
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  const Icon(Icons.business, size: 64),
-                  const SizedBox(height: 8),
+                  Container(
+                    width: 64,
+                    height: 64,
+                    decoration: BoxDecoration(color: GomaqColors.primario, borderRadius: BorderRadius.circular(14)),
+                    child: const Icon(Icons.business, color: Colors.white, size: 32),
+                  ),
+                  const SizedBox(height: 12),
                   const Text('GOMAQ', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
                   const Text('Panel de Gestion', style: TextStyle(fontSize: 14, color: Colors.grey)),
                   const SizedBox(height: 32),
