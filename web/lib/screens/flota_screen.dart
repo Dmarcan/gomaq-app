@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
@@ -16,6 +15,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
   List<dynamic> _maquinarias = [];
   bool _cargando = true;
   String? _error;
+  String _busqueda = '';
 
   @override
   void initState() {
@@ -78,40 +78,20 @@ class _FlotaScreenState extends State<FlotaScreen> {
     }
   }
 
-  Future<void> _subirGuia(int maquinariaId) async {
-    final tipo = await showDialog<String>(
-      context: context,
-      builder: (_) => SimpleDialog(
-        title: const Text('Tipo de guia'),
-        children: [
-          SimpleDialogOption(onPressed: () => Navigator.pop(context, 'despacho'), child: const Text('Guia de Despacho')),
-          SimpleDialogOption(onPressed: () => Navigator.pop(context, 'recepcion'), child: const Text('Guia de Recepcion')),
-        ],
-      ),
-    );
-    if (tipo == null) return;
-
-    final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
-    if (resultado == null || resultado.files.single.bytes == null) return;
-    final archivo = resultado.files.single;
-
-    try {
-      await ApiClient.instance.postMultipart(
-        '/api/maquinarias/$maquinariaId/guias',
-        bytes: archivo.bytes!,
-        filename: archivo.name,
-        fields: {'tipo': tipo},
-      );
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Guia subida correctamente')));
-    } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
-    }
+  List<dynamic> get _maquinariasFiltradas {
+    if (_busqueda.trim().isEmpty) return _maquinarias;
+    final q = _busqueda.toLowerCase();
+    return _maquinarias.where((m) {
+      final codigo = (m['codigo'] as String? ?? '').toLowerCase();
+      final tipo = (m['tipo'] as String? ?? '').toLowerCase();
+      return codigo.contains(q) || tipo.contains(q);
+    }).toList();
   }
-
 
   @override
   Widget build(BuildContext context) {
     final puedeEscribir = context.watch<AuthService>().esAdministrativo;
+    final maquinarias = _maquinariasFiltradas;
 
     return Scaffold(
       floatingActionButton: puedeEscribir
@@ -121,41 +101,51 @@ class _FlotaScreenState extends State<FlotaScreen> {
               label: const Text('Nueva maquinaria'),
             )
           : null,
-      body: RefreshIndicator(
-        onRefresh: _cargar,
-        child: _cargando
-            ? const Center(child: CircularProgressIndicator())
-            : _error != null
-                ? Center(child: Text('Error: $_error'))
-                : ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _maquinarias.length,
-                    itemBuilder: (context, i) {
-                      final m = _maquinarias[i];
-                      return Card(
-                        child: ListTile(
-                          title: Text('${m['codigo']} - ${m['tipo']}'),
-                          subtitle: Text('Cliente: ${m['cliente'] ?? '-'} | ${m['ubicacion'] ?? 'Sin ubicacion'}'),
-                          trailing: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              if (puedeEscribir)
-                                IconButton(
-                                  icon: const Icon(Icons.upload_file),
-                                  tooltip: 'Subir guia de despacho/recepcion',
-                                  onPressed: () => _subirGuia(m['id']),
-                                ),
-                              Chip(
-                                label: Text(m['estado']),
-                                backgroundColor: GomaqColors.fondoChip(m['estado']),
-                                labelStyle: TextStyle(color: GomaqColors.colorEstado(m['estado'])),
-                              ),
-                            ],
-                          ),
-                        ),
-                      );
-                    },
-                  ),
+      body: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: TextField(
+              onChanged: (v) => setState(() => _busqueda = v),
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                hintText: 'Buscar por código o tipo...',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+            ),
+          ),
+          Expanded(
+            child: RefreshIndicator(
+              onRefresh: _cargar,
+              child: _cargando
+                  ? const Center(child: CircularProgressIndicator())
+                  : _error != null
+                      ? Center(child: Text('Error: $_error'))
+                      : maquinarias.isEmpty
+                          ? const Center(child: Text('Sin resultados'))
+                          : ListView.builder(
+                              padding: const EdgeInsets.all(16),
+                              itemCount: maquinarias.length,
+                              itemBuilder: (context, i) {
+                                final m = maquinarias[i];
+                                return Card(
+                                  child: ListTile(
+                                    title: Text('${m['codigo']} - ${m['tipo']}'),
+                                    subtitle: Text('Cliente: ${m['cliente'] ?? '-'} | ${m['ubicacion'] ?? 'Sin ubicacion'}'),
+                                    trailing: Chip(
+                                      label: Text(m['estado']),
+                                      backgroundColor: GomaqColors.fondoChip(m['estado']),
+                                      labelStyle: TextStyle(color: GomaqColors.colorEstado(m['estado'])),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+            ),
+          ),
+        ],
       ),
     );
   }

@@ -19,7 +19,7 @@ const upload = multer({ storage });
 const TIPOS_VALIDOS = ['falla', 'mantencion_preventiva'];
 
 // POST /api/solicitudes - el cliente reporta una falla o pide mantencion sobre su propia maquinaria
-router.post('/', verifyToken, requireRole('cliente'), upload.single('evidencia'), async (req, res) => {
+router.post('/', verifyToken, requireRole('cliente'), upload.single('archivo'), async (req, res) => {
     const { maquinaria_id, descripcion, tipo } = req.body;
     if (!maquinaria_id || !descripcion) {
         return res.status(400).json({ error: 'maquinaria_id y descripcion son requeridos' });

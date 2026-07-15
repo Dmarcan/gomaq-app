@@ -2,7 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
+import 'dashboard_screen.dart';
 import 'flota_screen.dart';
+import 'guias_screen.dart';
+import 'facturacion_screen.dart';
+import 'asignacion_screen.dart';
 import 'clientes_screen.dart';
 import 'ordenes_screen.dart';
 import 'solicitudes_screen.dart';
@@ -19,20 +23,28 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _seccion = 0;
 
   static const _items = [
+    (icon: Icons.dashboard, label: 'Dashboard'),
     (icon: Icons.local_shipping, label: 'Flota'),
-    (icon: Icons.people, label: 'Clientes'),
+    (icon: Icons.description, label: 'Guías'),
+    (icon: Icons.receipt_long, label: 'Facturación'),
+    (icon: Icons.build, label: 'Asignación'),
     (icon: Icons.assignment, label: 'Ordenes de Trabajo'),
+    (icon: Icons.people, label: 'Clientes'),
     (icon: Icons.support_agent, label: 'Solicitudes'),
     (icon: Icons.notifications, label: 'Notificaciones'),
   ];
 
-  static const _pantallas = [
-    FlotaScreen(),
-    ClientesScreen(),
-    OrdenesScreen(),
-    SolicitudesScreen(),
-    NotificacionesScreen(),
-  ];
+  List<Widget> get _pantallas => [
+        DashboardScreen(onNavegar: (i) => setState(() => _seccion = i)),
+        const FlotaScreen(),
+        const GuiasScreen(),
+        const FacturacionScreen(),
+        const AsignacionScreen(),
+        const OrdenesScreen(),
+        const ClientesScreen(),
+        const SolicitudesScreen(),
+        const NotificacionesScreen(),
+      ];
 
   @override
   Widget build(BuildContext context) {
@@ -66,8 +78,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                 ),
                 const Divider(color: Colors.white24, height: 1),
                 const SizedBox(height: 12),
-                for (var i = 0; i < _items.length; i++) _itemMenu(i),
-                const Spacer(),
+                Expanded(
+                  child: ListView(
+                    padding: EdgeInsets.zero,
+                    children: [for (var i = 0; i < _items.length; i++) _itemMenu(i)],
+                  ),
+                ),
                 const Divider(color: Colors.white24, height: 1),
                 Padding(
                   padding: const EdgeInsets.all(16),
