@@ -128,6 +128,49 @@ router.post('/', verifyToken, requireRole('administrativo'), upload.single('arch
     }
 });
 
+// PATCH /api/maquinarias/:id - editar ficha tecnica (todo opcional, no toca la foto)
+router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res) => {
+    const {
+        tipo, ubicacion,
+        categoria_equipo, marca, modelo, anio, descripcion,
+        numero_serie, numero_motor, numero_chasis, numero_mastil,
+        capacidad_carga, altura_trabajo, tipo_combustible,
+    } = req.body;
+    try {
+        const result = await pool.query(
+            `UPDATE maquinarias SET
+                tipo = COALESCE($1, tipo),
+                ubicacion = COALESCE($2, ubicacion),
+                categoria_equipo = COALESCE($3::categoria_equipo, categoria_equipo),
+                marca = COALESCE($4, marca),
+                modelo = COALESCE($5, modelo),
+                anio = COALESCE($6, anio),
+                descripcion = COALESCE($7, descripcion),
+                numero_serie = COALESCE($8, numero_serie),
+                numero_motor = COALESCE($9, numero_motor),
+                numero_chasis = COALESCE($10, numero_chasis),
+                numero_mastil = COALESCE($11, numero_mastil),
+                capacidad_carga = COALESCE($12, capacidad_carga),
+                altura_trabajo = COALESCE($13, altura_trabajo),
+                tipo_combustible = COALESCE($14::tipo_combustible_maquinaria, tipo_combustible)
+             WHERE id = $15 RETURNING *`,
+            [
+                tipo || null, ubicacion || null, categoria_equipo || null, marca || null, modelo || null,
+                anio || null, descripcion || null, numero_serie || null, numero_motor || null,
+                numero_chasis || null, numero_mastil || null, capacidad_carga || null, altura_trabajo || null,
+                tipo_combustible || null, req.params.id,
+            ]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Maquinaria no encontrada' });
+        }
+        res.json(await conFotoFirmada(result.rows[0]));
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al actualizar la maquinaria' });
+    }
+});
+
 // PATCH /api/maquinarias/:id/foto - reemplazar solo la foto de la ficha tecnica
 router.patch('/:id/foto', verifyToken, requireRole('administrativo'), upload.single('archivo'), async (req, res) => {
     if (!req.file) {

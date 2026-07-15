@@ -4,20 +4,8 @@ import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/ficha_tecnica_campos.dart';
 import 'maquinaria_perfil_screen.dart';
-
-const _categorias = [
-  (valor: 'grua_horquilla', etiqueta: 'Grúa Horquilla'),
-  (valor: 'alzahombre', etiqueta: 'Alzahombre'),
-  (valor: 'transpaleta', etiqueta: 'Transpaleta'),
-];
-
-const _combustibles = [
-  (valor: 'electrica', etiqueta: 'Eléctrica'),
-  (valor: 'gas', etiqueta: 'Gas'),
-  (valor: 'gasolina', etiqueta: 'Gasolina'),
-  (valor: 'diesel', etiqueta: 'Diésel'),
-];
 
 class FlotaScreen extends StatefulWidget {
   const FlotaScreen({super.key});
@@ -78,11 +66,6 @@ class _FlotaScreenState extends State<FlotaScreen> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) {
-          final mostrarCapacidad = categoria == 'grua_horquilla' || categoria == 'transpaleta';
-          final mostrarMastil = categoria == 'grua_horquilla';
-          final mostrarCombustible = categoria == 'grua_horquilla' || categoria == 'alzahombre';
-          final mostrarMotorChasis = categoria == 'grua_horquilla' || categoria == 'alzahombre';
-          final mostrarAltura = categoria == 'alzahombre';
           final mostrarFicha = categoria != null;
 
           return AlertDialog(
@@ -101,42 +84,35 @@ class _FlotaScreenState extends State<FlotaScreen> {
                     DropdownButtonFormField<String>(
                       initialValue: categoria,
                       decoration: const InputDecoration(labelText: 'Categoría (para la ficha técnica)'),
-                      items: [for (final c in _categorias) DropdownMenuItem(value: c.valor, child: Text(c.etiqueta))],
-                      onChanged: (v) => setDialogState(() => categoria = v),
+                      items: [for (final c in categoriasEquipo) DropdownMenuItem(value: c.valor, child: Text(c.etiqueta))],
+                      onChanged: (v) => setDialogState(() {
+                        // autocompleta "tipo" con la etiqueta de la categoria, salvo que el usuario
+                        // ya haya escrito algo distinto al auto-relleno anterior (no se pisa su edicion)
+                        final tipoActual = tipoCtrl.text.trim();
+                        if (tipoActual.isEmpty || tipoActual == etiquetasCategoria[categoria]) {
+                          tipoCtrl.text = v != null ? etiquetasCategoria[v]! : '';
+                        }
+                        categoria = v;
+                      }),
                     ),
                     if (mostrarFicha) ...[
                       const SizedBox(height: 12),
                       const Text('FICHA TÉCNICA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                      TextField(controller: marcaCtrl, decoration: const InputDecoration(labelText: 'Marca')),
-                      TextField(controller: modeloCtrl, decoration: const InputDecoration(labelText: 'Modelo')),
-                      TextField(controller: anioCtrl, decoration: const InputDecoration(labelText: 'Año'), keyboardType: TextInputType.number),
-                      if (mostrarCapacidad)
-                        TextField(
-                          controller: capacidadCargaCtrl,
-                          decoration: const InputDecoration(labelText: 'Capacidad de carga (kg)'),
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        ),
-                      if (mostrarAltura)
-                        TextField(
-                          controller: alturaTrabajoCtrl,
-                          decoration: const InputDecoration(labelText: 'Altura de trabajo (m)'),
-                          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        ),
-                      if (mostrarMastil)
-                        TextField(controller: numeroMastilCtrl, decoration: const InputDecoration(labelText: 'N° de mástil')),
-                      if (mostrarCombustible)
-                        DropdownButtonFormField<String>(
-                          initialValue: combustible,
-                          decoration: const InputDecoration(labelText: 'Combustible'),
-                          items: [for (final c in _combustibles) DropdownMenuItem(value: c.valor, child: Text(c.etiqueta))],
-                          onChanged: (v) => setDialogState(() => combustible = v),
-                        ),
-                      if (mostrarMotorChasis) ...[
-                        TextField(controller: numeroMotorCtrl, decoration: const InputDecoration(labelText: 'N° de motor')),
-                        TextField(controller: numeroChasisCtrl, decoration: const InputDecoration(labelText: 'N° de chasis')),
-                      ],
-                      TextField(controller: numeroSerieCtrl, decoration: const InputDecoration(labelText: 'N° de serie')),
-                      TextField(controller: descripcionCtrl, decoration: const InputDecoration(labelText: 'Descripción'), maxLines: 2),
+                      ...camposFichaTecnica(
+                        categoria: categoria,
+                        combustible: combustible,
+                        onCombustibleChanged: (v) => setDialogState(() => combustible = v),
+                        marcaCtrl: marcaCtrl,
+                        modeloCtrl: modeloCtrl,
+                        anioCtrl: anioCtrl,
+                        capacidadCargaCtrl: capacidadCargaCtrl,
+                        alturaTrabajoCtrl: alturaTrabajoCtrl,
+                        numeroMastilCtrl: numeroMastilCtrl,
+                        numeroMotorCtrl: numeroMotorCtrl,
+                        numeroChasisCtrl: numeroChasisCtrl,
+                        numeroSerieCtrl: numeroSerieCtrl,
+                        descripcionCtrl: descripcionCtrl,
+                      ),
                       const SizedBox(height: 12),
                       OutlinedButton.icon(
                         onPressed: () async {
