@@ -22,8 +22,10 @@ Un sistema con 3 aplicaciones que comparten un mismo backend:
   journalctl -u cloudflared-quick --no-pager | grep -o "https://[a-zA-Z0-9.-]*trycloudflare.com" | tail -1
   ```
   Esa misma URL sirve tanto la API (`/api/*`) como el Panel Web (`/`), porque el build de Flutter Web se sirve como estático desde el propio backend Node — no hay un segundo túnel.
-- **Fotos de evidencia** (subidas por el mecánico): Supabase Storage, bucket privado `evidencias-ot`, con URLs firmadas temporales (1h) — nunca URLs públicas permanentes
-- **PDFs de guías y facturas**: se guardan localmente en el servidor (`backend/uploads/`), no en Supabase (decisión del informe: esos documentos los sube el administrativo desde oficina, no el mecánico en terreno)
+- **Todos los archivos pesados van a Supabase Storage**, en buckets privados con URLs firmadas temporales (1h) — nunca URLs públicas permanentes:
+  - `evidencias-ot` — fotos de evidencia subidas por el mecánico desde terreno
+  - `documentos-gomaq` — PDFs de guías y facturas subidos por el administrativo desde el panel web
+- `backend/uploads/` prácticamente no se usa — quedó de una decisión anterior (guías/facturas en disco local) que se corrigió; puede tener archivos de prueba viejos ahí, no se están sirviendo
 - **Monitoreo del servidor:** `ssh dmarcan@192.168.1.29` y luego `htop` (ya instalado) para ver CPU/RAM/procesos en vivo
 
 ## Cómo desplegar un cambio
