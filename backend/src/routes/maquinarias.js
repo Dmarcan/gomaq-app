@@ -21,6 +21,25 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
     }
 });
 
+// POST /api/maquinarias - crear maquinaria
+// Permisos: Administrativo tiene Lectura/Escritura sobre Control de Flota
+router.post('/', verifyToken, requireRole('administrativo'), async (req, res) => {
+    const { codigo, tipo, cliente_id, ubicacion } = req.body;
+    if (!codigo || !tipo) {
+        return res.status(400).json({ error: 'codigo y tipo son requeridos' });
+    }
+    try {
+        const result = await pool.query(
+            'INSERT INTO maquinarias (codigo, tipo, cliente_id, ubicacion) VALUES ($1, $2, $3, $4) RETURNING *',
+            [codigo, tipo, cliente_id || null, ubicacion || null]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al crear maquinaria' });
+    }
+});
+
 // PATCH /api/maquinarias/:id/estado - actualizar estado (mecanico reporta)
 // Permisos: Mecanico y Administrativo pueden escribir; Gerente solo lectura, Cliente denegado
 router.patch('/:id/estado', verifyToken, requireRole('mecanico', 'administrativo'), async (req, res) => {
