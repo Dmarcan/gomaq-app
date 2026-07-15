@@ -79,19 +79,41 @@ class ApiClient {
     return _procesar(resp);
   }
 
-  /// Subida de archivo (PDF de guia/factura) via multipart, usando los campos de texto en [fields]
+  /// Subida de archivo (PDF de guia/factura, foto de equipo) via multipart, usando los
+  /// campos de texto en [fields]. El archivo es opcional (ej. crear un equipo sin foto todavia).
   Future<dynamic> postMultipart(
     String path, {
-    required List<int> bytes,
-    required String filename,
+    List<int>? bytes,
+    String? filename,
+    Map<String, String> fields = const {},
+  }) async {
+    return _enviarMultipart('POST', path, bytes: bytes, filename: filename, fields: fields);
+  }
+
+  Future<dynamic> patchMultipart(
+    String path, {
+    List<int>? bytes,
+    String? filename,
+    Map<String, String> fields = const {},
+  }) async {
+    return _enviarMultipart('PATCH', path, bytes: bytes, filename: filename, fields: fields);
+  }
+
+  Future<dynamic> _enviarMultipart(
+    String metodo,
+    String path, {
+    List<int>? bytes,
+    String? filename,
     Map<String, String> fields = const {},
   }) async {
     final uri = Uri.parse('$baseUrl$path');
-    final request = http.MultipartRequest('POST', uri);
+    final request = http.MultipartRequest(metodo, uri);
     final headers = await _headers(json: false);
     request.headers.addAll(headers);
     request.fields.addAll(fields);
-    request.files.add(http.MultipartFile.fromBytes('archivo', bytes, filename: filename));
+    if (bytes != null && filename != null) {
+      request.files.add(http.MultipartFile.fromBytes('archivo', bytes, filename: filename));
+    }
 
     final streamed = await request.send().timeout(const Duration(seconds: 30));
     final resp = await http.Response.fromStream(streamed);
