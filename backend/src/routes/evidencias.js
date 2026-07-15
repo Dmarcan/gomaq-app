@@ -43,10 +43,9 @@ router.post('/:id/evidencia/confirmar', verifyToken, requireRole('mecanico'), as
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
 
-        const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
         const result = await pool.query(
-            'INSERT INTO evidencias_fotograficas (orden_trabajo_id, url) VALUES ($1, $2) RETURNING *',
-            [id, data.publicUrl]
+            'INSERT INTO evidencias_fotograficas (orden_trabajo_id, path) VALUES ($1, $2) RETURNING *',
+            [id, path]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -56,6 +55,9 @@ router.post('/:id/evidencia/confirmar', verifyToken, requireRole('mecanico'), as
 });
 
 // GET /api/ordenes-trabajo/:id/evidencia
+// Bucket privado: se genera una URL firmada temporal (1h) por cada foto, en vez de una URL publica permanente
+const URL_EXPIRACION_SEGUNDOS = 3600;
+
 router.get('/:id/evidencia', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     const { id } = req.params;
     try {
@@ -68,7 +70,13 @@ router.get('/:id/evidencia', verifyToken, requireRole('gerente', 'administrativo
             'SELECT * FROM evidencias_fotograficas WHERE orden_trabajo_id = $1 ORDER BY created_at DESC',
             [id]
         );
-        res.json(result.rows);
+
+        const conUrlFirmada = await Promise.all(result.rows.map(async (fila) => {
+            const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(fila.path, URL_EXPIRACION_SEGUNDOS);
+            return { ...fila, url: error ? null : data.signedUrl };
+        }));
+
+        res.json(conUrlFirmada);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar evidencia' });

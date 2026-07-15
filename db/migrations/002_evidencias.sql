@@ -3,7 +3,7 @@
 CREATE TABLE evidencias_fotograficas (
     id SERIAL PRIMARY KEY,
     orden_trabajo_id INTEGER NOT NULL REFERENCES ordenes_trabajo(id),
-    url TEXT NOT NULL,
+    path TEXT NOT NULL, -- ruta dentro del bucket privado de Supabase Storage (no una URL publica)
     created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
