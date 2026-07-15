@@ -13,7 +13,7 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
     try {
         const result = await pool.query(
             `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, origen, motivo, facturable)
-             VALUES ($1, $2, COALESCE($3, 'directo'), $4, COALESCE($5, false))
+             VALUES ($1, $2, COALESCE($3::origen_orden, 'directo'), $4, COALESCE($5, false))
              RETURNING *`,
             [maquinaria_id, cliente_id || null, origen || null, motivo || null, facturable]
         );
