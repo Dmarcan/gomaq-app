@@ -49,26 +49,34 @@ class ApiClient {
     throw ApiException(resp.statusCode, mensaje);
   }
 
+  static const _timeout = Duration(seconds: 12);
+
   Future<dynamic> get(String path) async {
-    final resp = await http.get(Uri.parse('$baseUrl$path'), headers: await _headers());
+    final resp = await http
+        .get(Uri.parse('$baseUrl$path'), headers: await _headers())
+        .timeout(_timeout);
     return _procesar(resp);
   }
 
   Future<dynamic> post(String path, Map<String, dynamic> body) async {
-    final resp = await http.post(
-      Uri.parse('$baseUrl$path'),
-      headers: await _headers(),
-      body: jsonEncode(body),
-    );
+    final resp = await http
+        .post(
+          Uri.parse('$baseUrl$path'),
+          headers: await _headers(),
+          body: jsonEncode(body),
+        )
+        .timeout(_timeout);
     return _procesar(resp);
   }
 
   Future<dynamic> patch(String path, Map<String, dynamic> body) async {
-    final resp = await http.patch(
-      Uri.parse('$baseUrl$path'),
-      headers: await _headers(),
-      body: jsonEncode(body),
-    );
+    final resp = await http
+        .patch(
+          Uri.parse('$baseUrl$path'),
+          headers: await _headers(),
+          body: jsonEncode(body),
+        )
+        .timeout(_timeout);
     return _procesar(resp);
   }
 }

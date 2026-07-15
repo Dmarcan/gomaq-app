@@ -172,11 +172,13 @@ class SyncService extends ChangeNotifier {
     );
 
     final signedUrl = solicitud['signedUrl'] as String;
-    final resp = await http.put(
-      Uri.parse(signedUrl),
-      headers: {'Content-Type': 'image/jpeg'},
-      body: await archivo.readAsBytes(),
-    );
+    final resp = await http
+        .put(
+          Uri.parse(signedUrl),
+          headers: {'Content-Type': 'image/jpeg'},
+          body: await archivo.readAsBytes(),
+        )
+        .timeout(const Duration(seconds: 20));
     if (resp.statusCode >= 300) {
       throw Exception('Fallo la subida a Supabase Storage: ${resp.statusCode}');
     }

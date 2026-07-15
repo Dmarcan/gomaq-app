@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../db/local_database.dart';
@@ -17,12 +18,28 @@ class OrdenesListScreen extends StatefulWidget {
 class _OrdenesListScreenState extends State<OrdenesListScreen> {
   List<OrdenTrabajo> _ordenes = [];
   int _pendientes = 0;
+  StreamSubscription<bool>? _conexionSub;
 
   @override
   void initState() {
     super.initState();
     _cargarLocal();
-    _sincronizarSiHayConexion();
+
+    // SyncService.notifyListeners() no puede dispararse de forma sincronica
+    // durante initState (todavia en fase de build) - se difiere al primer frame.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      _sincronizarSiHayConexion();
+      _conexionSub = context.read<ConnectivityService>().onCambioConexion.listen((online) {
+        if (online) _sincronizarConReintentos();
+      });
+    });
+  }
+
+  @override
+  void dispose() {
+    _conexionSub?.cancel();
+    super.dispose();
   }
 
   Future<void> _cargarLocal() async {
@@ -37,14 +54,30 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
     });
   }
 
-  Future<void> _sincronizarSiHayConexion() async {
-    if (!context.read<ConnectivityService>().online) return;
+  // El sistema operativo suele avisar "conectado" un par de segundos antes
+  // de que la red realmente tenga salida a internet. Reintenta un par de
+  // veces con espera creciente para no depender de que el mecanico refresque a mano.
+  Future<void> _sincronizarConReintentos() async {
+    const esperas = [Duration(seconds: 2), Duration(seconds: 5), Duration(seconds: 10)];
+    for (final espera in esperas) {
+      await Future.delayed(espera);
+      if (!mounted) return;
+      final huboExito = await _sincronizarSiHayConexion();
+      if (huboExito) return;
+    }
+  }
+
+  Future<bool> _sincronizarSiHayConexion() async {
+    if (!context.read<ConnectivityService>().online) return false;
+    var exito = true;
     try {
       await context.read<SyncService>().sincronizar();
     } catch (_) {
+      exito = false;
       // sin conexion real o backend no disponible: se reintenta despues, no rompe la UI
     }
     await _cargarLocal();
+    return exito;
   }
 
   @override
