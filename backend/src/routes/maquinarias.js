@@ -1,10 +1,12 @@
 const express = require('express');
 const pool = require('../config/db');
+const { verifyToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
 // GET /api/maquinarias - listado con estado (HU-02)
-router.get('/', async (req, res) => {
+// Permisos (Tabla 6.1): Gerente=Lectura, Administrativo=Lectura/Escritura, Mecanico=Lectura, Cliente=Denegado
+router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     try {
         const result = await pool.query(
             `SELECT m.id, m.codigo, m.tipo, m.estado, m.ubicacion, c.nombre AS cliente
@@ -20,7 +22,8 @@ router.get('/', async (req, res) => {
 });
 
 // PATCH /api/maquinarias/:id/estado - actualizar estado (mecanico reporta)
-router.patch('/:id/estado', async (req, res) => {
+// Permisos: Mecanico y Administrativo pueden escribir; Gerente solo lectura, Cliente denegado
+router.patch('/:id/estado', verifyToken, requireRole('mecanico', 'administrativo'), async (req, res) => {
     const { id } = req.params;
     const { estado } = req.body;
     const validos = ['operativa', 'en_mantencion', 'fuera_de_servicio'];
