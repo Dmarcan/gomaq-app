@@ -44,7 +44,8 @@ class _LoginScreenState extends State<LoginScreen> {
             padding: const EdgeInsets.all(32),
             child: SizedBox(
               width: 360,
-              child: Column(
+              child: SingleChildScrollView(
+                child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
@@ -90,6 +91,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     child: const Text('¿Eres cliente? Crea tu cuenta'),
                   ),
                 ],
+                ),
               ),
             ),
           ),

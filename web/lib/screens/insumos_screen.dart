@@ -59,17 +59,19 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
         title: const Text('Nuevo insumo'),
         content: SizedBox(
           width: 360,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre')),
-              TextField(controller: unidadCtrl, decoration: const InputDecoration(labelText: 'Unidad de medida (ej. litro, unidad)')),
-              TextField(
-                controller: costoCtrl,
-                decoration: const InputDecoration(labelText: 'Costo unitario (CLP)'),
-                keyboardType: TextInputType.number,
-              ),
-            ],
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre')),
+                TextField(controller: unidadCtrl, decoration: const InputDecoration(labelText: 'Unidad de medida (ej. litro, unidad)')),
+                TextField(
+                  controller: costoCtrl,
+                  decoration: const InputDecoration(labelText: 'Costo unitario (CLP)'),
+                  keyboardType: TextInputType.number,
+                ),
+              ],
+            ),
           ),
         ),
         actions: [

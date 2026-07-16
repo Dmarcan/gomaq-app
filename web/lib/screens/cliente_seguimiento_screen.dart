@@ -105,7 +105,8 @@ class _SeguimientoDialog extends StatelessWidget {
       title: Text('Seguimiento de Solicitud'),
       content: SizedBox(
         width: 380,
-        child: Column(
+        child: SingleChildScrollView(
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -141,6 +142,7 @@ class _SeguimientoDialog extends StatelessWidget {
               ),
             ),
           ],
+          ),
         ),
       ),
       actions: [

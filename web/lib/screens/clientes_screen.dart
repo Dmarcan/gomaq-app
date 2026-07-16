@@ -99,23 +99,25 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
           title: const Text('Nuevo cliente'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(controller: nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre / Razon social')),
-              TextField(controller: rutCtrl, decoration: const InputDecoration(labelText: 'RUT (opcional)')),
-              TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email (opcional)')),
-              TextField(controller: telefonoCtrl, decoration: const InputDecoration(labelText: 'Telefono (opcional, formato +569...)')),
-              DropdownButtonFormField<int?>(
-                initialValue: ejecutivoId,
-                decoration: const InputDecoration(labelText: 'Ejecutivo asignado'),
-                items: [
-                  const DropdownMenuItem<int?>(value: null, child: Text('Directo (sin ejecutivo)')),
-                  for (final e in ejecutivos) DropdownMenuItem<int?>(value: e['id'], child: Text(e['nombre'])),
-                ],
-                onChanged: (v) => setDialogState(() => ejecutivoId = v),
-              ),
-            ],
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(controller: nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre / Razon social')),
+                TextField(controller: rutCtrl, decoration: const InputDecoration(labelText: 'RUT (opcional)')),
+                TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email (opcional)')),
+                TextField(controller: telefonoCtrl, decoration: const InputDecoration(labelText: 'Telefono (opcional, formato +569...)')),
+                DropdownButtonFormField<int?>(
+                  initialValue: ejecutivoId,
+                  decoration: const InputDecoration(labelText: 'Ejecutivo asignado'),
+                  items: [
+                    const DropdownMenuItem<int?>(value: null, child: Text('Directo (sin ejecutivo)')),
+                    for (final e in ejecutivos) DropdownMenuItem<int?>(value: e['id'], child: Text(e['nombre'])),
+                  ],
+                  onChanged: (v) => setDialogState(() => ejecutivoId = v),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),

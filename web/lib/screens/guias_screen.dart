@@ -145,7 +145,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
   Widget build(BuildContext context) {
     if (_cargando) return const Center(child: CircularProgressIndicator());
 
-    return Padding(
+    return SingleChildScrollView(
       padding: const EdgeInsets.all(24),
       child: ConstrainedBox(
         constraints: const BoxConstraints(maxWidth: 520),

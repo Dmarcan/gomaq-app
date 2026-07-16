@@ -62,25 +62,27 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
           title: const Text('Nueva Orden de Trabajo'),
           content: SizedBox(
             width: 400,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                DropdownButtonFormField<int>(
-                  decoration: const InputDecoration(labelText: 'Maquinaria'),
-                  items: maquinarias
-                      .map<DropdownMenuItem<int>>((m) => DropdownMenuItem(value: m['id'], child: Text('${m['codigo']} - ${m['tipo']}')))
-                      .toList(),
-                  onChanged: (v) => setDialogState(() => maquinariaId = v),
-                ),
-                DropdownButtonFormField<int>(
-                  decoration: const InputDecoration(labelText: 'Cliente'),
-                  items: clientes
-                      .map<DropdownMenuItem<int>>((c) => DropdownMenuItem(value: c['id'], child: Text(c['nombre'])))
-                      .toList(),
-                  onChanged: (v) => setDialogState(() => clienteId = v),
-                ),
-                TextField(controller: motivoCtrl, decoration: const InputDecoration(labelText: 'Motivo')),
-              ],
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DropdownButtonFormField<int>(
+                    decoration: const InputDecoration(labelText: 'Maquinaria'),
+                    items: maquinarias
+                        .map<DropdownMenuItem<int>>((m) => DropdownMenuItem(value: m['id'], child: Text('${m['codigo']} - ${m['tipo']}')))
+                        .toList(),
+                    onChanged: (v) => setDialogState(() => maquinariaId = v),
+                  ),
+                  DropdownButtonFormField<int>(
+                    decoration: const InputDecoration(labelText: 'Cliente'),
+                    items: clientes
+                        .map<DropdownMenuItem<int>>((c) => DropdownMenuItem(value: c['id'], child: Text(c['nombre'])))
+                        .toList(),
+                    onChanged: (v) => setDialogState(() => clienteId = v),
+                  ),
+                  TextField(controller: motivoCtrl, decoration: const InputDecoration(labelText: 'Motivo')),
+                ],
+              ),
             ),
           ),
           actions: [

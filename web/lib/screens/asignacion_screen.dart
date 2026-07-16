@@ -117,7 +117,8 @@ class _AsignarDialogState extends State<_AsignarDialog> {
       title: const Text('Nueva Orden de Trabajo'),
       content: SizedBox(
         width: 420,
-        child: Column(
+        child: SingleChildScrollView(
+          child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -163,6 +164,7 @@ class _AsignarDialogState extends State<_AsignarDialog> {
                   ),
                 ),
           ],
+          ),
         ),
       ),
       actions: [

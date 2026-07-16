@@ -175,7 +175,8 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
       title: Text('Solicitar asistencia - ${widget.maquinaria['codigo']}'),
       content: SizedBox(
         width: 380,
-        child: Column(
+        child: SingleChildScrollView(
+          child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -205,6 +206,7 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
               label: Text(_evidencia?.name ?? 'Adjuntar foto del equipo'),
             ),
           ],
+          ),
         ),
       ),
       actions: [

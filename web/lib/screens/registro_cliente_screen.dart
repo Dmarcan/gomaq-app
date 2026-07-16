@@ -72,7 +72,9 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
             padding: const EdgeInsets.all(32),
             child: SizedBox(
               width: 420,
-              child: _enviado ? _construirConfirmacion() : _construirFormulario(),
+              child: SingleChildScrollView(
+                child: _enviado ? _construirConfirmacion() : _construirFormulario(),
+              ),
             ),
           ),
         ),
