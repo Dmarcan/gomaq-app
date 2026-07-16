@@ -105,9 +105,13 @@ Paleta extraída de los mockups originales del informe (no inventada), definida 
 7. **Dominio propio** — hoy la URL pública cambia en cada reinicio del túnel; con un dominio en Cloudflare se puede pasar a un túnel nombrado con URL fija (esto además desbloquea el punto 3).
 8. **Tarifa de arriendo por día** — Facturación muestra los días calculados de cada arriendo pero el monto se ingresa a mano (no existe una tarifa fija por equipo en ningún lado de la entrevista a la administrativa; el jefe la decide caso a caso, igual que en reparaciones).
 9. **Detección de datos desde PDF (Guías y Facturación)** — la extracción de fecha/hora/tipo/monto es heurística sobre el texto del PDF (`pdf-parse` + expresiones regulares), no garantizada; si el PDF es una imagen escaneada sin texto, no detecta nada y el usuario llena a mano. Suficiente para el flujo de UI, pero no es un parser robusto.
-10. Pulido menor: ver/descargar una factura ya subida directo desde la pantalla de Facturación (hoy solo permite subir).
+10. **Routing con URLs en el panel web** — como Flutter Web corre sin rutas en la URL, presionar F5 siempre vuelve al Dashboard (la sesión sí se mantiene) y no hay deep links. Arreglarlo requiere `go_router` + estrategia de URL — trabajo mayor, baja prioridad.
+11. **Refresh token / renovación de sesión** — hoy el token JWT dura 12 h y al expirar la app cierra sesión limpiamente con aviso (tanto web como móvil, donde además el trabajo offline queda protegido en cola). La práctica completa de la industria es access token corto + refresh token; queda para cuando el sistema salga de la etapa de demo.
+12. Pulido menor: ver/descargar una factura ya subida directo desde la pantalla de Facturación (hoy solo permite subir).
 
 ## Notas para quien retome esto
+
+- **Datos de prueba en la BD** — quedaron registros de las verificaciones de desarrollo (maquinaria GH-999, guías/facturas dummy, clientes de prueba). `db/scripts/limpiar_datos_prueba.sql` los borra; correrlo a mano cuando se decida.
 
 - **No hay tests automatizados** — toda la verificación de este proyecto se hizo manualmente con `curl` contra el backend y probando la UI a mano. Si se agregan tests, sería un buen próximo paso.
 - **Las contraseñas y tokens reales** (contraseña de la BD, `JWT_SECRET`, credenciales de Supabase) están únicamente en el `.env` del servidor — nunca se subieron a este repo ni deberían aparecer en el historial de git.

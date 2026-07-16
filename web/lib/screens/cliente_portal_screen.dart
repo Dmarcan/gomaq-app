@@ -16,6 +16,9 @@ class ClientePortalScreen extends StatefulWidget {
 class _ClientePortalScreenState extends State<ClientePortalScreen> {
   int _tab = 0;
 
+  // cambiar esta key remonta las pestanas: su initState vuelve a cargar los datos
+  Key _refreshKey = UniqueKey();
+
   static const _titulos = ['Mi Flota', 'Seguimiento', 'Historial'];
 
   static const _tabs = [
@@ -33,10 +36,15 @@ class _ClientePortalScreenState extends State<ClientePortalScreen> {
         title: Text('GOMAQ - ${_titulos[_tab]}'),
         backgroundColor: GomaqColors.fondoCalido,
         actions: [
+          IconButton(
+            icon: const Icon(Icons.refresh),
+            tooltip: 'Refrescar',
+            onPressed: () => setState(() => _refreshKey = UniqueKey()),
+          ),
           IconButton(icon: const Icon(Icons.logout), onPressed: () => auth.logout()),
         ],
       ),
-      body: IndexedStack(index: _tab, children: _tabs),
+      body: KeyedSubtree(key: _refreshKey, child: IndexedStack(index: _tab, children: _tabs)),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         onDestinationSelected: (i) => setState(() => _tab = i),

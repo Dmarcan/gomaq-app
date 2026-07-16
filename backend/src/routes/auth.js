@@ -13,7 +13,7 @@ router.post('/login', async (req, res) => {
 
     try {
         const result = await pool.query(
-            'SELECT id, nombre, email, password_hash, rol, cliente_id FROM usuarios WHERE email = $1',
+            'SELECT id, nombre, email, password_hash, rol, cliente_id, estado_cuenta FROM usuarios WHERE email = $1',
             [email]
         );
         const usuario = result.rows[0];
@@ -33,6 +33,15 @@ router.post('/login', async (req, res) => {
         const passwordOk = await bcrypt.compare(password, usuario.password_hash);
         if (!passwordOk) {
             return res.status(401).json({ error: 'Credenciales invalidas' });
+        }
+
+        // defensa en profundidad: hoy los usuarios solo se crean ya activos, pero si
+        // alguna vez queda uno pendiente/rechazado en la tabla, no debe poder entrar
+        if (usuario.estado_cuenta === 'pendiente') {
+            return res.status(403).json({ error: 'Tu cuenta esta pendiente de aprobacion por el administrador' });
+        }
+        if (usuario.estado_cuenta === 'rechazado') {
+            return res.status(403).json({ error: 'Tu cuenta esta desactivada' });
         }
 
         const token = jwt.sign(

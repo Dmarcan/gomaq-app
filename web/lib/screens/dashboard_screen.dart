@@ -189,7 +189,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             children: [
               _tarjetaAtajo('${atajos['pendientes_facturar']}', 'Equipos pendientes de facturar', () => widget.onNavegar(3)),
               const SizedBox(width: 16),
-              _tarjetaAtajo('${atajos['solicitudes_pendientes']}', 'Solicitudes pendientes', () => widget.onNavegar(7)),
+              _tarjetaAtajo('${atajos['solicitudes_pendientes']}', 'Asistencias pendientes', () => widget.onNavegar(7)),
               const SizedBox(width: 16),
               _tarjetaAtajo('${atajos['notificaciones_error']}', 'Notificaciones en error', () => widget.onNavegar(8)),
             ],

@@ -17,4 +17,25 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
     }
 });
 
+// POST /api/notificaciones/:id/reintentar - devuelve una notificacion en error a la cola
+// del worker (reinicia intentos y backoff). Solo aplica a las que ya agotaron reintentos.
+router.post('/:id/reintentar', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    try {
+        const result = await pool.query(
+            `UPDATE notificaciones_pendientes
+             SET estado = 'pendiente', intentos = 0, ultimo_error = NULL, proximo_intento = now()
+             WHERE id = $1 AND estado = 'error'
+             RETURNING *`,
+            [req.params.id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Notificacion no encontrada o no esta en error' });
+        }
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al reintentar la notificacion' });
+    }
+});
+
 module.exports = router;

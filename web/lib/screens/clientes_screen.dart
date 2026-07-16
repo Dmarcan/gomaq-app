@@ -34,7 +34,7 @@ class _ClientesScreenState extends State<ClientesScreen> with SingleTickerProvid
         title: const Text('Clientes'),
         bottom: TabBar(
           controller: _tabController,
-          tabs: const [Tab(text: 'Clientes'), Tab(text: 'Solicitudes pendientes')],
+          tabs: const [Tab(text: 'Clientes'), Tab(text: 'Cuentas por aprobar')],
         ),
       ),
       body: TabBarView(

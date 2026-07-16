@@ -24,6 +24,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _seccion = 0;
   Map<String, dynamic>? _filtroFlota;
 
+  // cambiar esta key remonta la pantalla activa: su initState vuelve a cargar
+  // los datos - refresh universal sin depender de pull-to-refresh (inusable con mouse)
+  Key _refreshKey = UniqueKey();
+
   static const _items = [
     (icon: Icons.dashboard, label: 'Dashboard'),
     (icon: Icons.local_shipping, label: 'Flota'),
@@ -32,7 +36,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     (icon: Icons.build, label: 'Asignación'),
     (icon: Icons.assignment, label: 'Ordenes de Trabajo'),
     (icon: Icons.people, label: 'Clientes'),
-    (icon: Icons.support_agent, label: 'Solicitudes'),
+    (icon: Icons.support_agent, label: 'Asistencias'),
     (icon: Icons.notifications, label: 'Notificaciones'),
     (icon: Icons.inventory_2, label: 'Insumos'),
   ];
@@ -123,9 +127,20 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               children: [
                 Padding(
                   padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
-                  child: Text(_items[_seccion].label, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Text(_items[_seccion].label, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.refresh),
+                        tooltip: 'Refrescar',
+                        onPressed: () => setState(() => _refreshKey = UniqueKey()),
+                      ),
+                    ],
+                  ),
                 ),
-                Expanded(child: _pantallas[_seccion]),
+                Expanded(child: KeyedSubtree(key: _refreshKey, child: _pantallas[_seccion])),
               ],
             ),
           ),

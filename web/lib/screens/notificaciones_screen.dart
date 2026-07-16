@@ -36,34 +36,55 @@ class _NotificacionesScreenState extends State<NotificacionesScreen> {
     }
   }
 
+  Future<void> _reintentar(int id) async {
+    try {
+      await ApiClient.instance.post('/api/notificaciones/$id/reintentar', {});
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Notificación devuelta a la cola de envío')));
+      }
+      _cargar();
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    return RefreshIndicator(
-      onRefresh: _cargar,
-      child: _cargando
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(child: Text('Error: $_error'))
-              : _notificaciones.isEmpty
-                  ? const Center(child: Text('No hay notificaciones registradas'))
-                  : ListView.builder(
-                      padding: const EdgeInsets.all(16),
-                      itemCount: _notificaciones.length,
-                      itemBuilder: (context, i) {
-                        final n = _notificaciones[i];
-                        return Card(
-                          child: ListTile(
-                            leading: Icon(Icons.circle, size: 12, color: GomaqColors.colorEstado(n['estado'])),
-                            title: Text('${n['canal']} -> ${n['destinatario']}'),
-                            subtitle: Text(
-                              n['estado'] == 'error'
-                                  ? 'Error tras ${n['intentos']} intentos: ${n['ultimo_error'] ?? ''}'
-                                  : 'Estado: ${n['estado']} (${n['intentos']} intentos)',
+    return Scaffold(
+      body: RefreshIndicator(
+        onRefresh: _cargar,
+        child: _cargando
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+                ? Center(child: Text('Error: $_error'))
+                : _notificaciones.isEmpty
+                    ? const Center(child: Text('No hay notificaciones registradas'))
+                    : ListView.builder(
+                        padding: const EdgeInsets.all(16),
+                        itemCount: _notificaciones.length,
+                        itemBuilder: (context, i) {
+                          final n = _notificaciones[i];
+                          return Card(
+                            child: ListTile(
+                              leading: Icon(Icons.circle, size: 12, color: GomaqColors.colorEstado(n['estado'])),
+                              title: Text('${n['canal']} -> ${n['destinatario']}'),
+                              subtitle: Text(
+                                n['estado'] == 'error'
+                                    ? 'Error tras ${n['intentos']} intentos: ${n['ultimo_error'] ?? ''}'
+                                    : 'Estado: ${n['estado']} (${n['intentos']} intentos)',
+                              ),
+                              trailing: n['estado'] == 'error'
+                                  ? OutlinedButton.icon(
+                                      onPressed: () => _reintentar(n['id']),
+                                      icon: const Icon(Icons.replay, size: 16),
+                                      label: const Text('Reintentar'),
+                                    )
+                                  : null,
                             ),
-                          ),
-                        );
-                      },
-                    ),
+                          );
+                        },
+                      ),
+      ),
     );
   }
 }
