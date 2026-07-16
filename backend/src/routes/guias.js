@@ -33,11 +33,17 @@ router.post('/guias/detectar', verifyToken, requireRole('administrativo'), uploa
             if (!isNaN(fecha.getTime())) fechaHoraDetectada = fecha.toISOString();
         }
 
+        // en Chile no existe un tipo de DTE separado para "guia de recepcion": tanto la
+        // salida como la devolucion se emiten como "GUIA DE DESPACHO ELECTRONICA", asi que
+        // el titulo del documento no sirve para distinguirlas. La senal real esta en el
+        // campo "Tipo de Traslado" (Devolucion/Recepcion) - se busca esa palabra primero,
+        // y solo si no aparece se asume despacho por default al encontrar el titulo.
         let tipoDetectado = null;
-        const posDespacho = texto.search(/despacho/i);
-        const posRecepcion = texto.search(/recepci[oó]n|traslado/i);
-        if (posDespacho >= 0 && (posRecepcion < 0 || posDespacho < posRecepcion)) tipoDetectado = 'despacho';
-        else if (posRecepcion >= 0) tipoDetectado = 'recepcion';
+        if (/devoluci[oó]n|recepci[oó]n/i.test(texto)) {
+            tipoDetectado = 'recepcion';
+        } else if (/despacho/i.test(texto)) {
+            tipoDetectado = 'despacho';
+        }
 
         res.json({
             fecha_hora_detectada: fechaHoraDetectada,
