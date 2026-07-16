@@ -3,17 +3,31 @@ import 'package:flutter/foundation.dart';
 import 'api_client.dart';
 
 class AuthService extends ChangeNotifier {
+  AuthService() {
+    // interceptor central: si el backend responde 401 estando logueado (token
+    // expirado tras 12h), se cierra la sesion y el login muestra el motivo.
+    // El guard de _autenticado evita que un intento de login fallido (tambien 401)
+    // dispare el mensaje de "sesion expirada".
+    ApiClient.onSesionExpirada = () {
+      if (!_autenticado) return;
+      _mensajeSesion = 'Tu sesión expiró, vuelve a iniciar sesión';
+      logout();
+    };
+  }
+
   bool _autenticado = false;
   bool _verificandoSesion = true;
   String? _rol;
   String? _nombre;
   int? _clienteId;
+  String? _mensajeSesion;
 
   bool get autenticado => _autenticado;
   bool get verificandoSesion => _verificandoSesion;
   String? get rol => _rol;
   String? get nombre => _nombre;
   int? get clienteId => _clienteId;
+  String? get mensajeSesion => _mensajeSesion;
 
   bool get esGerente => _rol == 'gerente';
   bool get esAdministrativo => _rol == 'administrativo';
@@ -50,6 +64,7 @@ class AuthService extends ChangeNotifier {
     _nombre = data['usuario']['nombre'];
     _clienteId = data['usuario']['cliente_id'];
     _autenticado = true;
+    _mensajeSesion = null;
     notifyListeners();
   }
 

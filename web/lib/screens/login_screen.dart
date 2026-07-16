@@ -58,6 +58,22 @@ class _LoginScreenState extends State<LoginScreen> {
                   const Text('GOMAQ', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
                   const Text('Panel de Gestion', style: TextStyle(fontSize: 14, color: Colors.grey)),
                   const SizedBox(height: 32),
+                  if (context.watch<AuthService>().mensajeSesion != null)
+                    Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: 16),
+                      padding: const EdgeInsets.all(10),
+                      decoration: BoxDecoration(
+                        color: Colors.amber.shade50,
+                        border: Border.all(color: Colors.amber.shade200),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        context.watch<AuthService>().mensajeSesion!,
+                        style: const TextStyle(fontSize: 13),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
                   TextField(
                     controller: _emailCtrl,
                     decoration: const InputDecoration(labelText: 'Correo', border: OutlineInputBorder()),

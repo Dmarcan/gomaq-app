@@ -4,6 +4,7 @@ import 'services/auth_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/cliente_portal_screen.dart';
+import 'screens/rol_no_soportado_screen.dart';
 import 'theme/gomaq_theme.dart';
 
 void main() {
@@ -38,6 +39,10 @@ class _Raiz extends StatelessWidget {
     if (!auth.autenticado) {
       return const LoginScreen();
     }
-    return auth.esCliente ? const ClientePortalScreen() : const AdminDashboardScreen();
+    // enrutado explicito por rol: solo los roles con interfaz web entran a sus
+    // pantallas; el resto (mecanico) recibe una explicacion en vez de un panel roto
+    if (auth.esCliente) return const ClientePortalScreen();
+    if (auth.esAdministrativo || auth.esGerente) return const AdminDashboardScreen();
+    return const RolNoSoportadoScreen();
   }
 }

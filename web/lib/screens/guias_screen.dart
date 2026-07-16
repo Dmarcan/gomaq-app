@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:provider/provider.dart';
 import '../services/api_client.dart';
+import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
 
 class GuiasScreen extends StatefulWidget {
@@ -144,6 +146,30 @@ class _GuiasScreenState extends State<GuiasScreen> {
   @override
   Widget build(BuildContext context) {
     if (_cargando) return const Center(child: CircularProgressIndicator());
+
+    // el registro de guias es exclusivo de Administrativo (backend igual);
+    // al Gerente se le explica en vez de mostrarle un formulario que le fallara
+    if (!context.watch<AuthService>().esAdministrativo) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.description_outlined, size: 56, color: Colors.grey),
+              SizedBox(height: 16),
+              Text('El registro de guías lo realiza Administrativo', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+              SizedBox(height: 8),
+              Text(
+                'Los días de arriendo calculados a partir de las guías se ven en Facturación y en el perfil de cada equipo.',
+                textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.black54),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     return SingleChildScrollView(
       padding: const EdgeInsets.all(24),

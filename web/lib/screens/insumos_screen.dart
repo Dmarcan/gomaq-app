@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../services/api_client.dart';
+import '../services/auth_service.dart';
 
 class InsumosScreen extends StatefulWidget {
   const InsumosScreen({super.key});
@@ -126,6 +128,9 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
 
   @override
   Widget build(BuildContext context) {
+    // crear insumos e ingresar stock es exclusivo de Administrativo (backend igual);
+    // el Gerente conserva la lectura del catalogo y de los consumos
+    final puedeEscribir = context.watch<AuthService>().esAdministrativo;
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
@@ -135,11 +140,13 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
           tabs: const [Tab(text: 'Catalogo'), Tab(text: 'Consumos recientes')],
         ),
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _abrirDialogoCrear,
-        icon: const Icon(Icons.add),
-        label: const Text('Nuevo insumo'),
-      ),
+      floatingActionButton: puedeEscribir
+          ? FloatingActionButton.extended(
+              onPressed: _abrirDialogoCrear,
+              icon: const Icon(Icons.add),
+              label: const Text('Nuevo insumo'),
+            )
+          : null,
       body: _cargando
           ? const Center(child: CircularProgressIndicator())
           : _error != null
@@ -160,7 +167,9 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
                               subtitle: Text(
                                 'Stock: ${insumo['stock_actual']} ${insumo['unidad_medida']} · Costo unitario: ${insumo['costo_unitario'] ?? '-'}',
                               ),
-                              trailing: OutlinedButton.icon(
+                              trailing: !puedeEscribir
+                                  ? null
+                                  : OutlinedButton.icon(
                                 onPressed: () => _abrirDialogoIngreso(insumo),
                                 icon: const Icon(Icons.add_box_outlined),
                                 label: const Text('Ingreso'),

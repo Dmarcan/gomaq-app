@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:provider/provider.dart';
 import '../services/api_client.dart';
+import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
 
 class FacturacionScreen extends StatefulWidget {
@@ -113,12 +115,19 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
         itemBuilder: (context, i) {
           final item = items[i];
           final esArriendo = item['tipo'] == 'arriendo';
+          // emitir la factura es exclusivo de Administrativo (backend igual);
+          // el Gerente ve la lista de pendientes como lectura
+          final puedeFacturar = context.watch<AuthService>().esAdministrativo;
           return Card(
             child: ListTile(
               leading: Icon(esArriendo ? Icons.local_shipping : Icons.build, color: GomaqColors.primario),
               title: Text(item['titulo'] as String),
-              subtitle: Text(item['subtitulo'] as String),
-              onTap: () => _abrirDialogo(item),
+              subtitle: Text(
+                puedeFacturar
+                    ? item['subtitulo'] as String
+                    : '${item['subtitulo']} · Administrativo emite la factura',
+              ),
+              onTap: puedeFacturar ? () => _abrirDialogo(item) : null,
             ),
           );
         },

@@ -14,6 +14,11 @@ class ApiClient {
   ApiClient._();
   static final ApiClient instance = ApiClient._();
 
+  /// Interceptor central de sesion expirada: AuthService lo registra al crearse.
+  /// Ante cualquier 401 del backend se invoca (ademas de lanzar la excepcion),
+  /// para cerrar la sesion y volver al login en vez de dejar la app "muerta".
+  static void Function()? onSesionExpirada;
+
   // URL base vacia por defecto: el backend sirve este mismo build de Flutter Web
   // (server.js) desde el mismo origen que la API, asi que las rutas relativas
   // ('/api/...') apuntan solas al servidor correcto sin importar si se accede por
@@ -57,6 +62,9 @@ class ApiClient {
     try {
       mensaje = jsonDecode(resp.body)['error'] ?? resp.body;
     } catch (_) {}
+    if (resp.statusCode == 401) {
+      onSesionExpirada?.call();
+    }
     throw ApiException(resp.statusCode, mensaje);
   }
 

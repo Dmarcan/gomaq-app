@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../services/api_client.dart';
+import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
 
 class AsignacionScreen extends StatefulWidget {
@@ -156,12 +158,19 @@ class _AsignarDialogState extends State<_AsignarDialog> {
                       color: (m['ot_abiertas'] == 0 || m['ot_abiertas'] == '0') ? GomaqColors.estadoPositivo : GomaqColors.estadoAdvertencia,
                     ),
                   ),
-                  trailing: OutlinedButton(
-                    onPressed: _asignando != null ? null : () => _asignar(m['id']),
-                    child: _asignando == m['id']
-                        ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
-                        : const Text('Asignar y Notificar'),
-                  ),
+                  // asignar es exclusivo de Administrativo (backend igual); el Gerente
+                  // ve la lista como lectura con el boton deshabilitado y el motivo
+                  trailing: context.watch<AuthService>().esAdministrativo
+                      ? OutlinedButton(
+                          onPressed: _asignando != null ? null : () => _asignar(m['id']),
+                          child: _asignando == m['id']
+                              ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2))
+                              : const Text('Asignar y Notificar'),
+                        )
+                      : const Tooltip(
+                          message: 'Solo Administrativo asigna mecánicos',
+                          child: OutlinedButton(onPressed: null, child: Text('Asignar y Notificar')),
+                        ),
                 ),
           ],
           ),
