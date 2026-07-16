@@ -8,7 +8,10 @@ import '../widgets/ficha_tecnica_campos.dart';
 import 'maquinaria_perfil_screen.dart';
 
 class FlotaScreen extends StatefulWidget {
-  const FlotaScreen({super.key});
+  /// Filtro inicial recibido al llegar desde un número tocable del Dashboard,
+  /// ej. {'disponibilidad': 'arrendados'} o {'estado': 'en_mantencion'}.
+  final Map<String, dynamic>? filtroInicial;
+  const FlotaScreen({super.key, this.filtroInicial});
 
   @override
   State<FlotaScreen> createState() => _FlotaScreenState();
@@ -20,10 +23,43 @@ class _FlotaScreenState extends State<FlotaScreen> {
   String? _error;
   String _busqueda = '';
 
+  String? _filtroDisponibilidad;
+  String? _filtroEstado;
+  String? _filtroCategoria;
+  String? _filtroCliente;
+  String _orden = 'codigo';
+  bool _filtrosExpandido = false;
+
   @override
   void initState() {
     super.initState();
+    _filtroDisponibilidad = widget.filtroInicial?['disponibilidad'];
+    _filtroEstado = widget.filtroInicial?['estado'];
+    _filtrosExpandido = widget.filtroInicial != null;
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
+  }
+
+  int get _filtrosActivos =>
+      [_filtroDisponibilidad, _filtroEstado, _filtroCategoria, _filtroCliente].where((f) => f != null).length;
+
+  void _alternarFiltro(String grupo, String? valorActual, String valor) {
+    setState(() {
+      final nuevoValor = valorActual == valor ? null : valor;
+      switch (grupo) {
+        case 'disponibilidad':
+          _filtroDisponibilidad = nuevoValor;
+          break;
+        case 'estado':
+          _filtroEstado = nuevoValor;
+          break;
+        case 'categoria':
+          _filtroCategoria = nuevoValor;
+          break;
+        case 'cliente':
+          _filtroCliente = nuevoValor;
+          break;
+      }
+    });
   }
 
   Future<void> _cargar() async {
@@ -174,14 +210,40 @@ class _FlotaScreenState extends State<FlotaScreen> {
     }
   }
 
+  List<String> get _clientesDisponibles => _maquinarias
+      .map((m) => m['cliente'] as String?)
+      .whereType<String>()
+      .toSet()
+      .toList()
+    ..sort();
+
   List<dynamic> get _maquinariasFiltradas {
-    if (_busqueda.trim().isEmpty) return _maquinarias;
-    final q = _busqueda.toLowerCase();
-    return _maquinarias.where((m) {
-      final codigo = (m['codigo'] as String? ?? '').toLowerCase();
-      final tipo = (m['tipo'] as String? ?? '').toLowerCase();
-      return codigo.contains(q) || tipo.contains(q);
+    final q = _busqueda.trim().toLowerCase();
+    final filtradas = _maquinarias.where((m) {
+      if (q.isNotEmpty) {
+        final codigo = (m['codigo'] as String? ?? '').toLowerCase();
+        final tipo = (m['tipo'] as String? ?? '').toLowerCase();
+        if (!codigo.contains(q) && !tipo.contains(q)) return false;
+      }
+      if (_filtroDisponibilidad == 'disponibles' && m['cliente'] != null) return false;
+      if (_filtroDisponibilidad == 'arrendados' && m['cliente'] == null) return false;
+      if (_filtroEstado != null && m['estado'] != _filtroEstado) return false;
+      if (_filtroCategoria != null && m['categoria_equipo'] != _filtroCategoria) return false;
+      if (_filtroCliente != null && m['cliente'] != _filtroCliente) return false;
+      return true;
     }).toList();
+
+    filtradas.sort((a, b) {
+      switch (_orden) {
+        case 'estado':
+          return (a['estado'] as String? ?? '').compareTo(b['estado'] as String? ?? '');
+        case 'categoria':
+          return (a['categoria_equipo'] as String? ?? '').compareTo(b['categoria_equipo'] as String? ?? '');
+        default:
+          return (a['codigo'] as String? ?? '').compareTo(b['codigo'] as String? ?? '');
+      }
+    });
+    return filtradas;
   }
 
   @override
@@ -202,16 +264,91 @@ class _FlotaScreenState extends State<FlotaScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-            child: TextField(
-              onChanged: (v) => setState(() => _busqueda = v),
-              decoration: const InputDecoration(
-                prefixIcon: Icon(Icons.search),
-                hintText: 'Buscar por código o tipo...',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    onChanged: (v) => setState(() => _busqueda = v),
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search),
+                      hintText: 'Buscar por código o tipo...',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  onPressed: () => setState(() => _filtrosExpandido = !_filtrosExpandido),
+                  icon: const Icon(Icons.filter_list, size: 18),
+                  label: Text(_filtrosActivos > 0 ? 'Filtros ($_filtrosActivos)' : 'Filtros'),
+                ),
+                const SizedBox(width: 8),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.sort),
+                  tooltip: 'Ordenar',
+                  onSelected: (v) => setState(() => _orden = v),
+                  itemBuilder: (context) => const [
+                    PopupMenuItem(value: 'codigo', child: Text('Ordenar por código')),
+                    PopupMenuItem(value: 'estado', child: Text('Ordenar por estado')),
+                    PopupMenuItem(value: 'categoria', child: Text('Ordenar por categoría')),
+                  ],
+                ),
+              ],
             ),
           ),
+          if (_filtrosExpandido)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      FilterChip(
+                        label: const Text('Disponibles'),
+                        selected: _filtroDisponibilidad == 'disponibles',
+                        onSelected: (_) => _alternarFiltro('disponibilidad', _filtroDisponibilidad, 'disponibles'),
+                      ),
+                      FilterChip(
+                        label: const Text('Arrendados'),
+                        selected: _filtroDisponibilidad == 'arrendados',
+                        onSelected: (_) => _alternarFiltro('disponibilidad', _filtroDisponibilidad, 'arrendados'),
+                      ),
+                      FilterChip(
+                        label: const Text('Operativa'),
+                        selected: _filtroEstado == 'operativa',
+                        onSelected: (_) => _alternarFiltro('estado', _filtroEstado, 'operativa'),
+                      ),
+                      FilterChip(
+                        label: const Text('En mantención'),
+                        selected: _filtroEstado == 'en_mantencion',
+                        onSelected: (_) => _alternarFiltro('estado', _filtroEstado, 'en_mantencion'),
+                      ),
+                      FilterChip(
+                        label: const Text('Fuera de servicio'),
+                        selected: _filtroEstado == 'fuera_de_servicio',
+                        onSelected: (_) => _alternarFiltro('estado', _filtroEstado, 'fuera_de_servicio'),
+                      ),
+                      for (final c in categoriasEquipo)
+                        FilterChip(
+                          label: Text(c.etiqueta),
+                          selected: _filtroCategoria == c.valor,
+                          onSelected: (_) => _alternarFiltro('categoria', _filtroCategoria, c.valor),
+                        ),
+                      for (final cliente in _clientesDisponibles)
+                        FilterChip(
+                          label: Text(cliente),
+                          selected: _filtroCliente == cliente,
+                          onSelected: (_) => _alternarFiltro('cliente', _filtroCliente, cliente),
+                        ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
           Expanded(
             child: RefreshIndicator(
               onRefresh: _cargar,

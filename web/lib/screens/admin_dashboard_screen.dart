@@ -22,6 +22,7 @@ class AdminDashboardScreen extends StatefulWidget {
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   int _seccion = 0;
+  Map<String, dynamic>? _filtroFlota;
 
   static const _items = [
     (icon: Icons.dashboard, label: 'Dashboard'),
@@ -37,8 +38,13 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   ];
 
   List<Widget> get _pantallas => [
-        DashboardScreen(onNavegar: (i) => setState(() => _seccion = i)),
-        const FlotaScreen(),
+        DashboardScreen(
+          onNavegar: (i, {filtro}) => setState(() {
+            _seccion = i;
+            _filtroFlota = filtro;
+          }),
+        ),
+        FlotaScreen(key: ValueKey(_filtroFlota?.toString() ?? 'sin-filtro'), filtroInicial: _filtroFlota),
         const GuiasScreen(),
         const FacturacionScreen(),
         const AsignacionScreen(),
@@ -137,7 +143,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         borderRadius: BorderRadius.circular(8),
         child: InkWell(
           borderRadius: BorderRadius.circular(8),
-          onTap: () => setState(() => _seccion = i),
+          onTap: () => setState(() {
+            _seccion = i;
+            _filtroFlota = null;
+          }),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             child: Row(

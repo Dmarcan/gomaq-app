@@ -20,7 +20,7 @@ async function conFotoFirmada(fila) {
 router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT m.id, m.codigo, m.tipo, m.estado, m.ubicacion, m.foto_url, c.nombre AS cliente
+            `SELECT m.id, m.codigo, m.tipo, m.estado, m.ubicacion, m.foto_url, m.categoria_equipo, c.nombre AS cliente
              FROM maquinarias m
              LEFT JOIN clientes c ON c.id = m.cliente_id
              ORDER BY m.codigo`

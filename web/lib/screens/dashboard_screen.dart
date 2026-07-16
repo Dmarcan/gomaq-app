@@ -3,7 +3,7 @@ import '../services/api_client.dart';
 import '../theme/gomaq_theme.dart';
 
 class DashboardScreen extends StatefulWidget {
-  final void Function(int seccion) onNavegar;
+  final void Function(int seccion, {Map<String, dynamic>? filtro}) onNavegar;
   const DashboardScreen({super.key, required this.onNavegar});
 
   @override
@@ -42,24 +42,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
     }
   }
 
-  Widget _tarjetaNumero(String numero, String etiqueta, {Color? color}) {
-    return Expanded(
-      child: Container(
-        padding: const EdgeInsets.all(16),
-        decoration: BoxDecoration(
-          border: Border.all(color: Colors.grey.shade200),
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(numero, style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: color)),
-            const SizedBox(height: 4),
-            Text(etiqueta, style: const TextStyle(fontSize: 12, color: Colors.black54)),
-          ],
-        ),
+  Widget _tarjetaNumero(String numero, String etiqueta, {Color? color, VoidCallback? onTap}) {
+    final contenido = Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        border: Border.all(color: color != null ? color.withValues(alpha: 0.3) : Colors.grey.shade200),
+        color: color?.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(numero, style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: color)),
+          const SizedBox(height: 4),
+          Text(etiqueta, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+        ],
       ),
     );
+    if (onTap == null) return Expanded(child: contenido);
+    return Expanded(child: InkWell(onTap: onTap, borderRadius: BorderRadius.circular(12), child: contenido));
   }
 
   Widget _tarjetaAtajo(String numero, String etiqueta, VoidCallback onTap) {
@@ -137,9 +138,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 8),
           Row(
             children: [
-              _tarjetaNumero('${flota['arrendados']}', 'Equipos arrendados'),
+              _tarjetaNumero(
+                '${flota['arrendados']}',
+                'Equipos arrendados',
+                color: GomaqColors.estadoAdvertencia,
+                onTap: () => widget.onNavegar(1, filtro: {'disponibilidad': 'arrendados'}),
+              ),
               const SizedBox(width: 16),
-              _tarjetaNumero('${flota['disponibles']}', 'Equipos disponibles'),
+              _tarjetaNumero(
+                '${flota['disponibles']}',
+                'Equipos disponibles',
+                color: GomaqColors.estadoPositivo,
+                onTap: () => widget.onNavegar(1, filtro: {'disponibilidad': 'disponibles'}),
+              ),
             ],
           ),
           const SizedBox(height: 24),
@@ -148,11 +159,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 8),
           Row(
             children: [
-              _tarjetaNumero('${flota['operativas']}', 'Operativa', color: GomaqColors.estadoPositivo),
+              _tarjetaNumero(
+                '${flota['operativas']}',
+                'Operativa',
+                color: GomaqColors.estadoPositivo,
+                onTap: () => widget.onNavegar(1, filtro: {'estado': 'operativa'}),
+              ),
               const SizedBox(width: 16),
-              _tarjetaNumero('${flota['en_mantencion']}', 'En mantención', color: GomaqColors.estadoAdvertencia),
+              _tarjetaNumero(
+                '${flota['en_mantencion']}',
+                'En mantención',
+                color: GomaqColors.estadoAdvertencia,
+                onTap: () => widget.onNavegar(1, filtro: {'estado': 'en_mantencion'}),
+              ),
               const SizedBox(width: 16),
-              _tarjetaNumero('${flota['fuera_de_servicio']}', 'Fuera de servicio', color: GomaqColors.estadoNegativo),
+              _tarjetaNumero(
+                '${flota['fuera_de_servicio']}',
+                'Fuera de servicio',
+                color: GomaqColors.estadoNegativo,
+                onTap: () => widget.onNavegar(1, filtro: {'estado': 'fuera_de_servicio'}),
+              ),
             ],
           ),
           const SizedBox(height: 24),
