@@ -14,13 +14,13 @@ class ApiClient {
   ApiClient._();
   static final ApiClient instance = ApiClient._();
 
-  // URL base configurable: la IP LAN del GX520 por defecto.
-  // Para acceso fuera de la red local, cambiar por la URL de Cloudflare Tunnel
-  // con --dart-define=GOMAQ_API_URL=https://...
-  static const String baseUrl = String.fromEnvironment(
-    'GOMAQ_API_URL',
-    defaultValue: 'http://192.168.1.29:3000',
-  );
+  // URL base vacia por defecto: el backend sirve este mismo build de Flutter Web
+  // (server.js) desde el mismo origen que la API, asi que las rutas relativas
+  // ('/api/...') apuntan solas al servidor correcto sin importar si se accede por
+  // la IP LAN, el tunel de Cloudflare, o un dominio propio mas adelante.
+  // Solo hace falta pasar --dart-define=GOMAQ_API_URL=http://192.168.1.29:3000
+  // para `flutter run` en desarrollo, donde la app NO corre en el mismo origen que el backend.
+  static const String baseUrl = String.fromEnvironment('GOMAQ_API_URL', defaultValue: '');
 
   static const _timeout = Duration(seconds: 15);
 
