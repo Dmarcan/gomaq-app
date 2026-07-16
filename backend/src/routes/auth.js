@@ -18,6 +18,15 @@ router.post('/login', async (req, res) => {
         );
         const usuario = result.rows[0];
         if (!usuario) {
+            // si no existe en usuarios, puede ser un registro de cliente aun no aprobado -
+            // se le da un mensaje mas claro que el generico de credenciales invalidas
+            const solicitud = await pool.query(
+                `SELECT estado FROM solicitudes_cliente WHERE email = $1 AND estado = 'pendiente'`,
+                [email]
+            );
+            if (solicitud.rows.length > 0) {
+                return res.status(403).json({ error: 'Tu cuenta esta pendiente de aprobacion por el administrador' });
+            }
             return res.status(401).json({ error: 'Credenciales invalidas' });
         }
 

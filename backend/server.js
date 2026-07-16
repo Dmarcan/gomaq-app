@@ -17,6 +17,7 @@ const dashboardRouter = require('./src/routes/dashboard');
 const insumosRouter = require('./src/routes/insumos');
 const ejecutivosRouter = require('./src/routes/ejecutivos');
 const facturacionRouter = require('./src/routes/facturacion');
+const registroRouter = require('./src/routes/registro');
 const { iniciarWorker } = require('./src/workers/notificaciones');
 
 const app = express();
@@ -52,6 +53,7 @@ app.use('/api/dashboard', dashboardRouter);
 app.use('/api/insumos', insumosRouter);
 app.use('/api/ejecutivos', ejecutivosRouter);
 app.use('/api/facturacion', facturacionRouter);
+app.use('/api/registro-cliente', registroRouter);
 
 // fallback de SPA: cualquier ruta que no sea /api ni /uploads devuelve el index.html
 // del panel web (si existe), para que el enrutamiento propio de Flutter Web funcione
