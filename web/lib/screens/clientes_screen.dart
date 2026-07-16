@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
+import 'usuarios_screen.dart';
 
 class ClientesScreen extends StatefulWidget {
   const ClientesScreen({super.key});
@@ -10,7 +11,48 @@ class ClientesScreen extends StatefulWidget {
   State<ClientesScreen> createState() => _ClientesScreenState();
 }
 
-class _ClientesScreenState extends State<ClientesScreen> {
+class _ClientesScreenState extends State<ClientesScreen> with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 2, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        title: const Text('Clientes'),
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: const [Tab(text: 'Clientes'), Tab(text: 'Solicitudes pendientes')],
+        ),
+      ),
+      body: TabBarView(
+        controller: _tabController,
+        children: const [_ClientesListaBody(), UsuariosScreen()],
+      ),
+    );
+  }
+}
+
+class _ClientesListaBody extends StatefulWidget {
+  const _ClientesListaBody();
+
+  @override
+  State<_ClientesListaBody> createState() => _ClientesListaBodyState();
+}
+
+class _ClientesListaBodyState extends State<_ClientesListaBody> {
   List<dynamic> _clientes = [];
   bool _cargando = true;
   String? _error;

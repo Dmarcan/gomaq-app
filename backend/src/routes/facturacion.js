@@ -134,6 +134,25 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), upload.sing
     }
 });
 
+// PATCH /api/facturacion/:facturaId - corrige folio/monto despues de creada la factura
+// (por si la deteccion del PDF se equivoco), funciona para cualquier tipo de factura
+router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (req, res) => {
+    const { folio, monto } = req.body;
+    try {
+        const result = await pool.query(
+            `UPDATE facturas SET folio = COALESCE($1, folio), monto = COALESCE($2, monto) WHERE id = $3 RETURNING *`,
+            [folio || null, monto || null, req.params.facturaId]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Factura no encontrada' });
+        }
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al actualizar la factura' });
+    }
+});
+
 // POST /api/facturacion/:facturaId/autorizar-envio - version unificada de la que ya
 // existia en facturas.js (solo para reparaciones): funciona para cualquier factura,
 // sea de reparacion (orden_trabajo_id) o de arriendo (maquinaria_id)

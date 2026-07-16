@@ -170,7 +170,10 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
   PlatformFile? _archivo;
   bool _detectando = false;
   bool _procesando = false;
+  bool _guardandoEdicion = false;
   Map<String, dynamic>? _facturaCreada;
+  final _folioEditCtrl = TextEditingController();
+  final _montoEditCtrl = TextEditingController();
 
   @override
   void initState() {
@@ -219,11 +222,36 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
           if (_montoCtrl.text.trim().isNotEmpty) 'monto': _montoCtrl.text.trim(),
         },
       );
-      if (mounted) setState(() => _facturaCreada = resultado);
+      if (mounted) {
+        setState(() {
+          _facturaCreada = resultado;
+          _folioEditCtrl.text = resultado['folio']?.toString() ?? '';
+          _montoEditCtrl.text = resultado['monto']?.toString() ?? '';
+        });
+      }
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
     } finally {
       if (mounted) setState(() => _procesando = false);
+    }
+  }
+
+  Future<void> _guardarCambios() async {
+    if (_facturaCreada == null) return;
+    setState(() => _guardandoEdicion = true);
+    try {
+      final actualizada = await ApiClient.instance.patch('/api/facturacion/${_facturaCreada!['id']}', {
+        'folio': _folioEditCtrl.text.trim().isEmpty ? null : _folioEditCtrl.text.trim(),
+        'monto': _montoEditCtrl.text.trim().isEmpty ? null : _montoEditCtrl.text.trim(),
+      });
+      if (mounted) {
+        setState(() => _facturaCreada = actualizada);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Datos actualizados')));
+      }
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    } finally {
+      if (mounted) setState(() => _guardandoEdicion = false);
     }
   }
 
@@ -304,6 +332,11 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
     final cliente = widget.item['cliente_nombre'] ?? '-';
     return [
       const Text('VISTA PREVIA ESTRUCTURADA', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+      const SizedBox(height: 4),
+      const Text(
+        'Si algo no se detectó bien, corrígelo aquí y guarda antes de enviar el correo',
+        style: TextStyle(fontSize: 12, color: Colors.black54, fontStyle: FontStyle.italic),
+      ),
       const SizedBox(height: 8),
       Container(
         padding: const EdgeInsets.all(12),
@@ -311,10 +344,33 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Factura Electrónica — Folio ${f['folio']}', style: const TextStyle(fontWeight: FontWeight.bold, color: GomaqColors.primario)),
+            Text('Factura Electrónica', style: const TextStyle(fontWeight: FontWeight.bold, color: GomaqColors.primario)),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(child: TextField(controller: _folioEditCtrl, decoration: const InputDecoration(labelText: 'Folio'))),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: TextField(
+                    controller: _montoEditCtrl,
+                    decoration: const InputDecoration(labelText: 'Monto (CLP)'),
+                    keyboardType: TextInputType.number,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerRight,
+              child: OutlinedButton(
+                onPressed: _guardandoEdicion ? null : _guardarCambios,
+                child: _guardandoEdicion
+                    ? const SizedBox(height: 14, width: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Text('Guardar cambios'),
+              ),
+            ),
             const SizedBox(height: 8),
             Text('Cliente: $cliente'),
-            Text('Monto: ${f['monto'] ?? '-'}'),
             Text(widget.item['titulo'] as String),
           ],
         ),
