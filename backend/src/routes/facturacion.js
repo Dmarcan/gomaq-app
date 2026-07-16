@@ -1,10 +1,10 @@
 const express = require('express');
 const multer = require('multer');
-const pdfParse = require('pdf-parse');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { calcularDiasTranscurridos } = require('../utils/diasArriendo');
+const { leerTextoPdf } = require('../utils/leerTextoPdf');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -75,13 +75,7 @@ router.post('/detectar', verifyToken, requireRole('administrativo'), upload.sing
         return res.status(400).json({ error: 'archivo (PDF) es requerido' });
     }
     try {
-        let texto = '';
-        try {
-            const datos = await pdfParse(req.file.buffer);
-            texto = datos.text || '';
-        } catch (_) {
-            // PDF sin texto legible - se responde todo en null
-        }
+        const texto = await leerTextoPdf(req.file.buffer);
 
         let montoDetectado = null;
         const matchMonto = texto.match(/total[^\d]{0,15}([\d.,]{4,})/i) || texto.match(/\$\s?([\d.,]{4,})/);

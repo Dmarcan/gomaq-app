@@ -1,10 +1,10 @@
 const express = require('express');
 const multer = require('multer');
-const pdfParse = require('pdf-parse');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { calcularInicioCobro, calcularDiasTranscurridos } = require('../utils/diasArriendo');
+const { leerTextoPdf } = require('../utils/leerTextoPdf');
 
 const router = express.Router();
 
@@ -18,13 +18,7 @@ router.post('/guias/detectar', verifyToken, requireRole('administrativo'), uploa
         return res.status(400).json({ error: 'archivo (PDF) es requerido' });
     }
     try {
-        let texto = '';
-        try {
-            const datos = await pdfParse(req.file.buffer);
-            texto = datos.text || '';
-        } catch (_) {
-            // PDF sin texto legible (escaneado/imagen) - se responde todo en null, no es un error
-        }
+        const texto = await leerTextoPdf(req.file.buffer);
 
         const matchFecha = texto.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
         const matchHora = texto.match(/(\d{1,2}):(\d{2})/);
