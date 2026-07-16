@@ -15,13 +15,16 @@ const upload = multer({ storage: multer.memoryStorage() });
 // les ponga monto, y reparaciones ya valorizadas listas para emitir factura.
 router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
+        // el cliente sale de la propia guia de recepcion (snapshot al momento del evento),
+        // NUNCA de maquinarias.cliente_id: la recepcion libera la maquina (cliente_id = NULL)
+        // justo antes de llegar aca, y el arriendo quedaria sin cliente para facturar
         const arriendosResult = await pool.query(`
             SELECT g.id AS guia_recepcion_id, g.maquinaria_id, m.codigo AS maquinaria_codigo,
                    c.nombre AS cliente_nombre, c.email AS cliente_email,
                    d.fecha AS fecha_despacho, g.fecha AS fecha_recepcion
             FROM guias g
             JOIN maquinarias m ON m.id = g.maquinaria_id
-            LEFT JOIN clientes c ON c.id = m.cliente_id
+            LEFT JOIN clientes c ON c.id = g.cliente_id
             JOIN LATERAL (
                 SELECT fecha FROM guias d2
                 WHERE d2.maquinaria_id = g.maquinaria_id AND d2.tipo = 'despacho'
@@ -151,6 +154,8 @@ router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (r
 // sea de reparacion (orden_trabajo_id) o de arriendo (maquinaria_id)
 router.post('/:facturaId/autorizar-envio', verifyToken, requireRole('administrativo'), async (req, res) => {
     try {
+        // para facturas de arriendo, el cliente sale de la guia de recepcion (snapshot),
+        // no de la maquinaria (que ya fue liberada al recibir el equipo)
         const result = await pool.query(
             `SELECT f.*, m.codigo AS maquinaria_codigo,
                     cot.nombre AS cliente_nombre_ot, cot.email AS cliente_email_ot,
@@ -159,7 +164,8 @@ router.post('/:facturaId/autorizar-envio', verifyToken, requireRole('administrat
              LEFT JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
              LEFT JOIN clientes cot ON cot.id = ot.cliente_id
              LEFT JOIN maquinarias m ON m.id = f.maquinaria_id
-             LEFT JOIN clientes cm ON cm.id = m.cliente_id
+             LEFT JOIN guias g ON g.id = f.guia_recepcion_id
+             LEFT JOIN clientes cm ON cm.id = g.cliente_id
              WHERE f.id = $1`,
             [req.params.facturaId]
         );

@@ -79,6 +79,28 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), upload.sin
 
     const client = await pool.connect();
     try {
+        if (cliente_id) {
+            const clienteExiste = await client.query('SELECT id FROM clientes WHERE id = $1', [cliente_id]);
+            if (clienteExiste.rows.length === 0) {
+                return res.status(400).json({ error: 'El cliente indicado no existe' });
+            }
+        }
+
+        // la guia guarda su propio cliente (snapshot del momento del evento): en un despacho
+        // es el cliente elegido; en una recepcion, el que tenia la maquina antes de liberarse.
+        // Nunca derivarlo despues desde maquinarias.cliente_id - la recepcion lo pone en NULL
+        // y facturacion lo necesita (bug corregido en auditoria).
+        let clienteGuia = null;
+        if (tipo === 'despacho') {
+            clienteGuia = cliente_id || null;
+        } else {
+            const maq = await client.query('SELECT cliente_id FROM maquinarias WHERE id = $1', [id]);
+            if (maq.rows.length === 0) {
+                return res.status(404).json({ error: 'Maquinaria no encontrada' });
+            }
+            clienteGuia = maq.rows[0].cliente_id;
+        }
+
         const rutaStorage = `guias/${id}/${Date.now()}-${req.file.originalname}`;
         const { error: errorSubida } = await supabase.storage
             .from(BUCKET_DOCUMENTOS)
@@ -88,10 +110,10 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), upload.sin
         await client.query('BEGIN');
 
         const result = await client.query(
-            `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, fallido)
-             VALUES ($1, $2::tipo_guia, $3, COALESCE($4, now()), COALESCE($5, false))
+            `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, fallido, cliente_id)
+             VALUES ($1, $2::tipo_guia, $3, COALESCE($4, now()), COALESCE($5, false), $6)
              RETURNING *`,
-            [id, tipo, rutaStorage, fecha_hora || null, esFallido]
+            [id, tipo, rutaStorage, fecha_hora || null, esFallido, clienteGuia]
         );
 
         if (!esFallido) {
