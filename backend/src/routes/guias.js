@@ -4,15 +4,11 @@ const pdfParse = require('pdf-parse');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
+const { calcularInicioCobro, calcularDiasTranscurridos } = require('../utils/diasArriendo');
 
 const router = express.Router();
 
 const upload = multer({ storage: multer.memoryStorage() });
-
-// hora (24h) a partir de la cual el dia de despacho ya no cuenta como dia de arriendo
-// (entrevista la administrativa: "si se fue a las 10 de la manana se cobra ese dia, si se fue a las 3
-// de la tarde no se cobra ese dia" - valor pendiente de confirmar el corte exacto con ella)
-const HORA_CORTE = 13;
 
 // POST /api/maquinarias/guias/detectar - lee el texto del PDF (si lo tiene) y adivina
 // fecha/hora/tipo con heuristicas simples, para prellenar el formulario. Mejor esfuerzo:
@@ -110,15 +106,8 @@ router.get('/:id/dias-arriendo', verifyToken, requireRole('gerente', 'administra
         );
         const recepcion = recepcionResult.rows[0];
 
-        // si el despacho salio a partir de HORA_CORTE, ese dia no se cobra: el conteo parte al dia siguiente
-        const inicioCobro = new Date(despacho.fecha);
-        if (inicioCobro.getHours() >= HORA_CORTE) {
-            inicioCobro.setDate(inicioCobro.getDate() + 1);
-        }
-        inicioCobro.setHours(0, 0, 0, 0);
-
-        const fechaFin = recepcion ? new Date(recepcion.fecha) : new Date();
-        const diasTranscurridos = Math.max(0, Math.round((fechaFin - inicioCobro) / (1000 * 60 * 60 * 24)));
+        const inicioCobro = calcularInicioCobro(despacho.fecha);
+        const diasTranscurridos = calcularDiasTranscurridos(despacho.fecha, recepcion ? recepcion.fecha : null);
 
         let facturacionBloqueada = false;
         if (!recepcion) {

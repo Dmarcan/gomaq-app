@@ -10,15 +10,25 @@ class FacturacionScreen extends StatefulWidget {
   State<FacturacionScreen> createState() => _FacturacionScreenState();
 }
 
-class _FacturacionScreenState extends State<FacturacionScreen> {
-  List<dynamic> _ordenesFacturables = [];
+class _FacturacionScreenState extends State<FacturacionScreen> with SingleTickerProviderStateMixin {
+  late final TabController _tabController;
+  List<dynamic> _arriendos = [];
+  List<dynamic> _pendientesValorizar = [];
+  List<dynamic> _listas = [];
   bool _cargando = true;
   String? _error;
 
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
   }
 
   Future<void> _cargar() async {
@@ -27,9 +37,13 @@ class _FacturacionScreenState extends State<FacturacionScreen> {
       _error = null;
     });
     try {
-      final data = await ApiClient.instance.get('/api/ordenes-trabajo');
+      final data = await ApiClient.instance.get('/api/facturacion/pendientes');
       if (!mounted) return;
-      setState(() => _ordenesFacturables = (data as List).where((o) => o['facturable'] == true).toList());
+      setState(() {
+        _arriendos = data['arriendos'] ?? [];
+        _pendientesValorizar = data['reparaciones_pendientes_valorizar'] ?? [];
+        _listas = data['reparaciones_listas'] ?? [];
+      });
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } finally {
@@ -37,29 +51,100 @@ class _FacturacionScreenState extends State<FacturacionScreen> {
     }
   }
 
+  Future<void> _abrirDialogo(Map<String, dynamic> item) async {
+    await showDialog(context: context, builder: (_) => _FacturaPendienteDialog(item: item));
+    _cargar();
+  }
+
   @override
   Widget build(BuildContext context) {
-    if (_cargando) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return Center(child: Text('Error: $_error'));
-    if (_ordenesFacturables.isEmpty) {
-      return const Center(child: Text('No hay ordenes de trabajo facturables por el momento'));
-    }
+    return Scaffold(
+      appBar: AppBar(
+        automaticallyImplyLeading: false,
+        title: const Text('Facturación'),
+        bottom: TabBar(
+          controller: _tabController,
+          tabs: [
+            Tab(text: 'Por facturar (${_arriendos.length + _listas.length})'),
+            Tab(text: 'Pendiente de valorizar (${_pendientesValorizar.length})'),
+          ],
+        ),
+      ),
+      body: _cargando
+          ? const Center(child: CircularProgressIndicator())
+          : _error != null
+              ? Center(child: Text('Error: $_error'))
+              : TabBarView(
+                  controller: _tabController,
+                  children: [_construirPorFacturar(), _construirPendienteValorizar()],
+                ),
+    );
+  }
 
+  Widget _construirPorFacturar() {
+    final items = [
+      for (final a in _arriendos)
+        {
+          'tipo': 'arriendo',
+          'id': a['guia_recepcion_id'],
+          'titulo': '${a['maquinaria_codigo']} · Arriendo',
+          'cliente_nombre': a['cliente_nombre'],
+          'subtitulo': '${a['dias']} día(s) de arriendo · Cliente: ${a['cliente_nombre'] ?? '-'}',
+        },
+      for (final r in _listas)
+        {
+          'tipo': 'reparacion',
+          'id': r['id'],
+          'titulo': 'OT #${r['id']} · ${r['maquinaria_codigo']} · Reparación',
+          'cliente_nombre': r['cliente_nombre'],
+          'monto_sugerido': r['valorizacion'],
+          'subtitulo': 'Valorización aprobada: \$${r['valorizacion']} · Cliente: ${r['cliente_nombre'] ?? '-'}',
+        },
+    ];
+
+    if (items.isEmpty) {
+      return const Center(child: Text('No hay nada listo para facturar por el momento'));
+    }
     return RefreshIndicator(
       onRefresh: _cargar,
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
-        itemCount: _ordenesFacturables.length,
+        itemCount: items.length,
         itemBuilder: (context, i) {
-          final o = _ordenesFacturables[i];
+          final item = items[i];
+          final esArriendo = item['tipo'] == 'arriendo';
           return Card(
             child: ListTile(
-              title: Text('OT #${o['id']} - ${o['maquinaria_codigo'] ?? ''}'),
-              subtitle: Text('Cliente: ${o['cliente_nombre'] ?? '-'} · Valorización: ${o['valorizacion'] ?? 'sin aprobar'}'),
-              onTap: () async {
-                await showDialog(context: context, builder: (_) => _FacturaDialog(orden: o));
-                _cargar();
-              },
+              leading: Icon(esArriendo ? Icons.local_shipping : Icons.build, color: GomaqColors.primario),
+              title: Text(item['titulo'] as String),
+              subtitle: Text(item['subtitulo'] as String),
+              onTap: () => _abrirDialogo(item),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _construirPendienteValorizar() {
+    if (_pendientesValorizar.isEmpty) {
+      return const Center(child: Text('No hay reparaciones esperando valorización'));
+    }
+    return RefreshIndicator(
+      onRefresh: _cargar,
+      child: ListView.builder(
+        padding: const EdgeInsets.all(16),
+        itemCount: _pendientesValorizar.length,
+        itemBuilder: (context, i) {
+          final ot = _pendientesValorizar[i];
+          return Card(
+            child: ListTile(
+              leading: const Icon(Icons.hourglass_empty, color: Colors.grey),
+              title: Text('OT #${ot['id']} · ${ot['maquinaria_codigo']}'),
+              subtitle: Text(
+                'Cliente: ${ot['cliente_nombre'] ?? '-'} · El mecánico ya la marcó facturable, '
+                'falta que el Gerente le ponga el monto en Órdenes de Trabajo',
+              ),
             ),
           );
         },
@@ -68,42 +153,53 @@ class _FacturacionScreenState extends State<FacturacionScreen> {
   }
 }
 
-class _FacturaDialog extends StatefulWidget {
-  final Map<String, dynamic> orden;
-  const _FacturaDialog({required this.orden});
+/// Dialogo unico para ambos tipos de pendiente (arriendo/reparacion): subir PDF, detectar
+/// datos (mejor esfuerzo), confirmar/editar, crear la factura, y armar la vista previa
+/// del correo antes de autorizar el envio.
+class _FacturaPendienteDialog extends StatefulWidget {
+  final Map<String, dynamic> item;
+  const _FacturaPendienteDialog({required this.item});
 
   @override
-  State<_FacturaDialog> createState() => _FacturaDialogState();
+  State<_FacturaPendienteDialog> createState() => _FacturaPendienteDialogState();
 }
 
-class _FacturaDialogState extends State<_FacturaDialog> {
-  List<dynamic> _facturas = [];
-  bool _cargando = true;
-  bool _procesando = false;
+class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
   final _folioCtrl = TextEditingController();
   final _montoCtrl = TextEditingController();
   PlatformFile? _archivo;
+  bool _detectando = false;
+  bool _procesando = false;
+  Map<String, dynamic>? _facturaCreada;
 
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _cargarFacturas());
-  }
-
-  Future<void> _cargarFacturas() async {
-    try {
-      final data = await ApiClient.instance.get('/api/ordenes-trabajo/${widget.orden['id']}/factura');
-      if (mounted) setState(() => _facturas = data);
-    } catch (_) {
-    } finally {
-      if (mounted) setState(() => _cargando = false);
+    if (widget.item['monto_sugerido'] != null) {
+      _montoCtrl.text = widget.item['monto_sugerido'].toString();
     }
   }
 
   Future<void> _elegirArchivo() async {
     final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
-    if (resultado != null && resultado.files.single.bytes != null) {
-      setState(() => _archivo = resultado.files.single);
+    if (resultado == null || resultado.files.single.bytes == null) return;
+    setState(() => _archivo = resultado.files.single);
+
+    setState(() => _detectando = true);
+    try {
+      final deteccion = await ApiClient.instance.postMultipart(
+        '/api/facturacion/detectar',
+        bytes: _archivo!.bytes,
+        filename: _archivo!.name,
+      );
+      if (!mounted) return;
+      setState(() {
+        if (deteccion['monto_detectado'] != null) _montoCtrl.text = deteccion['monto_detectado'].toString();
+      });
+    } on ApiException catch (_) {
+      // deteccion best-effort: si falla, el usuario sigue llenando a mano
+    } finally {
+      if (mounted) setState(() => _detectando = false);
     }
   }
 
@@ -111,16 +207,19 @@ class _FacturaDialogState extends State<_FacturaDialog> {
     if (_folioCtrl.text.trim().isEmpty || _archivo == null) return;
     setState(() => _procesando = true);
     try {
-      await ApiClient.instance.postMultipart(
-        '/api/ordenes-trabajo/${widget.orden['id']}/factura',
+      final esArriendo = widget.item['tipo'] == 'arriendo';
+      final path = esArriendo ? '/api/facturacion/arriendo' : '/api/ordenes-trabajo/${widget.item['id']}/factura';
+      final resultado = await ApiClient.instance.postMultipart(
+        path,
         bytes: _archivo!.bytes!,
         filename: _archivo!.name,
         fields: {
+          if (esArriendo) 'guia_recepcion_id': widget.item['id'].toString(),
           'folio': _folioCtrl.text.trim(),
           if (_montoCtrl.text.trim().isNotEmpty) 'monto': _montoCtrl.text.trim(),
         },
       );
-      await _cargarFacturas();
+      if (mounted) setState(() => _facturaCreada = resultado);
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
     } finally {
@@ -128,10 +227,11 @@ class _FacturaDialogState extends State<_FacturaDialog> {
     }
   }
 
-  Future<void> _autorizarEnvio(int facturaId) async {
+  Future<void> _autorizarEnvio() async {
+    if (_facturaCreada == null) return;
     setState(() => _procesando = true);
     try {
-      await ApiClient.instance.post('/api/ordenes-trabajo/${widget.orden['id']}/factura/$facturaId/autorizar-envio', {});
+      await ApiClient.instance.post('/api/facturacion/${_facturaCreada!['id']}/autorizar-envio', {});
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Envío autorizado. Quedó encolado (se procesará cuando el correo esté configurado).')),
@@ -147,93 +247,98 @@ class _FacturaDialogState extends State<_FacturaDialog> {
 
   @override
   Widget build(BuildContext context) {
-    final o = widget.orden;
     return AlertDialog(
-      title: Text('Gestión Documental — OT #${o['id']}'),
+      title: Text(widget.item['titulo'] as String),
       content: SizedBox(
         width: 460,
-        child: _cargando
-            ? const SizedBox(height: 100, child: Center(child: CircularProgressIndicator()))
-            : SingleChildScrollView(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (_facturas.isEmpty) ...[
-                      const Text('DOCUMENTO PDF', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                      const SizedBox(height: 8),
-                      TextField(controller: _folioCtrl, decoration: const InputDecoration(labelText: 'Folio SII')),
-                      TextField(
-                        controller: _montoCtrl,
-                        decoration: const InputDecoration(labelText: 'Monto (opcional)'),
-                        keyboardType: TextInputType.number,
-                      ),
-                      const SizedBox(height: 8),
-                      OutlinedButton.icon(
-                        onPressed: _elegirArchivo,
-                        icon: const Icon(Icons.upload_file),
-                        label: Text(_archivo?.name ?? 'Elegir PDF'),
-                      ),
-                      const SizedBox(height: 16),
-                      FilledButton(
-                        onPressed: _procesando ? null : _subirFactura,
-                        child: const Text('Subir factura'),
-                      ),
-                    ] else ...[
-                      for (final f in _facturas) ...[
-                        const Text('VISTA PREVIA ESTRUCTURADA', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            color: GomaqColors.primario.withValues(alpha: 0.08),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Factura Electrónica — Folio ${f['folio']}',
-                                  style: const TextStyle(fontWeight: FontWeight.bold, color: GomaqColors.primario)),
-                              const SizedBox(height: 8),
-                              Text('Cliente: ${o['cliente_nombre'] ?? '-'}'),
-                              Text('Monto: ${f['monto'] ?? '-'}'),
-                              Text('OT vinculada: #${o['id']}'),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        const Text('VISTA PREVIA DEL CORREO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                        const SizedBox(height: 8),
-                        Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text('Factura folio ${f['folio']} — GOMAQ Maquinarias', style: const TextStyle(fontWeight: FontWeight.bold)),
-                              const SizedBox(height: 8),
-                              Text(
-                                'Adjuntamos la factura correspondiente a la Orden de Trabajo #${o['id']}, '
-                                'asociada a su equipo ${o['maquinaria_codigo'] ?? ''}. Ante cualquier consulta, '
-                                'puede responder directamente este correo.',
-                              ),
-                            ],
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        FilledButton(
-                          onPressed: _procesando ? null : () => _autorizarEnvio(f['id']),
-                          child: const Text('Autorizar Envío de Correo'),
-                        ),
-                      ],
-                    ],
-                  ],
-                ),
-              ),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: _facturaCreada == null ? _construirFormulario() : _construirVistaPrevia(),
+          ),
+        ),
       ),
       actions: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
       ],
     );
+  }
+
+  List<Widget> _construirFormulario() {
+    return [
+      const Text('DOCUMENTO PDF DE LA FACTURA', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+      const SizedBox(height: 8),
+      OutlinedButton.icon(
+        onPressed: _elegirArchivo,
+        icon: const Icon(Icons.upload_file),
+        label: Text(_archivo?.name ?? 'Elegir PDF'),
+      ),
+      if (_detectando) ...[
+        const SizedBox(height: 8),
+        const Row(
+          children: [
+            SizedBox(height: 14, width: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+            SizedBox(width: 8),
+            Text('Buscando monto en el PDF...', style: TextStyle(fontSize: 12, color: Colors.black54)),
+          ],
+        ),
+      ],
+      const SizedBox(height: 12),
+      TextField(controller: _folioCtrl, decoration: const InputDecoration(labelText: 'Folio SII')),
+      TextField(
+        controller: _montoCtrl,
+        decoration: const InputDecoration(labelText: 'Monto (CLP)'),
+        keyboardType: TextInputType.number,
+      ),
+      const SizedBox(height: 16),
+      FilledButton(
+        onPressed: (_procesando || _detectando) ? null : _subirFactura,
+        child: const Text('Subir factura'),
+      ),
+    ];
+  }
+
+  List<Widget> _construirVistaPrevia() {
+    final f = _facturaCreada!;
+    final cliente = widget.item['cliente_nombre'] ?? '-';
+    return [
+      const Text('VISTA PREVIA ESTRUCTURADA', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+      const SizedBox(height: 8),
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(color: GomaqColors.primario.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Factura Electrónica — Folio ${f['folio']}', style: const TextStyle(fontWeight: FontWeight.bold, color: GomaqColors.primario)),
+            const SizedBox(height: 8),
+            Text('Cliente: $cliente'),
+            Text('Monto: ${f['monto'] ?? '-'}'),
+            Text(widget.item['titulo'] as String),
+          ],
+        ),
+      ),
+      const SizedBox(height: 16),
+      const Text('VISTA PREVIA DEL CORREO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+      const SizedBox(height: 8),
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Factura folio ${f['folio']} — GOMAQ Maquinarias', style: const TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            Text('Adjuntamos la factura correspondiente a ${widget.item['titulo']}. Ante cualquier consulta, puede responder directamente este correo.'),
+          ],
+        ),
+      ),
+      const SizedBox(height: 16),
+      FilledButton(
+        onPressed: _procesando ? null : _autorizarEnvio,
+        child: const Text('Autorizar Envío de Correo'),
+      ),
+    ];
   }
 }
