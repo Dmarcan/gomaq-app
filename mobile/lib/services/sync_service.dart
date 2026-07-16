@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/foundation.dart';
@@ -10,6 +11,11 @@ import 'api_client.dart';
 class SyncService extends ChangeNotifier {
   bool _sincronizando = false;
   bool get sincronizando => _sincronizando;
+
+  // true cuando el servidor rechazo el token (401/403): la cola queda pausada
+  // sin consumir reintentos hasta que el mecanico vuelva a iniciar sesion
+  bool _sesionExpirada = false;
+  bool get sesionExpirada => _sesionExpirada;
 
   Future<Database> get _db async => LocalDatabase.instance.database;
 
@@ -90,10 +96,37 @@ class SyncService extends ChangeNotifier {
 
   Future<int> contarPendientes() async {
     final db = await _db;
+    // incluye tambien las tareas en error: no pueden quedar invisibles para el mecanico
     final result = await db.rawQuery(
-      "SELECT COUNT(*) as n FROM cola_sincronizacion WHERE estado = 'pendiente'",
+      "SELECT COUNT(*) as n FROM cola_sincronizacion WHERE estado IN ('pendiente', 'error')",
     );
     return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  Future<int> contarEnError() async {
+    final db = await _db;
+    final result = await db.rawQuery(
+      "SELECT COUNT(*) as n FROM cola_sincronizacion WHERE estado = 'error'",
+    );
+    return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  Future<List<Map<String, dynamic>>> tareasEnError() async {
+    final db = await _db;
+    return db.query('cola_sincronizacion', where: "estado = 'error'", orderBy: 'creado_en ASC');
+  }
+
+  /// Devuelve las tareas en error al estado pendiente (con reintentos en cero)
+  /// y dispara una sincronizacion inmediata.
+  Future<void> reintentarErrores() async {
+    final db = await _db;
+    await db.update(
+      'cola_sincronizacion',
+      {'intentos': 0, 'estado': 'pendiente', 'ultimo_error': null},
+      where: "estado = 'error'",
+    );
+    notifyListeners();
+    await sincronizar();
   }
 
   // ---------- Sincronizacion ----------
@@ -116,10 +149,10 @@ class SyncService extends ChangeNotifier {
     final data = await ApiClient.instance.get('/api/ordenes-trabajo');
     final db = await _db;
 
-    // OT con tareas aun pendientes (ej. porque el push fallo) no se sobreescriben
-    // con la version del servidor, para no perder el cambio local todavia sin sincronizar.
+    // OT con tareas aun pendientes o en error no se sobreescriben con la version
+    // del servidor, para no perder el cambio local todavia sin sincronizar.
     final pendientesRows = await db.rawQuery(
-      "SELECT DISTINCT orden_trabajo_id FROM cola_sincronizacion WHERE estado = 'pendiente'",
+      "SELECT DISTINCT orden_trabajo_id FROM cola_sincronizacion WHERE estado IN ('pendiente', 'error')",
     );
     final idsConPendientes = pendientesRows.map((r) => r['orden_trabajo_id'] as int).toSet();
 
@@ -142,6 +175,13 @@ class SyncService extends ChangeNotifier {
     }
   }
 
+  // Clasificacion de errores (practica estandar de colas offline-first):
+  // - Errores de red/timeout: NO consumen reintentos (la tarea no fallo, no hubo red)
+  //   y abortan el resto del push - se reintenta completo cuando vuelva la senal.
+  // - 401/403: NO consumen reintentos; pausan la cola y marcan sesionExpirada para
+  //   que la UI pida volver a iniciar sesion. El trabajo local queda intacto.
+  // - Otros errores del servidor (rechazo real de negocio): consumen un reintento,
+  //   y tras maxIntentos la tarea pasa a 'error' - visible en la UI con reintento manual.
   Future<void> _push() async {
     final db = await _db;
     const maxIntentos = 5;
@@ -156,7 +196,35 @@ class SyncService extends ChangeNotifier {
       try {
         await _ejecutarTarea(tarea);
         await db.delete('cola_sincronizacion', where: 'id = ?', whereArgs: [tarea['id']]);
+        if (_sesionExpirada) {
+          _sesionExpirada = false;
+          notifyListeners();
+        }
+      } on SocketException {
+        return; // sin red: abortar sin castigar la tarea
+      } on TimeoutException {
+        return;
+      } on http.ClientException {
+        return;
+      } on ApiException catch (err) {
+        if (err.statusCode == 401 || err.statusCode == 403) {
+          _sesionExpirada = true;
+          notifyListeners();
+          return; // token invalido: pausar toda la cola sin consumir reintentos
+        }
+        final intentos = (tarea['intentos'] as int) + 1;
+        await db.update(
+          'cola_sincronizacion',
+          {
+            'intentos': intentos,
+            'ultimo_error': err.message,
+            'estado': intentos >= maxIntentos ? 'error' : 'pendiente',
+          },
+          where: 'id = ?',
+          whereArgs: [tarea['id']],
+        );
       } catch (err) {
+        // error inesperado (ej. archivo local borrado): cuenta como rechazo real
         final intentos = (tarea['intentos'] as int) + 1;
         await db.update(
           'cola_sincronizacion',

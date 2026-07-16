@@ -28,6 +28,11 @@ class AuthService extends ChangeNotifier {
       'email': email,
       'password': password,
     });
+    // esta app es exclusiva del rol mecanico: cualquier otro rol veria pantallas
+    // que le fallan (y podria encolar cambios que el backend siempre rechazara)
+    if (data['usuario']['rol'] != 'mecanico') {
+      throw ApiException(403, 'Esta aplicacion es solo para mecanicos. Usa el panel web.');
+    }
     await ApiClient.instance.guardarToken(data['token']);
     _rol = data['usuario']['rol'];
     _nombre = data['usuario']['nombre'];
