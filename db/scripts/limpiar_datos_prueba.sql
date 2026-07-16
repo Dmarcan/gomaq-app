@@ -13,7 +13,7 @@ WHERE orden_trabajo_id IN (SELECT id FROM ordenes_trabajo WHERE maquinaria_id IN
 --    y las que se crearon en las verificaciones del ciclo de arriendo de GH-204
 DELETE FROM facturas
 WHERE guia_recepcion_id IN (SELECT id FROM guias WHERE maquinaria_id IN (SELECT id FROM maquinarias WHERE codigo = 'GH-999'));
-DELETE FROM facturas WHERE folio IN ('FOLIO-MAL', '8842', '15414');
+DELETE FROM facturas WHERE folio IN ('FOLIO-MAL', '8842', '15414', 'TEST-9001');
 
 -- 3. Guias de prueba de la maquinaria GH-999 (PDFs dummy)
 DELETE FROM guias WHERE maquinaria_id IN (SELECT id FROM maquinarias WHERE codigo = 'GH-999');
@@ -28,7 +28,7 @@ DELETE FROM maquinarias WHERE codigo = 'GH-999';
 DELETE FROM usuarios WHERE email = 'clienteprueba@gomaq.test';
 
 -- 7. Solicitudes de cuenta de prueba
-DELETE FROM solicitudes_cliente WHERE email = 'clienteprueba@gomaq.test';
+DELETE FROM solicitudes_cliente WHERE email IN ('clienteprueba@gomaq.test', 'rechazo@test.cl');
 
 -- 8. Clientes de prueba (verificar antes que no tengan datos reales colgando:
 --    si alguno tiene OTs/maquinarias reales asociadas, este DELETE fallara por FK - es intencional)
