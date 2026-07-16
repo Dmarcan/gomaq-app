@@ -53,7 +53,6 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
     int? maquinariaId;
     int? clienteId;
     final motivoCtrl = TextEditingController();
-    bool facturable = false;
 
     if (!mounted) return;
     final creado = await showDialog<bool>(
@@ -81,11 +80,6 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
                   onChanged: (v) => setDialogState(() => clienteId = v),
                 ),
                 TextField(controller: motivoCtrl, decoration: const InputDecoration(labelText: 'Motivo')),
-                CheckboxListTile(
-                  title: const Text('Es facturable'),
-                  value: facturable,
-                  onChanged: (v) => setDialogState(() => facturable = v ?? false),
-                ),
               ],
             ),
           ),
@@ -103,7 +97,6 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
         'maquinaria_id': maquinariaId,
         'cliente_id': clienteId,
         'motivo': motivoCtrl.text.trim(),
-        'facturable': facturable,
       });
       _cargar();
     } on ApiException catch (e) {

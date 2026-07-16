@@ -17,6 +17,8 @@ class _GuiasScreenState extends State<GuiasScreen> {
   PlatformFile? _archivo;
   bool _subiendo = false;
   bool _cargando = true;
+  bool _detectando = false;
+  bool _huboDeteccion = false;
   DateTime _fecha = DateTime.now();
   TimeOfDay _hora = TimeOfDay.now();
   bool _fallido = false;
@@ -40,8 +42,37 @@ class _GuiasScreenState extends State<GuiasScreen> {
 
   Future<void> _elegirArchivo() async {
     final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
-    if (resultado != null && resultado.files.single.bytes != null) {
-      setState(() => _archivo = resultado.files.single);
+    if (resultado == null || resultado.files.single.bytes == null) return;
+    setState(() {
+      _archivo = resultado.files.single;
+      _huboDeteccion = false;
+    });
+    await _detectarDatos();
+  }
+
+  Future<void> _detectarDatos() async {
+    if (_archivo == null) return;
+    setState(() => _detectando = true);
+    try {
+      final resultado = await ApiClient.instance.postMultipart(
+        '/api/maquinarias/guias/detectar',
+        bytes: _archivo!.bytes,
+        filename: _archivo!.name,
+      );
+      if (!mounted) return;
+      setState(() {
+        _huboDeteccion = true;
+        if (resultado['tipo_detectado'] != null) _tipo = resultado['tipo_detectado'];
+        if (resultado['fecha_hora_detectada'] != null) {
+          final detectada = DateTime.parse(resultado['fecha_hora_detectada']).toLocal();
+          _fecha = detectada;
+          _hora = TimeOfDay(hour: detectada.hour, minute: detectada.minute);
+        }
+      });
+    } on ApiException catch (_) {
+      // deteccion best-effort: si falla, el usuario sigue llenando a mano sin interrupcion
+    } finally {
+      if (mounted) setState(() => _detectando = false);
     }
   }
 
@@ -76,6 +107,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
         setState(() {
           _archivo = null;
           _fallido = false;
+          _huboDeteccion = false;
         });
       }
     } on ApiException catch (e) {
@@ -112,49 +144,6 @@ class _GuiasScreenState extends State<GuiasScreen> {
               decoration: const InputDecoration(border: OutlineInputBorder()),
             ),
             const SizedBox(height: 20),
-            const Text('TIPO DE DOCUMENTO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: _botonTipo('despacho', 'Guía de Despacho'),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: _botonTipo('recepcion', 'Guía de Recepción'),
-                ),
-              ],
-            ),
-            const SizedBox(height: 20),
-            const Text('FECHA Y HORA DE SALIDA/LLEGADA', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _elegirFecha,
-                    icon: const Icon(Icons.calendar_today, size: 16),
-                    label: Text('${_fecha.day}/${_fecha.month}/${_fecha.year}'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _elegirHora,
-                    icon: const Icon(Icons.access_time, size: 16),
-                    label: Text(_hora.format(context)),
-                  ),
-                ),
-              ],
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              title: Text(_tipo == 'despacho' ? 'Marcar como despacho fallido' : 'Marcar como retiro fallido'),
-              subtitle: const Text('El equipo no se usó o el retiro no se concretó: no se factura ni cuenta como día de arriendo'),
-              value: _fallido,
-              onChanged: (v) => setState(() => _fallido = v ?? false),
-            ),
-            const SizedBox(height: 8),
             const Text('DOCUMENTO PDF', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             InkWell(
@@ -170,15 +159,74 @@ class _GuiasScreenState extends State<GuiasScreen> {
                   children: [
                     const Icon(Icons.upload_file, size: 32, color: Colors.grey),
                     const SizedBox(height: 8),
-                    Text(_archivo?.name ?? 'Haz clic para buscar un archivo PDF', textAlign: TextAlign.center),
+                    Text(_archivo?.name ?? 'Haz clic para buscar el PDF de la guía', textAlign: TextAlign.center),
                     if (_archivo == null) const Text('Solo PDF · hasta 10 MB', style: TextStyle(fontSize: 12, color: Colors.grey)),
                   ],
                 ),
               ),
             ),
+            if (_detectando) ...[
+              const SizedBox(height: 12),
+              const Row(
+                children: [
+                  SizedBox(height: 14, width: 14, child: CircularProgressIndicator(strokeWidth: 2)),
+                  SizedBox(width: 8),
+                  Text('Leyendo el PDF para detectar fecha, hora y tipo...', style: TextStyle(fontSize: 12, color: Colors.black54)),
+                ],
+              ),
+            ],
+            if (_archivo != null && !_detectando) ...[
+              const SizedBox(height: 20),
+              if (_huboDeteccion)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    'Revisa lo que se detectó y corrige si algo está mal antes de guardar',
+                    style: TextStyle(fontSize: 12, color: Colors.black54, fontStyle: FontStyle.italic),
+                  ),
+                ),
+              const Text('TIPO DE DOCUMENTO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(child: _botonTipo('despacho', 'Guía de Despacho')),
+                  const SizedBox(width: 12),
+                  Expanded(child: _botonTipo('recepcion', 'Guía de Recepción')),
+                ],
+              ),
+              const SizedBox(height: 20),
+              const Text('FECHA Y HORA DE SALIDA/LLEGADA', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _elegirFecha,
+                      icon: const Icon(Icons.calendar_today, size: 16),
+                      label: Text('${_fecha.day}/${_fecha.month}/${_fecha.year}'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _elegirHora,
+                      icon: const Icon(Icons.access_time, size: 16),
+                      label: Text(_hora.format(context)),
+                    ),
+                  ),
+                ],
+              ),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(_tipo == 'despacho' ? 'Marcar como despacho fallido' : 'Marcar como retiro fallido'),
+                subtitle: const Text('El equipo no se usó o el retiro no se concretó: no se factura ni cuenta como día de arriendo'),
+                value: _fallido,
+                onChanged: (v) => setState(() => _fallido = v ?? false),
+              ),
+            ],
             const SizedBox(height: 24),
             FilledButton(
-              onPressed: (_seleccionada != null && _archivo != null && !_subiendo) ? _guardar : null,
+              onPressed: (_seleccionada != null && _archivo != null && !_subiendo && !_detectando) ? _guardar : null,
               child: _subiendo
                   ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                   : const Text('Guardar Guía'),

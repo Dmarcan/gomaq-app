@@ -111,20 +111,35 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
 
   Future<void> _finalizar() async {
     final syncService = context.read<SyncService>();
+    bool facturable = false;
     final confirmar = await showDialog<bool>(
       context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Finalizar orden de trabajo'),
-        content: const Text('¿Confirmas que el trabajo esta terminado?'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Finalizar')),
-        ],
+      builder: (_) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Finalizar orden de trabajo'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('¿Confirmas que el trabajo esta terminado?'),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: const Text('¿Es facturable? (culpa del cliente)'),
+                value: facturable,
+                onChanged: (v) => setDialogState(() => facturable = v ?? false),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Finalizar')),
+          ],
+        ),
       ),
     );
     if (confirmar != true) return;
 
-    await syncService.encolarFinalizar(widget.ordenId);
+    await syncService.encolarFinalizar(widget.ordenId, facturable: facturable);
     await _cargar();
     _intentarSincronizarAhora();
     if (mounted) Navigator.pop(context);

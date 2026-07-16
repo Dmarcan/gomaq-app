@@ -34,15 +34,15 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> encolarFinalizar(int ordenId) async {
+  Future<void> encolarFinalizar(int ordenId, {bool facturable = false}) async {
     final db = await _db;
     await db.update(
       'ordenes_locales',
-      {'estado': 'finalizada', 'actualizado_en': DateTime.now().toIso8601String()},
+      {'estado': 'finalizada', 'facturable': facturable ? 1 : 0, 'actualizado_en': DateTime.now().toIso8601String()},
       where: 'id = ?',
       whereArgs: [ordenId],
     );
-    await _encolar(ordenId, 'finalizar', {});
+    await _encolar(ordenId, 'finalizar', {'facturable': facturable});
     notifyListeners();
   }
 
@@ -182,7 +182,7 @@ class SyncService extends ChangeNotifier {
         await ApiClient.instance.patch('/api/ordenes-trabajo/$ordenId/diagnostico', payload);
         break;
       case 'finalizar':
-        await ApiClient.instance.patch('/api/ordenes-trabajo/$ordenId/finalizar', {});
+        await ApiClient.instance.patch('/api/ordenes-trabajo/$ordenId/finalizar', payload);
         break;
       case 'evidencia':
         await _subirEvidencia(ordenId, payload);

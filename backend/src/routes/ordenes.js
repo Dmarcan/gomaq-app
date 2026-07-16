@@ -8,16 +8,17 @@ const router = express.Router();
 
 // POST /api/ordenes-trabajo - crear OT
 router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
-    const { maquinaria_id, cliente_id, origen, motivo, facturable } = req.body;
+    const { maquinaria_id, cliente_id, origen, motivo } = req.body;
     if (!maquinaria_id) {
         return res.status(400).json({ error: 'maquinaria_id es requerido' });
     }
     try {
+        // facturable nace en false: lo decide el mecanico al finalizar la orden, no aca
         const result = await pool.query(
-            `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, origen, motivo, facturable)
-             VALUES ($1, $2, COALESCE($3::origen_orden, 'directo'), $4, COALESCE($5, false))
+            `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, origen, motivo)
+             VALUES ($1, $2, COALESCE($3::origen_orden, 'directo'), $4)
              RETURNING *`,
-            [maquinaria_id, cliente_id || null, origen || null, motivo || null, facturable]
+            [maquinaria_id, cliente_id || null, origen || null, motivo || null]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -199,16 +200,21 @@ router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (re
     }
 });
 
-// PATCH /api/ordenes-trabajo/:id/finalizar - mecanico cierra la OT
+// PATCH /api/ordenes-trabajo/:id/finalizar - mecanico cierra la OT y decide si es facturable
+// (entrevista la administrativa: "el mecanico decide si es culpa al cliente o no" - esa decision es
+// la que determina si la OT queda facturable, no algo que Administrativo elige al crearla)
 router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req, res) => {
+    const { facturable } = req.body;
     try {
         const check = await verificarDuenoOrden(req.params.id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
 
         const result = await pool.query(
-            `UPDATE ordenes_trabajo SET estado = 'finalizada', fecha_cierre = now() WHERE id = $1 RETURNING *`,
-            [req.params.id]
+            `UPDATE ordenes_trabajo
+             SET estado = 'finalizada', fecha_cierre = now(), facturable = COALESCE($2, facturable)
+             WHERE id = $1 RETURNING *`,
+            [req.params.id, facturable === undefined ? null : Boolean(facturable)]
         );
         res.json(result.rows[0]);
     } catch (err) {

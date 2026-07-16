@@ -1,5 +1,6 @@
 const express = require('express');
 const multer = require('multer');
+const pdfParse = require('pdf-parse');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
@@ -12,6 +13,52 @@ const upload = multer({ storage: multer.memoryStorage() });
 // (entrevista la administrativa: "si se fue a las 10 de la manana se cobra ese dia, si se fue a las 3
 // de la tarde no se cobra ese dia" - valor pendiente de confirmar el corte exacto con ella)
 const HORA_CORTE = 13;
+
+// POST /api/maquinarias/guias/detectar - lee el texto del PDF (si lo tiene) y adivina
+// fecha/hora/tipo con heuristicas simples, para prellenar el formulario. Mejor esfuerzo:
+// nunca falla el flujo, si no encuentra nada devuelve todo en null y el usuario llena a mano.
+router.post('/guias/detectar', verifyToken, requireRole('administrativo'), upload.single('archivo'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'archivo (PDF) es requerido' });
+    }
+    try {
+        let texto = '';
+        try {
+            const datos = await pdfParse(req.file.buffer);
+            texto = datos.text || '';
+        } catch (_) {
+            // PDF sin texto legible (escaneado/imagen) - se responde todo en null, no es un error
+        }
+
+        const matchFecha = texto.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
+        const matchHora = texto.match(/(\d{1,2}):(\d{2})/);
+
+        let fechaHoraDetectada = null;
+        if (matchFecha) {
+            const [, dia, mes, anioCrudo] = matchFecha;
+            const anio = anioCrudo.length === 2 ? `20${anioCrudo}` : anioCrudo;
+            const hora = matchHora ? matchHora[1] : '00';
+            const minuto = matchHora ? matchHora[2] : '00';
+            const fecha = new Date(`${anio}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}T${hora.padStart(2, '0')}:${minuto}:00`);
+            if (!isNaN(fecha.getTime())) fechaHoraDetectada = fecha.toISOString();
+        }
+
+        let tipoDetectado = null;
+        const posDespacho = texto.search(/despacho/i);
+        const posRecepcion = texto.search(/recepci[oó]n|traslado/i);
+        if (posDespacho >= 0 && (posRecepcion < 0 || posDespacho < posRecepcion)) tipoDetectado = 'despacho';
+        else if (posRecepcion >= 0) tipoDetectado = 'recepcion';
+
+        res.json({
+            fecha_hora_detectada: fechaHoraDetectada,
+            tipo_detectado: tipoDetectado,
+            texto_legible: texto.trim().length > 0,
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al leer el PDF' });
+    }
+});
 
 // POST /api/maquinarias/:id/guias - subir guia de despacho o recepcion (PDF va a Supabase Storage)
 router.post('/:id/guias', verifyToken, requireRole('administrativo'), upload.single('archivo'), async (req, res) => {
