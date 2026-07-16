@@ -97,11 +97,15 @@ Paleta extraída de los mockups originales del informe (no inventada), definida 
 ## Qué falta (en orden de importancia)
 
 1. **Notificación al cerrar una Orden de Trabajo** — el patrón Outbox ya está armado y se usa al *asignar* un mecánico (HU-07), pero no se dispara nada al *finalizar* la OT, aunque el diagrama BPMN del informe sí lo contempla. Es un fix chico, mismo patrón ya construido.
-2. **Gestión de Usuarios desde el panel** — hoy la única forma de crear un mecánico/administrativo/cliente nuevo es que alguien entre por SSH y corra `create-user.js` a mano. Falta una pantalla en el panel Admin para esto.
-3. **WhatsApp Business real** — deliberadamente pospuesto hasta el final del proyecto. El worker (`backend/src/workers/notificaciones.js`) ya tiene todo el mecanismo (reintentos, backoff, estado de error) — la función `enviarNotificacion` hoy lanza un error simulado ("Proveedor no configurado"); cuando exista la cuenta, se reemplaza esa única función por la llamada real a la Cloud API.
-4. **Envío de correo real** (SMTP/SES) — mismo caso que WhatsApp, mismo patrón Outbox ya listo.
-5. **Dominio propio** — hoy la URL pública cambia en cada reinicio del túnel; con un dominio en Cloudflare se puede pasar a un túnel nombrado con URL fija.
-6. Pulido menor: ver/descargar una factura ya subida directo desde la pantalla de Facturación (hoy solo permite subir).
+2. **Gestión de Usuarios completa desde el panel** — la pantalla "Usuarios" hoy solo cubre la aprobación de solicitudes de cuenta de clientes (auto-registro); crear/editar mecánicos y administrativos sigue siendo por SSH con `create-user.js`.
+3. **Login social (Google/Microsoft) para clientes** — el registro hoy es solo email+contraseña. Se investigó el patrón de NextAuth (otro proyecto del usuario) pero no se implementó porque requiere registrar la app ante Google/Microsoft con una URL de callback fija, y hoy la URL pública cambia en cada reinicio del túnel de Cloudflare. Queda listo para agregar cuando el proyecto tenga un dominio fijo (ej. desplegado en Railway).
+4. **Dirección de cliente con mapa** — el campo "dirección" en el registro de cliente es texto libre; un selector tipo Google Maps requiere una API key que no se activó en esta sesión.
+5. **WhatsApp Business real** — deliberadamente pospuesto hasta el final del proyecto. El worker (`backend/src/workers/notificaciones.js`) ya tiene todo el mecanismo (reintentos, backoff, estado de error) — la función `enviarNotificacion` hoy lanza un error simulado ("Proveedor no configurado"); cuando exista la cuenta, se reemplaza esa única función por la llamada real a la Cloud API.
+6. **Envío de correo real** (SMTP/SES) — mismo caso que WhatsApp, mismo patrón Outbox ya listo (usado también por la vista previa de correo de Facturación).
+7. **Dominio propio** — hoy la URL pública cambia en cada reinicio del túnel; con un dominio en Cloudflare se puede pasar a un túnel nombrado con URL fija (esto además desbloquea el punto 3).
+8. **Tarifa de arriendo por día** — Facturación muestra los días calculados de cada arriendo pero el monto se ingresa a mano (no existe una tarifa fija por equipo en ningún lado de la entrevista a la administrativa; el jefe la decide caso a caso, igual que en reparaciones).
+9. **Detección de datos desde PDF (Guías y Facturación)** — la extracción de fecha/hora/tipo/monto es heurística sobre el texto del PDF (`pdf-parse` + expresiones regulares), no garantizada; si el PDF es una imagen escaneada sin texto, no detecta nada y el usuario llena a mano. Suficiente para el flujo de UI, pero no es un parser robusto.
+10. Pulido menor: ver/descargar una factura ya subida directo desde la pantalla de Facturación (hoy solo permite subir).
 
 ## Notas para quien retome esto
 
