@@ -12,7 +12,9 @@ class GuiasScreen extends StatefulWidget {
 
 class _GuiasScreenState extends State<GuiasScreen> {
   List<dynamic> _maquinarias = [];
+  List<dynamic> _clientes = [];
   Map<String, dynamic>? _seleccionada;
+  int? _clienteId;
   String _tipo = 'despacho';
   PlatformFile? _archivo;
   bool _subiendo = false;
@@ -26,13 +28,22 @@ class _GuiasScreenState extends State<GuiasScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _cargarMaquinarias());
+    WidgetsBinding.instance.addPostFrameCallback((_) => _cargarDatos());
   }
 
-  Future<void> _cargarMaquinarias() async {
+  List<dynamic> get _maquinariasDisponibles =>
+      _maquinarias.where((m) => m['estado'] != 'fuera_de_servicio').toList();
+
+  Future<void> _cargarDatos() async {
     try {
-      final data = await ApiClient.instance.get('/api/maquinarias');
-      if (mounted) setState(() => _maquinarias = data);
+      final maquinarias = await ApiClient.instance.get('/api/maquinarias');
+      final clientes = await ApiClient.instance.get('/api/clientes');
+      if (mounted) {
+        setState(() {
+          _maquinarias = maquinarias;
+          _clientes = clientes;
+        });
+      }
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
     } finally {
@@ -68,6 +79,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
           _fecha = detectada;
           _hora = TimeOfDay(hour: detectada.hour, minute: detectada.minute);
         }
+        if (resultado['cliente_detectado'] != null) _clienteId = resultado['cliente_detectado']['id'];
       });
     } on ApiException catch (_) {
       // deteccion best-effort: si falla, el usuario sigue llenando a mano sin interrupcion
@@ -93,6 +105,12 @@ class _GuiasScreenState extends State<GuiasScreen> {
 
   Future<void> _guardar() async {
     if (_seleccionada == null || _archivo == null) return;
+    if (_tipo == 'despacho' && !_fallido && _clienteId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Selecciona el cliente al que se despacha el equipo')),
+      );
+      return;
+    }
     setState(() => _subiendo = true);
     try {
       final fechaHora = DateTime(_fecha.year, _fecha.month, _fecha.day, _hora.hour, _hora.minute);
@@ -100,7 +118,12 @@ class _GuiasScreenState extends State<GuiasScreen> {
         '/api/maquinarias/${_seleccionada!['id']}/guias',
         bytes: _archivo!.bytes!,
         filename: _archivo!.name,
-        fields: {'tipo': _tipo, 'fecha_hora': fechaHora.toIso8601String(), 'fallido': _fallido.toString()},
+        fields: {
+          'tipo': _tipo,
+          'fecha_hora': fechaHora.toIso8601String(),
+          'fallido': _fallido.toString(),
+          if (_tipo == 'despacho' && _clienteId != null) 'cliente_id': _clienteId.toString(),
+        },
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Guia guardada correctamente')));
@@ -108,6 +131,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
           _archivo = null;
           _fallido = false;
           _huboDeteccion = false;
+          _clienteId = null;
         });
       }
     } on ApiException catch (e) {
@@ -135,7 +159,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
             const SizedBox(height: 8),
             DropdownButtonFormField<Map<String, dynamic>>(
               initialValue: _seleccionada,
-              items: _maquinarias
+              items: _maquinariasDisponibles
                   .map<DropdownMenuItem<Map<String, dynamic>>>(
                     (m) => DropdownMenuItem(value: m, child: Text('${m['codigo']} - ${m['tipo']}')),
                   )
@@ -194,6 +218,24 @@ class _GuiasScreenState extends State<GuiasScreen> {
                   Expanded(child: _botonTipo('recepcion', 'Guía de Recepción')),
                 ],
               ),
+              if (_tipo == 'despacho') ...[
+                const SizedBox(height: 20),
+                const Text('CLIENTE', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+                const SizedBox(height: 4),
+                const Text(
+                  'El equipo quedará marcado como arrendado a este cliente',
+                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+                const SizedBox(height: 8),
+                DropdownButtonFormField<int>(
+                  initialValue: _clienteId,
+                  decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'Selecciona el cliente'),
+                  items: _clientes
+                      .map<DropdownMenuItem<int>>((c) => DropdownMenuItem(value: c['id'], child: Text(c['nombre'])))
+                      .toList(),
+                  onChanged: (v) => setState(() => _clienteId = v),
+                ),
+              ],
               const SizedBox(height: 20),
               const Text('FECHA Y HORA DE SALIDA/LLEGADA', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
               const SizedBox(height: 8),

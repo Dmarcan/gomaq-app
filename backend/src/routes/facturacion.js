@@ -5,6 +5,7 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { calcularDiasTranscurridos } = require('../utils/diasArriendo');
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
+const { detectarCliente } = require('../utils/detectarCliente');
 
 const router = express.Router();
 const upload = multer({ storage: multer.memoryStorage() });
@@ -84,17 +85,9 @@ router.post('/detectar', verifyToken, requireRole('administrativo'), upload.sing
             if (!isNaN(numero)) montoDetectado = numero;
         }
 
-        let clienteDetectado = null;
-        if (texto) {
-            const clientes = await pool.query('SELECT id, nombre FROM clientes');
-            const textoMinuscula = texto.toLowerCase();
-            const encontrado = clientes.rows.find((c) => textoMinuscula.includes(c.nombre.toLowerCase()));
-            if (encontrado) clienteDetectado = encontrado;
-        }
-
         res.json({
             monto_detectado: montoDetectado,
-            cliente_detectado: clienteDetectado,
+            cliente_detectado: await detectarCliente(texto),
             texto_legible: texto.trim().length > 0,
         });
     } catch (err) {

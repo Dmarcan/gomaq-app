@@ -5,6 +5,7 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { calcularInicioCobro, calcularDiasTranscurridos } = require('../utils/diasArriendo');
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
+const { detectarCliente } = require('../utils/detectarCliente');
 
 const router = express.Router();
 
@@ -48,6 +49,7 @@ router.post('/guias/detectar', verifyToken, requireRole('administrativo'), uploa
         res.json({
             fecha_hora_detectada: fechaHoraDetectada,
             tipo_detectado: tipoDetectado,
+            cliente_detectado: await detectarCliente(texto),
             texto_legible: texto.trim().length > 0,
         });
     } catch (err) {
@@ -57,9 +59,12 @@ router.post('/guias/detectar', verifyToken, requireRole('administrativo'), uploa
 });
 
 // POST /api/maquinarias/:id/guias - subir guia de despacho o recepcion (PDF va a Supabase Storage)
+// Ademas, si la guia no es fallida, refleja el arriendo en la ficha del equipo: un despacho
+// lo marca arrendado al cliente indicado, una recepcion lo libera - mismo cliente_id que ya
+// usan Dashboard/Flota para calcular disponibles vs arrendados, no hace falta un estado nuevo.
 router.post('/:id/guias', verifyToken, requireRole('administrativo'), upload.single('archivo'), async (req, res) => {
     const { id } = req.params;
-    const { tipo, fecha_hora, fallido } = req.body;
+    const { tipo, fecha_hora, fallido, cliente_id } = req.body;
     const validos = ['despacho', 'recepcion'];
     if (!validos.includes(tipo)) {
         return res.status(400).json({ error: `tipo debe ser uno de: ${validos.join(', ')}` });
@@ -67,6 +72,12 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), upload.sin
     if (!req.file) {
         return res.status(400).json({ error: 'archivo (PDF) es requerido' });
     }
+    const esFallido = fallido === 'true' || fallido === true;
+    if (tipo === 'despacho' && !esFallido && !cliente_id) {
+        return res.status(400).json({ error: 'cliente_id es requerido para una guia de despacho no fallida' });
+    }
+
+    const client = await pool.connect();
     try {
         const rutaStorage = `guias/${id}/${Date.now()}-${req.file.originalname}`;
         const { error: errorSubida } = await supabase.storage
@@ -74,16 +85,31 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), upload.sin
             .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });
         if (errorSubida) throw errorSubida;
 
-        const result = await pool.query(
+        await client.query('BEGIN');
+
+        const result = await client.query(
             `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, fallido)
              VALUES ($1, $2::tipo_guia, $3, COALESCE($4, now()), COALESCE($5, false))
              RETURNING *`,
-            [id, tipo, rutaStorage, fecha_hora || null, fallido === 'true' || fallido === true]
+            [id, tipo, rutaStorage, fecha_hora || null, esFallido]
         );
+
+        if (!esFallido) {
+            if (tipo === 'despacho') {
+                await client.query('UPDATE maquinarias SET cliente_id = $1 WHERE id = $2', [cliente_id, id]);
+            } else {
+                await client.query('UPDATE maquinarias SET cliente_id = NULL WHERE id = $1', [id]);
+            }
+        }
+
+        await client.query('COMMIT');
         res.status(201).json(result.rows[0]);
     } catch (err) {
+        await client.query('ROLLBACK');
         console.error(err);
         res.status(500).json({ error: 'Error al subir guia' });
+    } finally {
+        client.release();
     }
 });
 
