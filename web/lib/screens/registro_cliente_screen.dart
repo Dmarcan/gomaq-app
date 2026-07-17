@@ -56,6 +56,10 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
       if (mounted) setState(() => _enviado = true);
     } on ApiException catch (e) {
       setState(() => _error = e.message);
+    } catch (_) {
+      // fallo de red/timeout: sin este catch el usuario quedaba sin spinner, sin error
+      // y sin saber si su cuenta se creo (mismo manejo que el login)
+      setState(() => _error = 'No se pudo conectar al servidor. Revisa tu conexión e intenta de nuevo.');
     } finally {
       if (mounted) setState(() => _enviando = false);
     }

@@ -81,7 +81,12 @@ class _GuiasScreenState extends State<GuiasScreen> {
           _fecha = detectada;
           _hora = TimeOfDay(hour: detectada.hour, minute: detectada.minute);
         }
-        if (resultado['cliente_detectado'] != null) _clienteId = resultado['cliente_detectado']['id'];
+        // solo asignar el cliente detectado si existe en la lista ya cargada del dropdown
+        // (si se creo despues de abrir la pantalla, un value sin item crashea el Dropdown)
+        if (resultado['cliente_detectado'] != null) {
+          final idDetectado = resultado['cliente_detectado']['id'];
+          if (_clientes.any((c) => c['id'] == idDetectado)) _clienteId = idDetectado;
+        }
       });
     } on ApiException catch (_) {
       // deteccion best-effort: si falla, el usuario sigue llenando a mano sin interrupcion

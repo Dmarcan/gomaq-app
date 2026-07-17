@@ -143,8 +143,11 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
         });
       }
       if (mounted) {
+        // capturar el messenger ANTES del pop: despues el context del dialogo esta muerto
+        // y la confirmacion nunca se mostraria
+        final messenger = ScaffoldMessenger.of(context);
         Navigator.pop(context);
-        ScaffoldMessenger.of(context).showSnackBar(
+        messenger.showSnackBar(
           const SnackBar(content: Text('Solicitud enviada. La empresa se contactará pronto.')),
         );
       }
