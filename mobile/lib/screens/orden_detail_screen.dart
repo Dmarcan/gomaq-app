@@ -54,6 +54,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   }
 
   Future<void> _intentarSincronizarAhora() async {
+    if (!mounted) return; // se invoca tras awaits: la pantalla pudo cerrarse en el intertanto
     if (!context.read<ConnectivityService>().online) return;
     try {
       await context.read<SyncService>().sincronizar();
@@ -203,7 +204,19 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                   children: [
                     ClipRRect(
                       borderRadius: BorderRadius.circular(8),
-                      child: Image.file(File(foto['ruta_local'] as String), width: 80, height: 80, fit: BoxFit.cover),
+                      child: Image.file(
+                        File(foto['ruta_local'] as String),
+                        width: 80,
+                        height: 80,
+                        fit: BoxFit.cover,
+                        // la foto local pudo borrarse (limpieza de datos): placeholder en vez de excepcion
+                        errorBuilder: (_, __, ___) => Container(
+                          width: 80,
+                          height: 80,
+                          color: Colors.grey.shade300,
+                          child: const Icon(Icons.broken_image, color: Colors.grey),
+                        ),
+                      ),
                     ),
                     if (foto['sincronizado'] == 0)
                       const Positioned(

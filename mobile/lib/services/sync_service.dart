@@ -8,6 +8,15 @@ import '../db/local_database.dart';
 import '../models/orden_trabajo.dart';
 import 'api_client.dart';
 
+/// Fallo que jamas va a resolverse reintentando (ej. el archivo local ya no existe):
+/// la tarea pasa a error de inmediato con un mensaje entendible, sin quemar reintentos.
+class ErrorPermanenteSync implements Exception {
+  final String mensaje;
+  ErrorPermanenteSync(this.mensaje);
+  @override
+  String toString() => mensaje;
+}
+
 class SyncService extends ChangeNotifier {
   bool _sincronizando = false;
   bool get sincronizando => _sincronizando;
@@ -16,6 +25,16 @@ class SyncService extends ChangeNotifier {
   // sin consumir reintentos hasta que el mecanico vuelva a iniciar sesion
   bool _sesionExpirada = false;
   bool get sesionExpirada => _sesionExpirada;
+
+  /// Llamar tras un login exitoso: limpia el aviso de sesion expirada aunque la
+  /// cola este vacia (antes el banner quedaba pegado para siempre tras re-loguearse,
+  /// porque solo se limpiaba cuando una tarea de la cola sincronizaba con exito).
+  void reiniciarSesion() {
+    if (_sesionExpirada) {
+      _sesionExpirada = false;
+      notifyListeners();
+    }
+  }
 
   Future<Database> get _db async => LocalDatabase.instance.database;
 
@@ -138,6 +157,8 @@ class SyncService extends ChangeNotifier {
     try {
       await _push();
       await _pull();
+      // el pull respondio autorizado: si habia un aviso de sesion expirada, ya no aplica
+      reiniciarSesion();
       await _pullCatalogoInsumos();
     } finally {
       _sincronizando = false;
@@ -192,7 +213,14 @@ class SyncService extends ChangeNotifier {
       orderBy: 'creado_en ASC',
     );
 
+    // OTs con una tarea rechazada en ESTE ciclo: sus tareas posteriores se saltan
+    // para preservar el orden causal (ej. que "finalizar" no se ejecute si la
+    // evidencia anterior de la misma OT fue rechazada) - quedan para el proximo push
+    final otsConFallo = <int>{};
+
     for (final tarea in pendientes) {
+      final otId = tarea['orden_trabajo_id'] as int;
+      if (otsConFallo.contains(otId)) continue;
       try {
         await _ejecutarTarea(tarea);
         await db.delete('cola_sincronizacion', where: 'id = ?', whereArgs: [tarea['id']]);
@@ -206,12 +234,23 @@ class SyncService extends ChangeNotifier {
         return;
       } on http.ClientException {
         return;
+      } on ErrorPermanenteSync catch (err) {
+        // irrecuperable (ej. foto borrada del telefono): a error de inmediato,
+        // con mensaje entendible, sin quemar reintentos que no sirven
+        otsConFallo.add(otId);
+        await db.update(
+          'cola_sincronizacion',
+          {'intentos': maxIntentos, 'ultimo_error': err.mensaje, 'estado': 'error'},
+          where: 'id = ?',
+          whereArgs: [tarea['id']],
+        );
       } on ApiException catch (err) {
         if (err.statusCode == 401 || err.statusCode == 403) {
           _sesionExpirada = true;
           notifyListeners();
           return; // token invalido: pausar toda la cola sin consumir reintentos
         }
+        otsConFallo.add(otId);
         final intentos = (tarea['intentos'] as int) + 1;
         await db.update(
           'cola_sincronizacion',
@@ -224,7 +263,7 @@ class SyncService extends ChangeNotifier {
           whereArgs: [tarea['id']],
         );
       } catch (err) {
-        // error inesperado (ej. archivo local borrado): cuenta como rechazo real
+        otsConFallo.add(otId);
         final intentos = (tarea['intentos'] as int) + 1;
         await db.update(
           'cola_sincronizacion',
@@ -266,6 +305,9 @@ class SyncService extends ChangeNotifier {
   Future<void> _subirEvidencia(int ordenId, Map<String, dynamic> payload) async {
     final rutaLocal = payload['ruta_local'] as String;
     final archivo = File(rutaLocal);
+    if (!await archivo.exists()) {
+      throw ErrorPermanenteSync('La foto ya no esta en el telefono (fue borrada o se limpiaron los datos de la app)');
+    }
     final nombreArchivo = rutaLocal.split(Platform.pathSeparator).last;
 
     final solicitud = await ApiClient.instance.post(

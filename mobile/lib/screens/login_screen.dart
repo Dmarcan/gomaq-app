@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../services/api_client.dart';
+import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
 
 class LoginScreen extends StatefulWidget {
@@ -23,7 +24,10 @@ class _LoginScreenState extends State<LoginScreen> {
       _error = null;
     });
     try {
+      final syncService = context.read<SyncService>();
       await context.read<AuthService>().login(_emailCtrl.text.trim(), _passwordCtrl.text);
+      // el aviso de "sesion expirada" ya no aplica tras un login exitoso
+      syncService.reiniciarSesion();
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } catch (e) {
