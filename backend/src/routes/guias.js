@@ -78,6 +78,7 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), upload.sin
     }
 
     const client = await pool.connect();
+    let rutaStorage = null;
     try {
         if (cliente_id) {
             const clienteExiste = await client.query('SELECT id FROM clientes WHERE id = $1', [cliente_id]);
@@ -101,7 +102,7 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), upload.sin
             clienteGuia = maq.rows[0].cliente_id;
         }
 
-        const rutaStorage = `guias/${id}/${Date.now()}-${req.file.originalname}`;
+        rutaStorage = `guias/${id}/${Date.now()}-${req.file.originalname}`;
         const { error: errorSubida } = await supabase.storage
             .from(BUCKET_DOCUMENTOS)
             .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });
@@ -128,6 +129,10 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), upload.sin
         res.status(201).json(result.rows[0]);
     } catch (err) {
         await client.query('ROLLBACK');
+        // compensacion best-effort: si el PDF ya subio pero la BD fallo, no dejar el archivo huerfano
+        if (rutaStorage) {
+            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+        }
         console.error(err);
         res.status(500).json({ error: 'Error al subir guia' });
     } finally {

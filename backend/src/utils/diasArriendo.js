@@ -12,10 +12,22 @@ function calcularInicioCobro(fechaDespacho) {
     return inicio;
 }
 
+// proyecta una fecha local a un "dia de calendario" en un marco sin cambios de hora:
+// Chile tiene DST (dias de 23/25 horas), asi que restar milisegundos y dividir por 24h
+// produce off-by-one dos veces al ano. Date.UTC de los componentes año/mes/dia es el
+// patron estandar para aritmetica de dias de calendario.
+function diaCalendarioUtc(fecha) {
+    return Date.UTC(fecha.getFullYear(), fecha.getMonth(), fecha.getDate());
+}
+
+// Dias facturables: desde el dia de inicio de cobro hasta el dia de la recepcion INCLUSIVE
+// (regla de cierre pendiente de confirmar con la administrativa, igual que HORA_CORTE).
+// Sin recepcion: hasta hoy inclusive.
 function calcularDiasTranscurridos(fechaDespacho, fechaFin) {
     const inicioCobro = calcularInicioCobro(fechaDespacho);
     const fin = fechaFin ? new Date(fechaFin) : new Date();
-    return Math.max(0, Math.round((fin - inicioCobro) / (1000 * 60 * 60 * 24)));
+    const dias = (diaCalendarioUtc(fin) - diaCalendarioUtc(inicioCobro)) / (1000 * 60 * 60 * 24) + 1;
+    return Math.max(0, dias);
 }
 
 module.exports = { HORA_CORTE, calcularInicioCobro, calcularDiasTranscurridos };

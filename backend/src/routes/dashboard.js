@@ -47,12 +47,17 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
 router.get('/ventas-por-ejecutivo', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { desde, hasta } = req.query;
     try {
+        // una factura tiene dos origenes posibles y excluyentes: reparacion (orden_trabajo_id)
+        // o arriendo (guia_recepcion_id). Ambos LEFT JOIN + COALESCE para que el reporte
+        // incluya los dos - un INNER JOIN a ordenes_trabajo botaba todos los arriendos,
+        // que son justamente el rubro principal del negocio (bug corregido en auditoria).
         const result = await pool.query(
             `SELECT e.id AS ejecutivo_id, COALESCE(e.nombre, 'Directo') AS ejecutivo_nombre,
                     COALESCE(SUM(f.monto), 0) AS monto
              FROM facturas f
-             JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
-             LEFT JOIN clientes c ON c.id = ot.cliente_id
+             LEFT JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
+             LEFT JOIN guias g ON g.id = f.guia_recepcion_id
+             LEFT JOIN clientes c ON c.id = COALESCE(ot.cliente_id, g.cliente_id)
              LEFT JOIN ejecutivos e ON e.id = c.ejecutivo_id
              WHERE ($1::date IS NULL OR f.fecha_emision >= $1::date)
                AND ($2::date IS NULL OR f.fecha_emision <= $2::date)

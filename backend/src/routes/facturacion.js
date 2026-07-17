@@ -105,6 +105,7 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), upload.sing
     if (!guia_recepcion_id || !folio || !req.file) {
         return res.status(400).json({ error: 'guia_recepcion_id, folio y archivo (PDF) son requeridos' });
     }
+    let rutaStorage = null;
     try {
         const guia = await pool.query('SELECT maquinaria_id FROM guias WHERE id = $1', [guia_recepcion_id]);
         if (guia.rows.length === 0) {
@@ -112,7 +113,7 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), upload.sing
         }
         const maquinariaId = guia.rows[0].maquinaria_id;
 
-        const rutaStorage = `facturas/arriendo-${guia_recepcion_id}/${Date.now()}-${req.file.originalname}`;
+        rutaStorage = `facturas/arriendo-${guia_recepcion_id}/${Date.now()}-${req.file.originalname}`;
         const { error: errorSubida } = await supabase.storage
             .from(BUCKET_DOCUMENTOS)
             .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });
@@ -125,6 +126,9 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), upload.sing
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
+        if (rutaStorage) {
+            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+        }
         console.error(err);
         res.status(500).json({ error: 'Error al subir factura de arriendo' });
     }

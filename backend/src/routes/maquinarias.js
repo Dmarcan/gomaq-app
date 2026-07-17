@@ -96,8 +96,8 @@ router.post('/', verifyToken, requireRole('administrativo'), upload.single('arch
     if (!codigo || !tipo) {
         return res.status(400).json({ error: 'codigo y tipo son requeridos' });
     }
+    let fotoPath = null;
     try {
-        let fotoPath = null;
         if (req.file) {
             fotoPath = `equipos/${codigo}/${Date.now()}-${req.file.originalname}`;
             const { error: errorSubida } = await supabase.storage
@@ -123,6 +123,9 @@ router.post('/', verifyToken, requireRole('administrativo'), upload.single('arch
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
+        if (fotoPath) {
+            await supabase.storage.from(BUCKET_EQUIPOS).remove([fotoPath]).catch(() => {});
+        }
         console.error(err);
         res.status(500).json({ error: 'Error al crear maquinaria' });
     }
@@ -176,13 +179,14 @@ router.patch('/:id/foto', verifyToken, requireRole('administrativo'), upload.sin
     if (!req.file) {
         return res.status(400).json({ error: 'archivo (imagen) es requerido' });
     }
+    let fotoPath = null;
     try {
         const actual = await pool.query('SELECT codigo FROM maquinarias WHERE id = $1', [req.params.id]);
         if (actual.rows.length === 0) {
             return res.status(404).json({ error: 'Maquinaria no encontrada' });
         }
 
-        const fotoPath = `equipos/${actual.rows[0].codigo}/${Date.now()}-${req.file.originalname}`;
+        fotoPath = `equipos/${actual.rows[0].codigo}/${Date.now()}-${req.file.originalname}`;
         const { error: errorSubida } = await supabase.storage
             .from(BUCKET_EQUIPOS)
             .upload(fotoPath, req.file.buffer, { contentType: req.file.mimetype });
@@ -191,6 +195,9 @@ router.patch('/:id/foto', verifyToken, requireRole('administrativo'), upload.sin
         const result = await pool.query('UPDATE maquinarias SET foto_url = $1 WHERE id = $2 RETURNING *', [fotoPath, req.params.id]);
         res.json(await conFotoFirmada(result.rows[0]));
     } catch (err) {
+        if (fotoPath) {
+            await supabase.storage.from(BUCKET_EQUIPOS).remove([fotoPath]).catch(() => {});
+        }
         console.error(err);
         res.status(500).json({ error: 'Error al actualizar la foto' });
     }

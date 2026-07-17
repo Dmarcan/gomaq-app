@@ -1,3 +1,9 @@
+// zona horaria fija del negocio: los calculos de dias de arriendo (HORA_CORTE, cortes de
+// dia calendario) usan la hora local del proceso - fijarla evita que una migracion a un
+// servidor en UTC (Railway/nube) corra silenciosamente todos los cobros 4 horas.
+// Si el negocio alguna vez opera en varias zonas, migrar a una libreria de zonas (luxon).
+process.env.TZ = 'America/Santiago';
+
 require('dotenv').config();
 const path = require('path');
 const express = require('express');

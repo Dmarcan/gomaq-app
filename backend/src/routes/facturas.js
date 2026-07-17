@@ -16,8 +16,9 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), upload.s
     if (!folio || !req.file) {
         return res.status(400).json({ error: 'folio y archivo (PDF) son requeridos' });
     }
+    let rutaStorage = null;
     try {
-        const rutaStorage = `facturas/${id}/${Date.now()}-${req.file.originalname}`;
+        rutaStorage = `facturas/${id}/${Date.now()}-${req.file.originalname}`;
         const { error: errorSubida } = await supabase.storage
             .from(BUCKET_DOCUMENTOS)
             .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });
@@ -31,6 +32,9 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), upload.s
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
+        if (rutaStorage) {
+            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+        }
         console.error(err);
         res.status(500).json({ error: 'Error al subir factura' });
     }

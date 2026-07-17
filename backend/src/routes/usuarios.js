@@ -56,16 +56,20 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
     const { cliente_id } = req.body;
     const client = await pool.connect();
     try {
+        await client.query('BEGIN');
+
+        // FOR UPDATE dentro de la transaccion: dos aprobaciones concurrentes de la misma
+        // solicitud serializan aqui - la segunda ve estado != 'pendiente' y recibe 404
+        // en vez de un 500 por email duplicado (mismo patron que /convertir en solicitudes.js)
         const solicitudResult = await client.query(
-            `SELECT * FROM solicitudes_cliente WHERE id = $1 AND estado = 'pendiente'`,
+            `SELECT * FROM solicitudes_cliente WHERE id = $1 AND estado = 'pendiente' FOR UPDATE`,
             [req.params.id]
         );
         if (solicitudResult.rows.length === 0) {
+            await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Solicitud no encontrada o ya procesada' });
         }
         const s = solicitudResult.rows[0];
-
-        await client.query('BEGIN');
 
         let clienteIdFinal = cliente_id || null;
         if (!clienteIdFinal) {

@@ -230,9 +230,11 @@ router.patch('/:id/valorizacion', verifyToken, requireRole('gerente'), async (re
         return res.status(400).json({ error: 'valorizacion (numerica) es requerida' });
     }
     try {
+        // facturable NO se toca aca: esa decision es exclusiva del mecanico al finalizar
+        // (la valorizacion solo aplica sobre OTs que el ya marco facturables)
         const result = await pool.query(
             `UPDATE ordenes_trabajo
-             SET valorizacion = $1, valorizacion_aprobada_por = $2, facturable = true
+             SET valorizacion = $1, valorizacion_aprobada_por = $2
              WHERE id = $3 RETURNING *`,
             [valorizacion, req.user.id, req.params.id]
         );

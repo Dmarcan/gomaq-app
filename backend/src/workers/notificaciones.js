@@ -44,8 +44,21 @@ async function procesarPendientes() {
 }
 
 function iniciarWorker() {
-    setInterval(() => {
-        procesarPendientes().catch((err) => console.error('[notificaciones] error en worker:', err));
+    // guard anti-solapamiento: si un lote tarda mas que el intervalo (envios reales de red
+    // cuando exista proveedor), el tick siguiente re-seleccionaria las mismas filas aun
+    // 'pendiente' y duplicaria correos/WhatsApps al cliente. Con proceso unico este flag
+    // basta; si algun dia hay multiples instancias, usar SELECT ... FOR UPDATE SKIP LOCKED.
+    let enProceso = false;
+    setInterval(async () => {
+        if (enProceso) return;
+        enProceso = true;
+        try {
+            await procesarPendientes();
+        } catch (err) {
+            console.error('[notificaciones] error en worker:', err);
+        } finally {
+            enProceso = false;
+        }
     }, INTERVALO_MS);
     console.log(`[notificaciones] worker iniciado, revisando cada ${INTERVALO_MS / 1000}s`);
 }
