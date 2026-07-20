@@ -1,17 +1,26 @@
 import 'package:flutter/material.dart';
 
-/// Paleta extraida de los mockups del informe (pptx_unzip/ppt/media/image20.png, image36.png)
+/// Paleta del rediseño industrial oscuro (proyecto Stitch "GOMAQ Field Service App").
+/// El naranja primario se conserva de los mockups originales del informe.
 class GomaqColors {
   GomaqColors._();
 
   static const primario = Color(0xFFEA5B1F);
-  static const sidebarOscuro = Color(0xFF1B1210);
-  static const sidebarResaltado = Color(0xFF3D2318);
-  static const fondoCalido = Color(0xFFFDF6F1);
 
-  static const estadoPositivo = Color(0xFF2F8F4E); // operativa / enviado
-  static const estadoAdvertencia = Color(0xFFC9820A); // en_mantencion / pendiente
-  static const estadoNegativo = Color(0xFFB23A2E); // fuera_de_servicio / error
+  // Tema oscuro industrial
+  static const fondoOscuro = Color(0xFF1A1D21);
+  static const superficieTarjeta = Color(0xFF22262B);
+  static const superficieElevada = Color(0xFF2A2F35);
+  static const bordeSutil = Color(0xFF33383F);
+  static const textoPrimario = Color(0xFFF5F5F5);
+  static const textoSecundario = Color(0xFF9BA1A8);
+
+  // La app se usa en terreno con sol directo: los colores de estado van mas
+  // saturados que en el panel web para mantener contraste sobre fondo oscuro.
+  static const estadoPositivo = Color(0xFF4CAF6E); // finalizada
+  static const estadoAdvertencia = Color(0xFFF59E0B); // en progreso
+  static const estadoNegativo = Color(0xFFE05B4B); // error / fuera de servicio
+  static const estadoNeutro = Color(0xFF9BA1A8); // asignada / pendiente
 
   static Color colorEstado(String estado) {
     switch (estado) {
@@ -20,9 +29,10 @@ class GomaqColors {
       case 'finalizada':
       case 'convertida':
         return estadoPositivo;
-      case 'en_mantencion':
       case 'pendiente':
       case 'asignada':
+        return estadoNeutro;
+      case 'en_mantencion':
       case 'en_terreno':
       case 'en_reparacion':
         return estadoAdvertencia;
@@ -32,30 +42,56 @@ class GomaqColors {
   }
 
   static Color fondoChip(String estado) => colorEstado(estado).withValues(alpha: 0.15);
+
+  static String etiquetaEstado(String estado) {
+    switch (estado) {
+      case 'pendiente':
+        return 'Pendiente';
+      case 'asignada':
+        return 'Asignada';
+      case 'en_terreno':
+        return 'En terreno';
+      case 'en_reparacion':
+        return 'En reparación';
+      case 'finalizada':
+        return 'Finalizada';
+      default:
+        return estado.replaceAll('_', ' ');
+    }
+  }
 }
 
 ThemeData construirTemaGomaq() {
   final colorScheme = ColorScheme.fromSeed(
     seedColor: GomaqColors.primario,
     primary: GomaqColors.primario,
-    brightness: Brightness.light,
+    brightness: Brightness.dark,
+    surface: GomaqColors.fondoOscuro,
   );
 
   return ThemeData(
     useMaterial3: true,
     colorScheme: colorScheme,
-    scaffoldBackgroundColor: Colors.white,
+    scaffoldBackgroundColor: GomaqColors.fondoOscuro,
     appBarTheme: const AppBarTheme(
-      backgroundColor: Colors.white,
-      foregroundColor: Colors.black87,
+      backgroundColor: GomaqColors.fondoOscuro,
+      foregroundColor: GomaqColors.textoPrimario,
       elevation: 0,
       scrolledUnderElevation: 1,
+      centerTitle: true,
+      titleTextStyle: TextStyle(
+        color: GomaqColors.textoPrimario,
+        fontSize: 18,
+        fontWeight: FontWeight.bold,
+        letterSpacing: 0.5,
+      ),
     ),
     cardTheme: CardThemeData(
       elevation: 0,
+      color: GomaqColors.superficieTarjeta,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(14),
+        side: const BorderSide(color: GomaqColors.bordeSutil),
       ),
       margin: const EdgeInsets.symmetric(vertical: 6),
     ),
@@ -63,15 +99,18 @@ ThemeData construirTemaGomaq() {
       style: FilledButton.styleFrom(
         backgroundColor: GomaqColors.primario,
         foregroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
+        disabledBackgroundColor: GomaqColors.superficieElevada,
+        disabledForegroundColor: GomaqColors.textoSecundario,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 16),
+        textStyle: const TextStyle(fontWeight: FontWeight.bold, letterSpacing: 0.5),
       ),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
         foregroundColor: GomaqColors.primario,
         side: const BorderSide(color: GomaqColors.primario),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
       ),
     ),
@@ -80,15 +119,31 @@ ThemeData construirTemaGomaq() {
       foregroundColor: Colors.white,
     ),
     inputDecorationTheme: InputDecorationTheme(
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+      filled: true,
+      fillColor: GomaqColors.superficieElevada,
+      labelStyle: const TextStyle(color: GomaqColors.textoSecundario),
+      hintStyle: const TextStyle(color: GomaqColors.textoSecundario),
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: GomaqColors.bordeSutil),
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: GomaqColors.bordeSutil),
+      ),
       focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(8),
+        borderRadius: BorderRadius.circular(10),
         borderSide: const BorderSide(color: GomaqColors.primario, width: 2),
       ),
     ),
     chipTheme: ChipThemeData(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
       side: BorderSide.none,
+    ),
+    dividerTheme: const DividerThemeData(color: GomaqColors.bordeSutil),
+    listTileTheme: const ListTileThemeData(
+      textColor: GomaqColors.textoPrimario,
+      iconColor: GomaqColors.textoSecundario,
     ),
   );
 }
