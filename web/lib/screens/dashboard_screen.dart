@@ -41,12 +41,18 @@ class _DashboardScreenState extends State<DashboardScreen> {
       });
     } on ApiException catch (e) {
       setState(() => _error = e.message);
+    } catch (e) {
+      // dato inesperado o fallo de red: mejor un mensaje que una pantalla en blanco
+      setState(() => _error = 'No se pudo cargar el dashboard ($e)');
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
   }
 
   // ---------- helpers ----------
+
+  /// Postgres devuelve COUNT(*) como string via JSON ("5"): parseo defensivo.
+  static int _entero(dynamic v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 
   static String _miles(num n) {
     final s = n.round().toString();
@@ -137,9 +143,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _donaEstadoFlota(Map<String, dynamic> flota) {
     final datos = [
-      ('operativa', 'Operativa', (flota['operativas'] as num).toInt(), GomaqColors.estadoPositivo),
-      ('en_mantencion', 'En mantención', (flota['en_mantencion'] as num).toInt(), GomaqColors.estadoAdvertencia),
-      ('fuera_de_servicio', 'Fuera de servicio', (flota['fuera_de_servicio'] as num).toInt(), GomaqColors.estadoNegativo),
+      ('operativa', 'Operativa', _entero(flota['operativas']), GomaqColors.estadoPositivo),
+      ('en_mantencion', 'En mantención', _entero(flota['en_mantencion']), GomaqColors.estadoAdvertencia),
+      ('fuera_de_servicio', 'Fuera de servicio', _entero(flota['fuera_de_servicio']), GomaqColors.estadoNegativo),
     ];
     final total = datos.fold<int>(0, (acc, d) => acc + d.$3);
 
@@ -222,7 +228,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final puntos = <FlSpot>[];
     var maximo = 0.0;
     for (var i = 0; i < _otsPorMes.length; i++) {
-      final total = (_otsPorMes[i]['total'] as num).toDouble();
+      final total = _entero(_otsPorMes[i]['total']).toDouble();
       puntos.add(FlSpot(i.toDouble(), total));
       if (total > maximo) maximo = total;
     }
