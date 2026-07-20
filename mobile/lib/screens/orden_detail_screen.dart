@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import '../config/reglas_negocio.dart';
 import '../db/local_database.dart';
 import '../models/orden_trabajo.dart';
 import '../services/connectivity_service.dart';
@@ -11,6 +12,7 @@ import '../theme/gomaq_theme.dart';
 import '../widgets/estado_chip.dart';
 import '../widgets/foto_thumbnail.dart';
 import '../widgets/seccion_bloqueada.dart';
+import 'cerrar_orden_screen.dart';
 
 class OrdenDetailScreen extends StatefulWidget {
   final int ordenId;
@@ -85,7 +87,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     await _guardarDiagnostico(estado: 'en_terreno');
   }
 
-  Future<void> _tomarFoto() async {
+  Future<void> _tomarFoto(String tipo) async {
     final syncService = context.read<SyncService>();
     final picker = ImagePicker();
     final foto = await picker.pickImage(source: ImageSource.camera, imageQuality: 80);
@@ -96,10 +98,13 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     final rutaLocal = '${dir.path}/$nombreArchivo';
     await File(foto.path).copy(rutaLocal);
 
-    await syncService.encolarEvidencia(widget.ordenId, rutaLocal);
+    await syncService.encolarEvidencia(widget.ordenId, rutaLocal, tipo: tipo);
     await _cargar();
     _intentarSincronizarAhora();
   }
+
+  List<Map<String, dynamic>> _fotosDeTipo(String tipo) =>
+      _fotosLocales.where((f) => (f['tipo'] ?? 'antes') == tipo).toList();
 
   Future<void> _agregarInsumo() async {
     final insumoId = _insumoSeleccionadoId;
@@ -118,28 +123,24 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   }
 
   Future<void> _finalizar() async {
-    final syncService = context.read<SyncService>();
-    final confirmar = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('Finalizar orden de trabajo'),
-        content: Text(
-          _facturable
-              ? 'El trabajo quedara marcado como FACTURABLE (se cobra al cliente). ¿Confirmas que esta terminado?'
-              : '¿Confirmas que el trabajo esta terminado?',
+    final orden = _orden;
+    if (orden == null) return;
+    await Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => CerrarOrdenScreen(
+          orden: orden,
+          facturable: _facturable,
+          fotosAntes: _fotosDeTipo('antes').length,
+          fotosDespues: _fotosDeTipo('despues').length,
+          insumos: _insumosLocales.length,
         ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Finalizar')),
-        ],
       ),
     );
-    if (confirmar != true) return;
-
-    await syncService.encolarFinalizar(widget.ordenId, facturable: _facturable);
-    await _cargar();
+    // CerrarOrdenScreen hace popUntil(first) al confirmar; si el mecanico volvio
+    // con "atras" sin cerrar, refrescamos por si acaso
+    if (mounted) await _cargar();
     _intentarSincronizarAhora();
-    if (mounted) Navigator.pop(context);
   }
 
   // ---------- Secciones de UI ----------
@@ -196,20 +197,30 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     );
   }
 
-  Widget _seccionFotos({required bool puedeAgregar}) {
+  Widget _seccionFotos({
+    required String tipo,
+    required String titulo,
+    required bool puedeAgregar,
+    String? ayuda,
+  }) {
+    final fotos = _fotosDeTipo(tipo);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion(Icons.photo_camera_outlined, 'Evidencia fotográfica'),
+            _tituloSeccion(Icons.photo_camera_outlined, titulo),
+            if (ayuda != null) ...[
+              const SizedBox(height: 4),
+              Text(ayuda, style: const TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
+            ],
             const SizedBox(height: 12),
             Wrap(
               spacing: 8,
               runSpacing: 8,
               children: [
-                for (final foto in _fotosLocales)
+                for (final foto in fotos)
                   FotoThumbnail(
                     rutaLocal: foto['ruta_local'] as String,
                     sincronizada: foto['sincronizado'] != 0,
@@ -217,7 +228,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                   ),
                 if (puedeAgregar)
                   InkWell(
-                    onTap: _tomarFoto,
+                    onTap: () => _tomarFoto(tipo),
                     borderRadius: BorderRadius.circular(10),
                     child: Container(
                       width: 92,
@@ -379,7 +390,8 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   Widget? _botonInferior(OrdenTrabajo orden) {
     final String texto;
     final IconData icono;
-    final VoidCallback accion;
+    VoidCallback? accion;
+    String? notaFaltante;
 
     switch (orden.estado) {
       case 'asignada':
@@ -392,7 +404,15 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
       case 'en_reparacion':
         texto = 'FINALIZAR TRABAJO';
         icono = Icons.check_circle_outline;
-        accion = _finalizar;
+        final faltan = ReglasNegocio.minFotosDespues - _fotosDeTipo('despues').length;
+        if (faltan > 0) {
+          accion = null;
+          notaFaltante = faltan == 1
+              ? 'Falta 1 foto del trabajo terminado (DESPUÉS) para poder cerrar'
+              : 'Faltan $faltan fotos del trabajo terminado (DESPUÉS) para poder cerrar';
+        } else {
+          accion = _finalizar;
+        }
         break;
       default:
         return null; // finalizada u otro estado terminal: sin accion
@@ -405,13 +425,27 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
           color: GomaqColors.fondoOscuro,
           border: Border(top: BorderSide(color: GomaqColors.bordeSutil)),
         ),
-        child: SizedBox(
-          width: double.infinity,
-          child: FilledButton.icon(
-            onPressed: accion,
-            icon: Icon(icono),
-            label: Text(texto),
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            if (notaFaltante != null)
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: Text(
+                  notaFaltante,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 12, color: GomaqColors.estadoAdvertencia),
+                ),
+              ),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: accion,
+                icon: Icon(icono),
+                label: Text(texto),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -439,24 +473,37 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
           // Flujo guiado: antes de iniciar solo se documenta el estado inicial;
           // diagnostico e insumos se desbloquean al pasar a en_terreno.
           if (asignada) ...[
-            _seccionFotos(puedeAgregar: true),
+            _seccionFotos(
+              tipo: 'antes',
+              titulo: 'Paso 1: Fotos ANTES',
+              puedeAgregar: true,
+              ayuda: 'Documenta el estado inicial de la máquina antes de intervenirla',
+            ),
             const SeccionBloqueada(titulo: 'Diagnóstico y trabajo realizado', icono: Icons.build_outlined),
             const SeccionBloqueada(titulo: 'Insumos y repuestos', icono: Icons.inventory_2_outlined),
           ] else if (enProgreso) ...[
             _seccionDiagnostico(soloLectura: false, enTerreno: orden.estado == 'en_terreno'),
             _seccionInsumos(soloLectura: false),
-            _seccionFotos(puedeAgregar: true),
+            _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: true),
+            _seccionFotos(
+              tipo: 'despues',
+              titulo: 'Fotos DESPUÉS',
+              puedeAgregar: true,
+              ayuda: 'Se requiere al menos ${ReglasNegocio.minFotosDespues} foto del trabajo terminado para cerrar',
+            ),
             _seccionFacturable(soloLectura: false),
           ] else if (finalizada) ...[
             _seccionDiagnostico(soloLectura: true, enTerreno: false),
             _seccionInsumos(soloLectura: true),
-            _seccionFotos(puedeAgregar: false),
+            _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: false),
+            _seccionFotos(tipo: 'despues', titulo: 'Fotos DESPUÉS', puedeAgregar: false),
             _seccionFacturable(soloLectura: true),
           ] else ...[
             // estado no contemplado: mostrar todo editable para no bloquear al mecanico
             _seccionDiagnostico(soloLectura: false, enTerreno: false),
             _seccionInsumos(soloLectura: false),
-            _seccionFotos(puedeAgregar: true),
+            _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: true),
+            _seccionFotos(tipo: 'despues', titulo: 'Fotos DESPUÉS', puedeAgregar: true),
           ],
         ],
       ),
