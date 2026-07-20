@@ -40,7 +40,6 @@ class _LoginScreenState extends State<LoginScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: GomaqColors.fondoCalido,
       body: Center(
         child: Padding(
           padding: const EdgeInsets.all(24),
@@ -54,24 +53,49 @@ class _LoginScreenState extends State<LoginScreen> {
                 child: const Icon(Icons.build, color: Colors.white, size: 36),
               ),
               const SizedBox(height: 12),
-              const Text('GOMAQ Mecanico', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-              const SizedBox(height: 32),
+              const Text(
+                'ACCESO A GOMAQ',
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 1),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Ingresa tus credenciales de mecánico',
+                style: TextStyle(fontSize: 13, color: GomaqColors.textoSecundario),
+              ),
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                  color: GomaqColors.superficieElevada,
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: GomaqColors.bordeSutil),
+                ),
+                child: const Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(Icons.cloud_off, size: 13, color: GomaqColors.textoSecundario),
+                    SizedBox(width: 5),
+                    Text('Funciona sin conexión', style: TextStyle(fontSize: 11, color: GomaqColors.textoSecundario)),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 28),
               TextField(
                 controller: _emailCtrl,
-                decoration: const InputDecoration(labelText: 'Correo', border: OutlineInputBorder()),
+                decoration: const InputDecoration(labelText: 'Correo'),
                 keyboardType: TextInputType.emailAddress,
               ),
               const SizedBox(height: 16),
               TextField(
                 controller: _passwordCtrl,
-                decoration: const InputDecoration(labelText: 'Contraseña', border: OutlineInputBorder()),
+                decoration: const InputDecoration(labelText: 'Contraseña'),
                 obscureText: true,
               ),
               const SizedBox(height: 24),
               if (_error != null)
                 Padding(
                   padding: const EdgeInsets.only(bottom: 16),
-                  child: Text(_error!, style: const TextStyle(color: Colors.red)),
+                  child: Text(_error!, style: const TextStyle(color: GomaqColors.estadoNegativo)),
                 ),
               SizedBox(
                 width: double.infinity,

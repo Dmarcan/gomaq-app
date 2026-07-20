@@ -7,6 +7,8 @@ import '../services/auth_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/orden_card.dart';
+import '../widgets/sync_banner.dart';
 import 'orden_detail_screen.dart';
 
 class OrdenesListScreen extends StatefulWidget {
@@ -78,7 +80,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
                   ListTile(
                     contentPadding: EdgeInsets.zero,
                     dense: true,
-                    leading: const Icon(Icons.error_outline, color: Colors.red),
+                    leading: const Icon(Icons.error_outline, color: GomaqColors.estadoNegativo),
                     title: Text('${t['tipo']} · OT #${t['orden_trabajo_id']}'),
                     subtitle: Text('${t['ultimo_error'] ?? 'Error desconocido'}', maxLines: 3, overflow: TextOverflow.ellipsis),
                   ),
@@ -147,87 +149,39 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
       body: Column(
         children: [
           if (sesionExpirada)
-            Container(
-              width: double.infinity,
-              color: Colors.red.shade50,
-              padding: const EdgeInsets.all(8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.lock_outline, size: 18, color: Colors.red),
-                  const SizedBox(width: 6),
-                  const Flexible(
-                    child: Text(
-                      'Tu sesion expiro - vuelve a iniciar sesion para sincronizar (tu trabajo esta guardado)',
-                      style: TextStyle(fontSize: 12),
-                    ),
-                  ),
-                  TextButton(
-                    onPressed: () => context.read<AuthService>().logout(),
-                    child: const Text('Iniciar sesion', style: TextStyle(fontSize: 12)),
-                  ),
-                ],
-              ),
-            ),
-          InkWell(
-            onTap: _enError > 0 ? _mostrarErroresDeSync : null,
-            child: Container(
-              width: double.infinity,
-              color: _enError > 0
-                  ? Colors.red.shade50
-                  : online
-                      ? Colors.green.shade50
-                      : Colors.orange.shade50,
-              padding: const EdgeInsets.all(8),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    _enError > 0
-                        ? Icons.sync_problem
-                        : online
-                            ? Icons.cloud_done
-                            : Icons.cloud_off,
-                    size: 18,
-                    color: _enError > 0
-                        ? Colors.red
-                        : online
-                            ? Colors.green
-                            : Colors.orange,
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    sincronizando
-                        ? 'Sincronizando...'
-                        : _enError > 0
-                            ? '$_enError cambios no se pudieron sincronizar - toca para reintentar'
-                            : online
-                                ? (_pendientes > 0 ? '$_pendientes cambios pendientes de sincronizar' : 'Todo sincronizado')
-                                : 'Sin conexion - los cambios se guardan localmente',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ],
-              ),
-            ),
+            SesionExpiradaBanner(onIniciarSesion: () => context.read<AuthService>().logout()),
+          SyncBanner(
+            online: online,
+            sincronizando: sincronizando,
+            pendientes: _pendientes,
+            enError: _enError,
+            onTapErrores: _mostrarErroresDeSync,
           ),
           Expanded(
             child: _ordenes.isEmpty
-                ? const Center(child: Text('No tienes ordenes de trabajo asignadas'))
+                ? const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.assignment_outlined, size: 56, color: GomaqColors.textoSecundario),
+                        SizedBox(height: 12),
+                        Text(
+                          'No tienes ordenes de trabajo asignadas',
+                          style: TextStyle(color: GomaqColors.textoSecundario),
+                        ),
+                      ],
+                    ),
+                  )
                 : RefreshIndicator(
                     onRefresh: _sincronizarSiHayConexion,
                     child: ListView.builder(
+                      padding: const EdgeInsets.all(16),
                       itemCount: _ordenes.length,
                       itemBuilder: (context, i) {
                         final orden = _ordenes[i];
-                        return ListTile(
-                          title: Text(orden.maquinariaCodigo ?? 'OT #${orden.id}'),
-                          subtitle: Text(orden.motivo ?? ''),
-                          trailing: Chip(
-                            label: Text(orden.estado),
-                            backgroundColor: GomaqColors.fondoChip(orden.estado),
-                            labelStyle: TextStyle(color: GomaqColors.colorEstado(orden.estado)),
-                          ),
-                          onTap: () async {
+                        return OrdenCard(
+                          orden: orden,
+                          onAbrir: () async {
                             await Navigator.push(
                               context,
                               MaterialPageRoute(builder: (_) => OrdenDetailScreen(ordenId: orden.id)),
