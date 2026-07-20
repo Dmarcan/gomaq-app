@@ -1,3 +1,4 @@
+import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../theme/gomaq_theme.dart';
@@ -13,6 +14,7 @@ class DashboardScreen extends StatefulWidget {
 class _DashboardScreenState extends State<DashboardScreen> {
   Map<String, dynamic>? _resumen;
   Map<String, dynamic>? _ventasPorEjecutivo;
+  List<dynamic> _otsPorMes = [];
   bool _cargando = true;
   String? _error;
 
@@ -30,16 +32,60 @@ class _DashboardScreenState extends State<DashboardScreen> {
     try {
       final data = await ApiClient.instance.get('/api/dashboard/resumen');
       final ventas = await ApiClient.instance.get('/api/dashboard/ventas-por-ejecutivo');
+      final otsMes = await ApiClient.instance.get('/api/dashboard/ots-por-mes');
       if (!mounted) return;
       setState(() {
         _resumen = data;
         _ventasPorEjecutivo = ventas;
+        _otsPorMes = otsMes as List;
       });
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
+  }
+
+  // ---------- helpers ----------
+
+  static String _miles(num n) {
+    final s = n.round().toString();
+    final b = StringBuffer();
+    for (var i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) b.write('.');
+      b.write(s[i]);
+    }
+    return b.toString();
+  }
+
+  static const _nombresMes = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+
+  static String _etiquetaMes(String yyyyMm) {
+    final partes = yyyyMm.split('-');
+    final mes = int.tryParse(partes.length > 1 ? partes[1] : '') ?? 0;
+    return (mes >= 1 && mes <= 12) ? _nombresMes[mes - 1] : yyyyMm;
+  }
+
+  Widget _tituloSeccion(String texto) {
+    return Text(texto, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5));
+  }
+
+  Widget _panelGrafico({required String titulo, required Widget child, double alto = 240}) {
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        border: Border.all(color: Colors.grey.shade200),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          _tituloSeccion(titulo),
+          const SizedBox(height: 16),
+          SizedBox(height: alto, child: child),
+        ],
+      ),
+    );
   }
 
   Widget _tarjetaNumero(String numero, String etiqueta, {Color? color, VoidCallback? onTap}) {
@@ -87,32 +133,244 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _filaEjecutivo(String nombre, double monto, double porcentaje) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Row(
-        children: [
-          SizedBox(width: 140, child: Text(nombre, style: const TextStyle(fontSize: 13))),
-          Expanded(
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(4),
-              child: LinearProgressIndicator(
-                value: porcentaje / 100,
-                minHeight: 10,
-                backgroundColor: Colors.grey.shade200,
-                color: GomaqColors.primario,
+  // ---------- grafico 1: dona de estado operativo ----------
+
+  Widget _donaEstadoFlota(Map<String, dynamic> flota) {
+    final datos = [
+      ('operativa', 'Operativa', (flota['operativas'] as num).toInt(), GomaqColors.estadoPositivo),
+      ('en_mantencion', 'En mantención', (flota['en_mantencion'] as num).toInt(), GomaqColors.estadoAdvertencia),
+      ('fuera_de_servicio', 'Fuera de servicio', (flota['fuera_de_servicio'] as num).toInt(), GomaqColors.estadoNegativo),
+    ];
+    final total = datos.fold<int>(0, (acc, d) => acc + d.$3);
+
+    if (total == 0) {
+      return const Center(child: Text('Sin equipos registrados', style: TextStyle(color: Colors.black54)));
+    }
+
+    return Row(
+      children: [
+        Expanded(
+          child: Stack(
+            alignment: Alignment.center,
+            children: [
+              PieChart(
+                PieChartData(
+                  sectionsSpace: 2,
+                  centerSpaceRadius: 46,
+                  sections: [
+                    for (final d in datos)
+                      if (d.$3 > 0)
+                        PieChartSectionData(
+                          value: d.$3.toDouble(),
+                          color: d.$4,
+                          radius: 34,
+                          showTitle: false,
+                        ),
+                  ],
+                ),
+              ),
+              Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('$total', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                  const Text('equipos', style: TextStyle(fontSize: 11, color: Colors.black54)),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 8),
+        // leyenda navegable: mantiene la funcionalidad de las tarjetas anteriores
+        Expanded(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final d in datos)
+                InkWell(
+                  onTap: () => widget.onNavegar(1, filtro: {'estado': d.$1}),
+                  borderRadius: BorderRadius.circular(6),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 4),
+                    child: Row(
+                      children: [
+                        Container(
+                          width: 10,
+                          height: 10,
+                          decoration: BoxDecoration(color: d.$4, borderRadius: BorderRadius.circular(3)),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(child: Text(d.$2, style: const TextStyle(fontSize: 13))),
+                        Text('${d.$3}', style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ---------- grafico 2: linea de OTs por mes ----------
+
+  Widget _lineaOtsPorMes() {
+    if (_otsPorMes.isEmpty) {
+      return const Center(child: Text('Sin datos de órdenes de trabajo', style: TextStyle(color: Colors.black54)));
+    }
+    final puntos = <FlSpot>[];
+    var maximo = 0.0;
+    for (var i = 0; i < _otsPorMes.length; i++) {
+      final total = (_otsPorMes[i]['total'] as num).toDouble();
+      puntos.add(FlSpot(i.toDouble(), total));
+      if (total > maximo) maximo = total;
+    }
+    final techoY = maximo < 4 ? 4.0 : (maximo * 1.25).ceilToDouble();
+
+    return LineChart(
+      LineChartData(
+        minY: 0,
+        maxY: techoY,
+        gridData: FlGridData(
+          drawVerticalLine: false,
+          getDrawingHorizontalLine: (_) => FlLine(color: Colors.grey.shade200, strokeWidth: 1),
+        ),
+        borderData: FlBorderData(show: false),
+        titlesData: FlTitlesData(
+          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          leftTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 32,
+              interval: (techoY / 4).ceilToDouble(),
+              getTitlesWidget: (v, _) => Text(
+                v.toInt().toString(),
+                style: const TextStyle(fontSize: 11, color: Colors.black54),
               ),
             ),
           ),
-          const SizedBox(width: 12),
-          SizedBox(
-            width: 110,
-            child: Text(
-              '\$${monto.toStringAsFixed(0)} (${porcentaje.toStringAsFixed(0)}%)',
-              textAlign: TextAlign.right,
-              style: const TextStyle(fontSize: 12, color: Colors.black54),
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 26,
+              interval: 1,
+              getTitlesWidget: (v, _) {
+                final i = v.toInt();
+                if (i < 0 || i >= _otsPorMes.length || v != i.toDouble()) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    _etiquetaMes(_otsPorMes[i]['mes'] as String),
+                    style: const TextStyle(fontSize: 11, color: Colors.black54),
+                  ),
+                );
+              },
             ),
           ),
+        ),
+        lineTouchData: LineTouchData(
+          touchTooltipData: LineTouchTooltipData(
+            getTooltipItems: (spots) => [
+              for (final s in spots)
+                LineTooltipItem(
+                  '${_etiquetaMes(_otsPorMes[s.x.toInt()]['mes'] as String)}: ${s.y.toInt()} OT${s.y.toInt() == 1 ? '' : 's'}',
+                  const TextStyle(color: Colors.white, fontSize: 12),
+                ),
+            ],
+          ),
+        ),
+        lineBarsData: [
+          LineChartBarData(
+            spots: puntos,
+            color: GomaqColors.primario,
+            barWidth: 2,
+            isCurved: false,
+            dotData: FlDotData(
+              getDotPainter: (_, _, _, _) => FlDotCirclePainter(
+                radius: 4,
+                color: GomaqColors.primario,
+                strokeWidth: 2,
+                strokeColor: Colors.white,
+              ),
+            ),
+            belowBarData: BarAreaData(
+              show: true,
+              color: GomaqColors.primario.withValues(alpha: 0.08),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ---------- grafico 3: barras de ventas por ejecutivo ----------
+
+  Widget _barrasVentas(List ejecutivos) {
+    var maximo = 0.0;
+    for (final e in ejecutivos) {
+      final m = (e['monto'] as num).toDouble();
+      if (m > maximo) maximo = m;
+    }
+    final techoY = maximo <= 0 ? 1.0 : maximo * 1.2;
+
+    return BarChart(
+      BarChartData(
+        maxY: techoY,
+        alignment: BarChartAlignment.spaceAround,
+        gridData: FlGridData(
+          drawVerticalLine: false,
+          getDrawingHorizontalLine: (_) => FlLine(color: Colors.grey.shade200, strokeWidth: 1),
+        ),
+        borderData: FlBorderData(show: false),
+        titlesData: FlTitlesData(
+          topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          leftTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
+          bottomTitles: AxisTitles(
+            sideTitles: SideTitles(
+              showTitles: true,
+              reservedSize: 30,
+              getTitlesWidget: (v, _) {
+                final i = v.toInt();
+                if (i < 0 || i >= ejecutivos.length) return const SizedBox.shrink();
+                return Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    ejecutivos[i]['ejecutivo_nombre'] as String,
+                    style: const TextStyle(fontSize: 11, color: Colors.black54),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                );
+              },
+            ),
+          ),
+        ),
+        barTouchData: BarTouchData(
+          touchTooltipData: BarTouchTooltipData(
+            getTooltipItem: (_, groupIndex, rod, _) {
+              final fila = ejecutivos[groupIndex];
+              return BarTooltipItem(
+                '${fila['ejecutivo_nombre']}\n\$${_miles(rod.toY)} (${(fila['porcentaje'] as num).toStringAsFixed(0)}%)',
+                const TextStyle(color: Colors.white, fontSize: 12),
+              );
+            },
+          ),
+        ),
+        barGroups: [
+          for (var i = 0; i < ejecutivos.length; i++)
+            BarChartGroupData(
+              x: i,
+              barRods: [
+                BarChartRodData(
+                  toY: (ejecutivos[i]['monto'] as num).toDouble(),
+                  color: GomaqColors.primario,
+                  width: 26,
+                  borderRadius: const BorderRadius.vertical(top: Radius.circular(4)),
+                ),
+              ],
+            ),
         ],
       ),
     );
@@ -125,6 +383,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     final flota = _resumen!['flota'];
     final atajos = _resumen!['atajos'];
+    final ejecutivos = (_ventasPorEjecutivo?['ejecutivos'] as List?) ?? const [];
+    final totalVentas = (_ventasPorEjecutivo?['total_general'] as num?) ?? 0;
 
     return RefreshIndicator(
       onRefresh: _cargar,
@@ -134,7 +394,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Text('Vista general de los ${flota['total']} equipos de GOMAQ', style: const TextStyle(color: Colors.black54)),
           const SizedBox(height: 20),
 
-          const Text('DISPONIBILIDAD COMERCIAL', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+          _tituloSeccion('DISPONIBILIDAD COMERCIAL'),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -155,35 +415,28 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           const SizedBox(height: 24),
 
-          const Text('ESTADO OPERATIVO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-          const SizedBox(height: 8),
+          // estado operativo (dona con leyenda navegable) + OTs por mes, lado a lado
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              _tarjetaNumero(
-                '${flota['operativas']}',
-                'Operativa',
-                color: GomaqColors.estadoPositivo,
-                onTap: () => widget.onNavegar(1, filtro: {'estado': 'operativa'}),
+              Expanded(
+                child: _panelGrafico(
+                  titulo: 'ESTADO OPERATIVO',
+                  child: _donaEstadoFlota(flota),
+                ),
               ),
               const SizedBox(width: 16),
-              _tarjetaNumero(
-                '${flota['en_mantencion']}',
-                'En mantención',
-                color: GomaqColors.estadoAdvertencia,
-                onTap: () => widget.onNavegar(1, filtro: {'estado': 'en_mantencion'}),
-              ),
-              const SizedBox(width: 16),
-              _tarjetaNumero(
-                '${flota['fuera_de_servicio']}',
-                'Fuera de servicio',
-                color: GomaqColors.estadoNegativo,
-                onTap: () => widget.onNavegar(1, filtro: {'estado': 'fuera_de_servicio'}),
+              Expanded(
+                child: _panelGrafico(
+                  titulo: 'ÓRDENES DE TRABAJO POR MES',
+                  child: _lineaOtsPorMes(),
+                ),
               ),
             ],
           ),
           const SizedBox(height: 24),
 
-          const Text('ATAJOS', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+          _tituloSeccion('ATAJOS'),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -196,15 +449,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
           const SizedBox(height: 24),
 
-          if (_ventasPorEjecutivo != null && (_ventasPorEjecutivo!['ejecutivos'] as List).isNotEmpty) ...[
-            const Text('VENTAS POR EJECUTIVO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-            const SizedBox(height: 12),
-            for (final fila in (_ventasPorEjecutivo!['ejecutivos'] as List))
-              _filaEjecutivo(
-                fila['ejecutivo_nombre'] as String,
-                (fila['monto'] as num).toDouble(),
-                (fila['porcentaje'] as num).toDouble(),
-              ),
+          if (ejecutivos.isNotEmpty) ...[
+            _panelGrafico(
+              titulo: 'VENTAS POR EJECUTIVO — TOTAL \$${_miles(totalVentas)}',
+              alto: 220,
+              child: _barrasVentas(ejecutivos),
+            ),
             const SizedBox(height: 24),
           ],
 

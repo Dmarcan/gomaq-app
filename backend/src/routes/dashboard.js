@@ -80,4 +80,27 @@ router.get('/ventas-por-ejecutivo', verifyToken, requireRole('administrativo', '
     }
 });
 
+// GET /api/dashboard/ots-por-mes - OTs creadas por mes calendario (ultimos 6 meses)
+// para el grafico de linea del dashboard. generate_series rellena los meses sin OTs
+// con cero, para que la linea no "salte" meses.
+router.get('/ots-por-mes', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    try {
+        const result = await pool.query(`
+            SELECT to_char(m.mes, 'YYYY-MM') AS mes, COUNT(ot.id)::int AS total
+            FROM generate_series(
+                date_trunc('month', now()) - interval '5 months',
+                date_trunc('month', now()),
+                interval '1 month'
+            ) AS m(mes)
+            LEFT JOIN ordenes_trabajo ot ON date_trunc('month', ot.fecha_creacion) = m.mes
+            GROUP BY m.mes
+            ORDER BY m.mes
+        `);
+        res.json(result.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al calcular OTs por mes' });
+    }
+});
+
 module.exports = router;
