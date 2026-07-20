@@ -8,6 +8,9 @@ import '../models/orden_trabajo.dart';
 import '../services/connectivity_service.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/estado_chip.dart';
+import '../widgets/foto_thumbnail.dart';
+import '../widgets/seccion_bloqueada.dart';
 
 class OrdenDetailScreen extends StatefulWidget {
   final int ordenId;
@@ -25,8 +28,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   List<Map<String, dynamic>> _insumosLocales = [];
   List<Map<String, dynamic>> _catalogoInsumos = [];
   int? _insumoSeleccionadoId;
-
-  static const estadosDisponibles = ['en_terreno', 'en_reparacion'];
+  bool _facturable = false;
 
   @override
   void initState() {
@@ -44,6 +46,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     setState(() {
       _orden = OrdenTrabajo.fromLocalMap(rows.first);
       _diagnosticoCtrl.text = _orden!.diagnostico ?? '';
+      _facturable = _orden!.facturable;
       _fotosLocales = fotos;
       _insumosLocales = insumos;
       _catalogoInsumos = catalogo;
@@ -76,6 +79,10 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
         const SnackBar(content: Text('Guardado localmente, se sincroniza cuando haya señal')),
       );
     }
+  }
+
+  Future<void> _iniciarTrabajo() async {
+    await _guardarDiagnostico(estado: 'en_terreno');
   }
 
   Future<void> _tomarFoto() async {
@@ -112,38 +119,302 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
 
   Future<void> _finalizar() async {
     final syncService = context.read<SyncService>();
-    bool facturable = false;
     final confirmar = await showDialog<bool>(
       context: context,
-      builder: (_) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Finalizar orden de trabajo'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              const Text('¿Confirmas que el trabajo esta terminado?'),
-              CheckboxListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('¿Es facturable? (culpa del cliente)'),
-                value: facturable,
-                onChanged: (v) => setDialogState(() => facturable = v ?? false),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-            FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Finalizar')),
-          ],
+      builder: (_) => AlertDialog(
+        title: const Text('Finalizar orden de trabajo'),
+        content: Text(
+          _facturable
+              ? 'El trabajo quedara marcado como FACTURABLE (se cobra al cliente). ¿Confirmas que esta terminado?'
+              : '¿Confirmas que el trabajo esta terminado?',
         ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Finalizar')),
+        ],
       ),
     );
     if (confirmar != true) return;
 
-    await syncService.encolarFinalizar(widget.ordenId, facturable: facturable);
+    await syncService.encolarFinalizar(widget.ordenId, facturable: _facturable);
     await _cargar();
     _intentarSincronizarAhora();
     if (mounted) Navigator.pop(context);
+  }
+
+  // ---------- Secciones de UI ----------
+
+  Widget _tituloSeccion(IconData icono, String texto) {
+    return Row(
+      children: [
+        Icon(icono, size: 18, color: GomaqColors.primario),
+        const SizedBox(width: 8),
+        Text(texto, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+      ],
+    );
+  }
+
+  Widget _cabecera(OrdenTrabajo orden) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                EstadoChip(estado: orden.estado),
+                Text(
+                  'OT-${orden.id}',
+                  style: const TextStyle(color: GomaqColors.textoSecundario, fontSize: 12),
+                ),
+              ],
+            ),
+            const SizedBox(height: 10),
+            Text(
+              orden.maquinariaCodigo ?? 'Sin código',
+              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            if (orden.motivo != null && orden.motivo!.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(orden.motivo!, style: const TextStyle(color: GomaqColors.textoSecundario, fontSize: 13)),
+            ],
+            if (orden.clienteNombre != null) ...[
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  const Icon(Icons.business_outlined, size: 15, color: GomaqColors.textoSecundario),
+                  const SizedBox(width: 6),
+                  Text(orden.clienteNombre!, style: const TextStyle(fontSize: 13)),
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _seccionFotos({required bool puedeAgregar}) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _tituloSeccion(Icons.photo_camera_outlined, 'Evidencia fotográfica'),
+            const SizedBox(height: 12),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final foto in _fotosLocales)
+                  FotoThumbnail(
+                    rutaLocal: foto['ruta_local'] as String,
+                    sincronizada: foto['sincronizado'] != 0,
+                    creadoEn: foto['creado_en'] as String?,
+                  ),
+                if (puedeAgregar)
+                  InkWell(
+                    onTap: _tomarFoto,
+                    borderRadius: BorderRadius.circular(10),
+                    child: Container(
+                      width: 92,
+                      height: 92,
+                      decoration: BoxDecoration(
+                        border: Border.all(color: GomaqColors.primario.withValues(alpha: 0.6)),
+                        borderRadius: BorderRadius.circular(10),
+                        color: GomaqColors.primario.withValues(alpha: 0.08),
+                      ),
+                      child: const Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          Icon(Icons.add_a_photo_outlined, color: GomaqColors.primario),
+                          SizedBox(height: 4),
+                          Text('Agregar', style: TextStyle(fontSize: 11, color: GomaqColors.primario)),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _seccionDiagnostico({required bool soloLectura, required bool enTerreno}) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _tituloSeccion(Icons.build_outlined, 'Diagnóstico y trabajo realizado'),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _diagnosticoCtrl,
+              maxLines: 4,
+              readOnly: soloLectura,
+              decoration: const InputDecoration(hintText: 'Describe el problema encontrado y los pasos realizados...'),
+            ),
+            if (!soloLectura) ...[
+              const SizedBox(height: 10),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () => _guardarDiagnostico(),
+                      icon: const Icon(Icons.save_outlined, size: 18),
+                      label: const Text('Guardar'),
+                    ),
+                  ),
+                  if (enTerreno) ...[
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        onPressed: () => _guardarDiagnostico(estado: 'en_reparacion'),
+                        icon: const Icon(Icons.handyman_outlined, size: 18),
+                        label: const Text('En reparación'),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _seccionInsumos({required bool soloLectura}) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _tituloSeccion(Icons.inventory_2_outlined, 'Insumos y repuestos'),
+            const SizedBox(height: 12),
+            if (!soloLectura) ...[
+              if (_catalogoInsumos.isEmpty)
+                const Text(
+                  'Sin señal para cargar el catálogo de insumos todavía',
+                  style: TextStyle(color: GomaqColors.textoSecundario),
+                )
+              else
+                Row(
+                  children: [
+                    Expanded(
+                      child: DropdownButtonFormField<int>(
+                        initialValue: _insumoSeleccionadoId,
+                        decoration: const InputDecoration(isDense: true),
+                        items: [
+                          for (final insumo in _catalogoInsumos)
+                            DropdownMenuItem(
+                              value: insumo['id'] as int,
+                              child: Text(
+                                '${insumo['nombre']} (${insumo['unidad_medida']})',
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                        ],
+                        onChanged: (v) => setState(() => _insumoSeleccionadoId = v),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    SizedBox(
+                      width: 80,
+                      child: TextField(
+                        controller: _cantidadInsumoCtrl,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        decoration: const InputDecoration(isDense: true, hintText: 'Cant.'),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    IconButton(
+                      onPressed: _agregarInsumo,
+                      icon: const Icon(Icons.add_circle, color: GomaqColors.primario, size: 30),
+                    ),
+                  ],
+                ),
+              const SizedBox(height: 4),
+            ],
+            if (_insumosLocales.isEmpty && soloLectura)
+              const Text('Sin insumos registrados', style: TextStyle(color: GomaqColors.textoSecundario)),
+            for (final insumo in _insumosLocales)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: const Icon(Icons.build_circle_outlined),
+                title: Text('${insumo['insumo_nombre']} - ${insumo['cantidad']}'),
+                trailing: insumo['sincronizado'] == 0
+                    ? const Icon(Icons.cloud_upload, size: 16, color: GomaqColors.estadoAdvertencia)
+                    : const Icon(Icons.cloud_done, size: 16, color: GomaqColors.estadoPositivo),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _seccionFacturable({required bool soloLectura}) {
+    return Card(
+      child: SwitchListTile(
+        title: const Text('Trabajo facturable', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+        subtitle: const Text(
+          'Marcar si el trabajo se cobra al cliente (daño de su responsabilidad)',
+          style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario),
+        ),
+        activeThumbColor: GomaqColors.primario,
+        value: _facturable,
+        onChanged: soloLectura ? null : (v) => setState(() => _facturable = v),
+      ),
+    );
+  }
+
+  Widget? _botonInferior(OrdenTrabajo orden) {
+    final String texto;
+    final IconData icono;
+    final VoidCallback accion;
+
+    switch (orden.estado) {
+      case 'asignada':
+      case 'pendiente':
+        texto = 'INICIAR TRABAJO';
+        icono = Icons.play_circle_outline;
+        accion = _iniciarTrabajo;
+        break;
+      case 'en_terreno':
+      case 'en_reparacion':
+        texto = 'FINALIZAR TRABAJO';
+        icono = Icons.check_circle_outline;
+        accion = _finalizar;
+        break;
+      default:
+        return null; // finalizada u otro estado terminal: sin accion
+    }
+
+    return SafeArea(
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 12),
+        decoration: const BoxDecoration(
+          color: GomaqColors.fondoOscuro,
+          border: Border(top: BorderSide(color: GomaqColors.bordeSutil)),
+        ),
+        child: SizedBox(
+          width: double.infinity,
+          child: FilledButton.icon(
+            onPressed: accion,
+            icon: Icon(icono),
+            label: Text(texto),
+          ),
+        ),
+      ),
+    );
   }
 
   @override
@@ -153,144 +424,40 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
+    final asignada = orden.estado == 'asignada' || orden.estado == 'pendiente';
+    final enProgreso = orden.estado == 'en_terreno' || orden.estado == 'en_reparacion';
+    final finalizada = orden.estado == 'finalizada';
+
     return Scaffold(
-      appBar: AppBar(title: Text(orden.maquinariaCodigo ?? 'OT #${orden.id}')),
+      appBar: AppBar(title: Text('OT-${orden.id}')),
+      bottomNavigationBar: _botonInferior(orden),
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          Text('Cliente: ${orden.clienteNombre ?? "-"}'),
-          const SizedBox(height: 4),
-          Text('Motivo: ${orden.motivo ?? "-"}'),
-          const SizedBox(height: 4),
-          Chip(
-            label: Text('Estado: ${orden.estado}'),
-            backgroundColor: GomaqColors.fondoChip(orden.estado),
-            labelStyle: TextStyle(color: GomaqColors.colorEstado(orden.estado)),
-          ),
-          const SizedBox(height: 24),
+          _cabecera(orden),
 
-          const Text('Diagnostico', style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          TextField(
-            controller: _diagnosticoCtrl,
-            maxLines: 4,
-            decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'Describe el problema encontrado...'),
-          ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            children: [
-              OutlinedButton(
-                onPressed: () => _guardarDiagnostico(),
-                child: const Text('Guardar diagnostico'),
-              ),
-              for (final estado in estadosDisponibles)
-                OutlinedButton(
-                  onPressed: () => _guardarDiagnostico(estado: estado),
-                  child: Text('Marcar: $estado'),
-                ),
-            ],
-          ),
-
-          const SizedBox(height: 24),
-          const Text('Evidencia fotografica', style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              for (final foto in _fotosLocales)
-                Stack(
-                  children: [
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(8),
-                      child: Image.file(
-                        File(foto['ruta_local'] as String),
-                        width: 80,
-                        height: 80,
-                        fit: BoxFit.cover,
-                        // la foto local pudo borrarse (limpieza de datos): placeholder en vez de excepcion
-                        errorBuilder: (_, __, ___) => Container(
-                          width: 80,
-                          height: 80,
-                          color: Colors.grey.shade300,
-                          child: const Icon(Icons.broken_image, color: Colors.grey),
-                        ),
-                      ),
-                    ),
-                    if (foto['sincronizado'] == 0)
-                      const Positioned(
-                        right: 2,
-                        top: 2,
-                        child: Icon(Icons.cloud_upload, size: 16, color: Colors.orange),
-                      ),
-                  ],
-                ),
-              InkWell(
-                onTap: _tomarFoto,
-                child: Container(
-                  width: 80,
-                  height: 80,
-                  decoration: BoxDecoration(border: Border.all(color: Colors.grey), borderRadius: BorderRadius.circular(8)),
-                  child: const Icon(Icons.camera_alt),
-                ),
-              ),
-            ],
-          ),
-
-          const SizedBox(height: 24),
-          const Text('Insumos utilizados', style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          if (_catalogoInsumos.isEmpty)
-            const Text('Sin senal para cargar el catalogo de insumos todavia', style: TextStyle(color: Colors.grey))
-          else
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<int>(
-                    initialValue: _insumoSeleccionadoId,
-                    decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true),
-                    items: [
-                      for (final insumo in _catalogoInsumos)
-                        DropdownMenuItem(
-                          value: insumo['id'] as int,
-                          child: Text('${insumo['nombre']} (${insumo['unidad_medida']})'),
-                        ),
-                    ],
-                    onChanged: (v) => setState(() => _insumoSeleccionadoId = v),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 80,
-                  child: TextField(
-                    controller: _cantidadInsumoCtrl,
-                    keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                    decoration: const InputDecoration(border: OutlineInputBorder(), isDense: true, hintText: 'Cant.'),
-                  ),
-                ),
-                const SizedBox(width: 8),
-                IconButton(onPressed: _agregarInsumo, icon: const Icon(Icons.add_circle)),
-              ],
-            ),
-          const SizedBox(height: 8),
-          for (final insumo in _insumosLocales)
-            ListTile(
-              dense: true,
-              contentPadding: EdgeInsets.zero,
-              leading: const Icon(Icons.build_circle_outlined),
-              title: Text('${insumo['insumo_nombre']} - ${insumo['cantidad']}'),
-              trailing: insumo['sincronizado'] == 0
-                  ? const Icon(Icons.cloud_upload, size: 16, color: Colors.orange)
-                  : const Icon(Icons.cloud_done, size: 16, color: Colors.green),
-            ),
-
-          const SizedBox(height: 32),
-          if (orden.estado != 'finalizada')
-            SizedBox(
-              width: double.infinity,
-              child: FilledButton(onPressed: _finalizar, child: const Text('Finalizar Orden de Trabajo')),
-            ),
+          // Flujo guiado: antes de iniciar solo se documenta el estado inicial;
+          // diagnostico e insumos se desbloquean al pasar a en_terreno.
+          if (asignada) ...[
+            _seccionFotos(puedeAgregar: true),
+            const SeccionBloqueada(titulo: 'Diagnóstico y trabajo realizado', icono: Icons.build_outlined),
+            const SeccionBloqueada(titulo: 'Insumos y repuestos', icono: Icons.inventory_2_outlined),
+          ] else if (enProgreso) ...[
+            _seccionDiagnostico(soloLectura: false, enTerreno: orden.estado == 'en_terreno'),
+            _seccionInsumos(soloLectura: false),
+            _seccionFotos(puedeAgregar: true),
+            _seccionFacturable(soloLectura: false),
+          ] else if (finalizada) ...[
+            _seccionDiagnostico(soloLectura: true, enTerreno: false),
+            _seccionInsumos(soloLectura: true),
+            _seccionFotos(puedeAgregar: false),
+            _seccionFacturable(soloLectura: true),
+          ] else ...[
+            // estado no contemplado: mostrar todo editable para no bloquear al mecanico
+            _seccionDiagnostico(soloLectura: false, enTerreno: false),
+            _seccionInsumos(soloLectura: false),
+            _seccionFotos(puedeAgregar: true),
+          ],
         ],
       ),
     );
