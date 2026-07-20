@@ -8,18 +8,26 @@ const router = express.Router();
 
 // POST /api/ordenes-trabajo/:id/evidencia/solicitar-upload
 // Genera una URL prefirmada de Supabase Storage para que el celular suba la foto directo
+// Ademas de evidencias, la app sube la firma de recepcion al cerrar la OT (carpeta 'firmas');
+// esa NO pasa por /confirmar: su path viaja en el PATCH /finalizar y queda en firmas_recepcion.
+const CARPETAS_PERMITIDAS = ['firmas'];
+
 router.post('/:id/evidencia/solicitar-upload', verifyToken, requireRole('mecanico'), async (req, res) => {
     const { id } = req.params;
-    const { nombre_archivo } = req.body;
+    const { nombre_archivo, carpeta } = req.body;
     if (!nombre_archivo) {
         return res.status(400).json({ error: 'nombre_archivo es requerido' });
+    }
+    if (carpeta !== undefined && !CARPETAS_PERMITIDAS.includes(carpeta)) {
+        return res.status(400).json({ error: 'carpeta invalida' });
     }
     try {
         const check = await verificarDuenoOrden(id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
 
-        const path = `ot-${id}/${Date.now()}-${nombre_archivo}`;
+        const base = carpeta ? `${carpeta}/ot-${id}` : `ot-${id}`;
+        const path = `${base}/${Date.now()}-${nombre_archivo}`;
         const { data, error } = await supabase.storage.from(BUCKET).createSignedUploadUrl(path);
         if (error) throw error;
 
@@ -34,9 +42,13 @@ router.post('/:id/evidencia/solicitar-upload', verifyToken, requireRole('mecanic
 // Registra la evidencia una vez que el archivo ya fue subido directo a Supabase
 router.post('/:id/evidencia/confirmar', verifyToken, requireRole('mecanico'), async (req, res) => {
     const { id } = req.params;
-    const { path } = req.body;
+    const { path, tipo } = req.body;
     if (!path) {
         return res.status(400).json({ error: 'path es requerido' });
+    }
+    // tipo opcional: los APK anteriores al rediseño no lo envian (default 'antes')
+    if (tipo !== undefined && !['antes', 'despues'].includes(tipo)) {
+        return res.status(400).json({ error: "tipo debe ser 'antes' o 'despues'" });
     }
     try {
         const check = await verificarDuenoOrden(id, req.user.id);
@@ -44,8 +56,8 @@ router.post('/:id/evidencia/confirmar', verifyToken, requireRole('mecanico'), as
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
 
         const result = await pool.query(
-            'INSERT INTO evidencias_fotograficas (orden_trabajo_id, path) VALUES ($1, $2) RETURNING *',
-            [id, path]
+            'INSERT INTO evidencias_fotograficas (orden_trabajo_id, path, tipo) VALUES ($1, $2, $3) RETURNING *',
+            [id, path, tipo || 'antes']
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {

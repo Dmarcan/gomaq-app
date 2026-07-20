@@ -204,22 +204,45 @@ router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (re
 // (entrevista la administrativa: "el mecanico decide si es culpa al cliente o no" - esa decision es
 // la que determina si la OT queda facturable, no algo que Administrativo elige al crearla)
 router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req, res) => {
-    const { facturable } = req.body;
+    const { facturable, persona_recibe, sin_persona, firma_path } = req.body;
+    // Datos de recepcion opcionales: los APK anteriores al rediseño no los envian.
+    const tieneRecepcion = persona_recibe !== undefined || sin_persona !== undefined || firma_path !== undefined;
+    if (tieneRecepcion && !sin_persona && !persona_recibe) {
+        return res.status(400).json({ error: 'Debe indicar persona_recibe o marcar sin_persona' });
+    }
+    const client = await pool.connect();
     try {
         const check = await verificarDuenoOrden(req.params.id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
 
-        const result = await pool.query(
+        await client.query('BEGIN');
+        const result = await client.query(
             `UPDATE ordenes_trabajo
              SET estado = 'finalizada', fecha_cierre = now(), facturable = COALESCE($2, facturable)
              WHERE id = $1 RETURNING *`,
             [req.params.id, facturable === undefined ? null : Boolean(facturable)]
         );
+        if (tieneRecepcion) {
+            // ON CONFLICT: la cola offline puede reintentar el PATCH; no debe duplicar ni fallar
+            await client.query(
+                `INSERT INTO firmas_recepcion (orden_trabajo_id, persona_recibe, sin_persona, firma_path)
+                 VALUES ($1, $2, $3, $4)
+                 ON CONFLICT (orden_trabajo_id) DO UPDATE
+                 SET persona_recibe = EXCLUDED.persona_recibe,
+                     sin_persona = EXCLUDED.sin_persona,
+                     firma_path = EXCLUDED.firma_path`,
+                [req.params.id, persona_recibe || null, Boolean(sin_persona), firma_path || null]
+            );
+        }
+        await client.query('COMMIT');
         res.json(result.rows[0]);
     } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al finalizar orden de trabajo' });
+    } finally {
+        client.release();
     }
 });
 
