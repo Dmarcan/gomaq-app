@@ -17,7 +17,7 @@ class LocalDatabase {
     final path = join(dbPath, 'gomaq_mecanico.db');
     return openDatabase(
       path,
-      version: 2,
+      version: 3,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE ordenes_locales (
@@ -52,6 +52,7 @@ class LocalDatabase {
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             orden_trabajo_id INTEGER NOT NULL,
             ruta_local TEXT NOT NULL,
+            tipo TEXT NOT NULL DEFAULT 'antes',
             sincronizado INTEGER NOT NULL DEFAULT 0,
             creado_en TEXT NOT NULL
           )
@@ -62,6 +63,12 @@ class LocalDatabase {
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
           await _crearTablasInsumos(db);
+        }
+        if (oldVersion < 3) {
+          // fotos anteriores al rediseño: 'antes' es el default conservador (igual que el backend)
+          await db.execute(
+            "ALTER TABLE evidencias_locales ADD COLUMN tipo TEXT NOT NULL DEFAULT 'antes'",
+          );
         }
       },
     );

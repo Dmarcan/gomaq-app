@@ -59,7 +59,13 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> encolarFinalizar(int ordenId, {bool facturable = false}) async {
+  Future<void> encolarFinalizar(
+    int ordenId, {
+    bool facturable = false,
+    String? personaRecibe,
+    bool sinPersona = false,
+    String? rutaFirmaLocal,
+  }) async {
     final db = await _db;
     await db.update(
       'ordenes_locales',
@@ -67,19 +73,29 @@ class SyncService extends ChangeNotifier {
       where: 'id = ?',
       whereArgs: [ordenId],
     );
-    await _encolar(ordenId, 'finalizar', {'facturable': facturable});
+    await _encolar(ordenId, 'finalizar', {
+      'facturable': facturable,
+      if (personaRecibe != null) 'persona_recibe': personaRecibe,
+      'sin_persona': sinPersona,
+      if (rutaFirmaLocal != null) 'ruta_firma_local': rutaFirmaLocal,
+    });
     notifyListeners();
   }
 
-  Future<void> encolarEvidencia(int ordenId, String rutaLocal) async {
+  Future<void> encolarEvidencia(int ordenId, String rutaLocal, {String tipo = 'antes'}) async {
     final db = await _db;
     final evidenciaId = await db.insert('evidencias_locales', {
       'orden_trabajo_id': ordenId,
       'ruta_local': rutaLocal,
+      'tipo': tipo,
       'sincronizado': 0,
       'creado_en': DateTime.now().toIso8601String(),
     });
-    await _encolar(ordenId, 'evidencia', {'evidencia_local_id': evidenciaId, 'ruta_local': rutaLocal});
+    await _encolar(ordenId, 'evidencia', {
+      'evidencia_local_id': evidenciaId,
+      'ruta_local': rutaLocal,
+      'tipo': tipo,
+    });
     notifyListeners();
   }
 
@@ -289,7 +305,7 @@ class SyncService extends ChangeNotifier {
         await ApiClient.instance.patch('/api/ordenes-trabajo/$ordenId/diagnostico', payload);
         break;
       case 'finalizar':
-        await ApiClient.instance.patch('/api/ordenes-trabajo/$ordenId/finalizar', payload);
+        await _finalizarConFirma(tarea, ordenId, payload);
         break;
       case 'evidencia':
         await _subirEvidencia(ordenId, payload);
@@ -300,6 +316,54 @@ class SyncService extends ChangeNotifier {
       default:
         throw Exception('Tipo de tarea desconocido: $tipo');
     }
+  }
+
+  /// Cierra la OT en el servidor, subiendo antes la firma de recepcion si existe.
+  /// Idempotente ante reintentos de la cola: el path de la firma ya subida se
+  /// persiste en el payload de la tarea ANTES del PATCH, asi un reintento
+  /// (PUT exitoso + PATCH fallido) no vuelve a subir el PNG.
+  Future<void> _finalizarConFirma(Map<String, dynamic> tarea, int ordenId, Map<String, dynamic> payload) async {
+    final rutaFirma = payload['ruta_firma_local'] as String?;
+    var firmaPath = payload['firma_path'] as String?;
+
+    if (rutaFirma != null && firmaPath == null) {
+      final archivo = File(rutaFirma);
+      // si la firma local se perdio, se cierra igual la OT (con persona/sin_persona):
+      // bloquear el cierre para siempre por un PNG borrado seria peor para el negocio
+      if (await archivo.exists()) {
+        final nombreArchivo = rutaFirma.split(Platform.pathSeparator).last;
+        final solicitud = await ApiClient.instance.post(
+          '/api/ordenes-trabajo/$ordenId/evidencia/solicitar-upload',
+          {'nombre_archivo': nombreArchivo, 'carpeta': 'firmas'},
+        );
+        final resp = await http
+            .put(
+              Uri.parse(solicitud['signedUrl'] as String),
+              headers: {'Content-Type': 'image/png'},
+              body: await archivo.readAsBytes(),
+            )
+            .timeout(const Duration(seconds: 20));
+        if (resp.statusCode >= 300) {
+          throw Exception('Fallo la subida de la firma a Supabase Storage: ${resp.statusCode}');
+        }
+        firmaPath = solicitud['path'] as String;
+        payload['firma_path'] = firmaPath;
+        final db = await _db;
+        await db.update(
+          'cola_sincronizacion',
+          {'payload': jsonEncode(payload)},
+          where: 'id = ?',
+          whereArgs: [tarea['id']],
+        );
+      }
+    }
+
+    await ApiClient.instance.patch('/api/ordenes-trabajo/$ordenId/finalizar', {
+      'facturable': payload['facturable'],
+      if (payload['persona_recibe'] != null) 'persona_recibe': payload['persona_recibe'],
+      if (payload['sin_persona'] != null) 'sin_persona': payload['sin_persona'],
+      if (firmaPath != null) 'firma_path': firmaPath,
+    });
   }
 
   Future<void> _subirEvidencia(int ordenId, Map<String, dynamic> payload) async {
@@ -329,7 +393,8 @@ class SyncService extends ChangeNotifier {
 
     await ApiClient.instance.post(
       '/api/ordenes-trabajo/$ordenId/evidencia/confirmar',
-      {'path': solicitud['path']},
+      // tareas encoladas antes del rediseño no traen tipo: 'antes' (mismo default del backend)
+      {'path': solicitud['path'], 'tipo': payload['tipo'] ?? 'antes'},
     );
 
     final db = await _db;
