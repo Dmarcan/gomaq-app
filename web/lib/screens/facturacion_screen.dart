@@ -207,6 +207,7 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
       if (!mounted) return;
       setState(() {
         if (deteccion['monto_detectado'] != null) _montoCtrl.text = deteccion['monto_detectado'].toString();
+        if (deteccion['folio_detectado'] != null) _folioCtrl.text = deteccion['folio_detectado'].toString();
       });
     } on ApiException catch (_) {
       // deteccion best-effort: si falla, el usuario sigue llenando a mano

@@ -5,6 +5,9 @@ import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
 
+/// Mismo tope que aplica el backend (middleware/upload.js).
+const _maxArchivoBytes = 10 * 1024 * 1024;
+
 class GuiasScreen extends StatefulWidget {
   const GuiasScreen({super.key});
 
@@ -23,6 +26,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
   bool _cargando = true;
   bool _detectando = false;
   bool _huboDeteccion = false;
+  bool _horaDetectada = false;
   DateTime _fecha = DateTime.now();
   TimeOfDay _hora = TimeOfDay.now();
   bool _fallido = false;
@@ -56,9 +60,18 @@ class _GuiasScreenState extends State<GuiasScreen> {
   Future<void> _elegirArchivo() async {
     final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
     if (resultado == null || resultado.files.single.bytes == null) return;
+    // el backend rechaza sobre 10 MB; avisar aca evita subir el archivo entero para nada
+    if (resultado.files.single.bytes!.length > _maxArchivoBytes) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('El PDF supera los 10 MB')),
+      );
+      return;
+    }
     setState(() {
       _archivo = resultado.files.single;
       _huboDeteccion = false;
+      _horaDetectada = false;
     });
     await _detectarDatos();
   }
@@ -79,7 +92,11 @@ class _GuiasScreenState extends State<GuiasScreen> {
         if (resultado['fecha_hora_detectada'] != null) {
           final detectada = DateTime.parse(resultado['fecha_hora_detectada']).toLocal();
           _fecha = detectada;
-          _hora = TimeOfDay(hour: detectada.hour, minute: detectada.minute);
+          // la hora solo se toma si venia de verdad en el PDF. Las guias del SII no la
+          // traen, y el backend completa con 00:00 para armar el instante: darla por buena
+          // haria que HORA_CORTE cobre el dia del despacho sin que nadie lo haya decidido.
+          _horaDetectada = resultado['hora_detectada'] == true;
+          if (_horaDetectada) _hora = TimeOfDay(hour: detectada.hour, minute: detectada.minute);
         }
         // solo asignar el cliente detectado si existe en la lista ya cargada del dropdown
         // (si se creo despues de abrir la pantalla, un value sin item crashea el Dropdown)
@@ -269,6 +286,14 @@ class _GuiasScreenState extends State<GuiasScreen> {
               ],
               const SizedBox(height: 20),
               const Text('FECHA Y HORA DE SALIDA/LLEGADA', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              if (_huboDeteccion && !_horaDetectada)
+                const Padding(
+                  padding: EdgeInsets.only(top: 4),
+                  child: Text(
+                    'La hora no venía en el PDF: ingrésala tú, porque define si se cobra este día.',
+                    style: TextStyle(fontSize: 12, color: Color(0xFFB25000)),
+                  ),
+                ),
               const SizedBox(height: 8),
               Row(
                 children: [

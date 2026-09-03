@@ -25,6 +25,7 @@ const ejecutivosRouter = require('./src/routes/ejecutivos');
 const facturacionRouter = require('./src/routes/facturacion');
 const registroRouter = require('./src/routes/registro');
 const { iniciarWorker } = require('./src/workers/notificaciones');
+const { manejarErroresDeSubida } = require('./src/middleware/upload');
 
 const app = express();
 app.use(cors());
@@ -60,6 +61,10 @@ app.use('/api/insumos', insumosRouter);
 app.use('/api/ejecutivos', ejecutivosRouter);
 app.use('/api/facturacion', facturacionRouter);
 app.use('/api/registro-cliente', registroRouter);
+
+// traduce los rechazos de multer (archivo muy grande, tipo no permitido) a 4xx con
+// mensaje entendible; sin esto terminan como un 500 generico
+app.use(manejarErroresDeSubida);
 
 // fallback de SPA: cualquier ruta que no sea /api ni /uploads devuelve el index.html
 // del panel web (si existe), para que el enrutamiento propio de Flutter Web funcione

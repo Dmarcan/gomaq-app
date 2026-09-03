@@ -1,55 +1,41 @@
 const express = require('express');
-const multer = require('multer');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
+const { subidaPdf } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { calcularInicioCobro, calcularDiasTranscurridos } = require('../utils/diasArriendo');
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
 const { detectarCliente } = require('../utils/detectarCliente');
+const { parsearGuia } = require('../utils/parsearDocumento');
 
 const router = express.Router();
 
-const upload = multer({ storage: multer.memoryStorage() });
-
-// POST /api/maquinarias/guias/detectar - lee el texto del PDF (si lo tiene) y adivina
-// fecha/hora/tipo con heuristicas simples, para prellenar el formulario. Mejor esfuerzo:
-// nunca falla el flujo, si no encuentra nada devuelve todo en null y el usuario llena a mano.
-router.post('/guias/detectar', verifyToken, requireRole('administrativo'), upload.single('archivo'), async (req, res) => {
+// POST /api/maquinarias/guias/detectar - lee el texto del PDF (si lo tiene) y prellena el
+// formulario con lo que reconozca (ver utils/parsearDocumento). Mejor esfuerzo: nunca falla
+// el flujo, si no encuentra nada devuelve todo en null y el usuario llena a mano.
+router.post('/guias/detectar', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'archivo (PDF) es requerido' });
     }
     try {
         const texto = await leerTextoPdf(req.file.buffer);
+        const { fecha_detectada, hora_detectada, tipo_detectado, rut_detectado } = parsearGuia(texto);
 
-        const matchFecha = texto.match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})/);
-        const matchHora = texto.match(/(\d{1,2}):(\d{2})/);
-
+        // el panel maneja un instante completo, asi que si el PDF no trae hora se compone
+        // con 00:00 - pero se informa aparte en hora_detectada para que la UI no la de por
+        // buena: con HORA_CORTE (utils/diasArriendo) un 00:00 inventado cobraria el dia del
+        // despacho. Las guias de GOMAQ no traen hora, se pone siempre a mano.
         let fechaHoraDetectada = null;
-        if (matchFecha) {
-            const [, dia, mes, anioCrudo] = matchFecha;
-            const anio = anioCrudo.length === 2 ? `20${anioCrudo}` : anioCrudo;
-            const hora = matchHora ? matchHora[1] : '00';
-            const minuto = matchHora ? matchHora[2] : '00';
-            const fecha = new Date(`${anio}-${mes.padStart(2, '0')}-${dia.padStart(2, '0')}T${hora.padStart(2, '0')}:${minuto}:00`);
+        if (fecha_detectada) {
+            const fecha = new Date(`${fecha_detectada}T${hora_detectada || '00:00'}:00`);
             if (!isNaN(fecha.getTime())) fechaHoraDetectada = fecha.toISOString();
-        }
-
-        // en Chile no existe un tipo de DTE separado para "guia de recepcion": tanto la
-        // salida como la devolucion se emiten como "GUIA DE DESPACHO ELECTRONICA", asi que
-        // el titulo del documento no sirve para distinguirlas. La senal real esta en el
-        // campo "Tipo de Traslado" (Devolucion/Recepcion) - se busca esa palabra primero,
-        // y solo si no aparece se asume despacho por default al encontrar el titulo.
-        let tipoDetectado = null;
-        if (/devoluci[oó]n|recepci[oó]n/i.test(texto)) {
-            tipoDetectado = 'recepcion';
-        } else if (/despacho/i.test(texto)) {
-            tipoDetectado = 'despacho';
         }
 
         res.json({
             fecha_hora_detectada: fechaHoraDetectada,
-            tipo_detectado: tipoDetectado,
-            cliente_detectado: await detectarCliente(texto),
+            hora_detectada: hora_detectada !== null,
+            tipo_detectado,
+            cliente_detectado: await detectarCliente(texto, rut_detectado),
             texto_legible: texto.trim().length > 0,
         });
     } catch (err) {
@@ -62,7 +48,7 @@ router.post('/guias/detectar', verifyToken, requireRole('administrativo'), uploa
 // Ademas, si la guia no es fallida, refleja el arriendo en la ficha del equipo: un despacho
 // lo marca arrendado al cliente indicado, una recepcion lo libera - mismo cliente_id que ya
 // usan Dashboard/Flota para calcular disponibles vs arrendados, no hace falta un estado nuevo.
-router.post('/:id/guias', verifyToken, requireRole('administrativo'), upload.single('archivo'), async (req, res) => {
+router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
     const { id } = req.params;
     const { tipo, fecha_hora, fallido, cliente_id } = req.body;
     const validos = ['despacho', 'recepcion'];

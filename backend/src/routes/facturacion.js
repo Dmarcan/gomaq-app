@@ -1,14 +1,14 @@
 const express = require('express');
-const multer = require('multer');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
+const { subidaPdf } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { calcularDiasTranscurridos } = require('../utils/diasArriendo');
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
 const { detectarCliente } = require('../utils/detectarCliente');
+const { parsearFactura } = require('../utils/parsearDocumento');
 
 const router = express.Router();
-const upload = multer({ storage: multer.memoryStorage() });
 
 // GET /api/facturacion/pendientes - todo lo que falta facturar, agrupado por estado real:
 // arriendos con ciclo despacho+recepcion cerrado, reparaciones esperando que el Gerente
@@ -73,24 +73,19 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
 });
 
 // POST /api/facturacion/detectar - lee el texto del PDF de una factura para adivinar
-// monto y cliente (mejor esfuerzo, igual que /guias/detectar - nunca bloquea el flujo)
-router.post('/detectar', verifyToken, requireRole('administrativo'), upload.single('archivo'), async (req, res) => {
+// monto, folio y cliente (mejor esfuerzo, igual que /guias/detectar - nunca bloquea el flujo)
+router.post('/detectar', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'archivo (PDF) es requerido' });
     }
     try {
         const texto = await leerTextoPdf(req.file.buffer);
-
-        let montoDetectado = null;
-        const matchMonto = texto.match(/total[^\d]{0,15}([\d.,]{4,})/i) || texto.match(/\$\s?([\d.,]{4,})/);
-        if (matchMonto) {
-            const numero = parseFloat(matchMonto[1].replace(/\./g, '').replace(',', '.'));
-            if (!isNaN(numero)) montoDetectado = numero;
-        }
+        const { monto_detectado, folio_detectado, rut_detectado } = parsearFactura(texto);
 
         res.json({
-            monto_detectado: montoDetectado,
-            cliente_detectado: await detectarCliente(texto),
+            monto_detectado,
+            folio_detectado,
+            cliente_detectado: await detectarCliente(texto, rut_detectado),
             texto_legible: texto.trim().length > 0,
         });
     } catch (err) {
@@ -100,7 +95,7 @@ router.post('/detectar', verifyToken, requireRole('administrativo'), upload.sing
 });
 
 // POST /api/facturacion/arriendo - sube la factura de un ciclo de arriendo ya cerrado
-router.post('/arriendo', verifyToken, requireRole('administrativo'), upload.single('archivo'), async (req, res) => {
+router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
     const { guia_recepcion_id, folio, monto } = req.body;
     if (!guia_recepcion_id || !folio || !req.file) {
         return res.status(400).json({ error: 'guia_recepcion_id, folio y archivo (PDF) son requeridos' });

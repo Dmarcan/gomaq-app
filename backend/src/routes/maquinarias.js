@@ -1,12 +1,11 @@
 const express = require('express');
-const multer = require('multer');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
+const { subidaImagen } = require('../middleware/upload');
 const { supabase, BUCKET_EQUIPOS } = require('../config/supabase');
 
 const router = express.Router();
 
-const upload = multer({ storage: multer.memoryStorage() });
 const URL_EXPIRACION_SEGUNDOS = 3600;
 
 async function conFotoFirmada(fila) {
@@ -86,7 +85,7 @@ router.get('/:id/ordenes-trabajo', verifyToken, requireRole('gerente', 'administ
 
 // POST /api/maquinarias - crear maquinaria (con ficha tecnica y foto opcional)
 // Permisos: Administrativo tiene Lectura/Escritura sobre Control de Flota
-router.post('/', verifyToken, requireRole('administrativo'), upload.single('archivo'), async (req, res) => {
+router.post('/', verifyToken, requireRole('administrativo'), subidaImagen.single('archivo'), async (req, res) => {
     const {
         codigo, tipo, cliente_id, ubicacion,
         categoria_equipo, marca, modelo, anio, descripcion,
@@ -175,7 +174,7 @@ router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res
 });
 
 // PATCH /api/maquinarias/:id/foto - reemplazar solo la foto de la ficha tecnica
-router.patch('/:id/foto', verifyToken, requireRole('administrativo'), upload.single('archivo'), async (req, res) => {
+router.patch('/:id/foto', verifyToken, requireRole('administrativo'), subidaImagen.single('archivo'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'archivo (imagen) es requerido' });
     }

@@ -1,16 +1,14 @@
 const express = require('express');
-const multer = require('multer');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
+const { subidaPdf } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 
 const router = express.Router();
-
-const upload = multer({ storage: multer.memoryStorage() });
 const URL_EXPIRACION_SEGUNDOS = 3600;
 
 // POST /api/ordenes-trabajo/:id/factura - subir PDF de factura ya emitida en el SII (va a Supabase Storage)
-router.post('/:id/factura', verifyToken, requireRole('administrativo'), upload.single('archivo'), async (req, res) => {
+router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
     const { id } = req.params;
     const { folio, monto, fecha_emision } = req.body;
     if (!folio || !req.file) {

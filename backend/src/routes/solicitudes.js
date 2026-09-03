@@ -4,6 +4,7 @@ const path = require('path');
 const multer = require('multer');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
+const { MAX_ADJUNTO_BYTES } = require('../middleware/upload');
 
 const router = express.Router();
 
@@ -14,7 +15,9 @@ const storage = multer.diskStorage({
     destination: (req, file, cb) => cb(null, uploadDir),
     filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
 });
-const upload = multer({ storage });
+// adjunto opcional del cliente (foto o PDF). A diferencia del resto va a disco, no a
+// memoria, pero sin tope un solo envio puede llenar el disco del servidor
+const upload = multer({ storage, limits: { fileSize: MAX_ADJUNTO_BYTES, files: 1 } });
 
 const TIPOS_VALIDOS = ['falla', 'mantencion_preventiva'];
 
