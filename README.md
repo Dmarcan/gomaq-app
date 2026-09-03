@@ -58,9 +58,15 @@ gomaq/
 ├── backend/
 │   ├── server.js              # entrypoint, monta todas las rutas + sirve backend/public/
 │   ├── src/routes/            # un archivo por recurso (auth, maquinarias, ordenes, guias, facturas,
-│   │                          #   evidencias, notificaciones, usuarios, clientes, solicitudes, dashboard)
+│   │                          #   evidencias, notificaciones, usuarios, clientes, solicitudes,
+│   │                          #   dashboard, horometro)
+│   ├── src/utils/parsearDocumento.js  # heuristicas sobre el texto de los PDF (fecha, tipo, folio, RUT, horometro)
+│   ├── src/utils/mantencion.js        # regla de la preventiva por horas de uso
 │   ├── src/workers/notificaciones.js  # patron Outbox: reintentos con backoff exponencial
 │   ├── src/middleware/auth.js # verifyToken + requireRole(...roles)
+│   ├── src/middleware/upload.js  # limites de tamano/tipo de las subidas (multer)
+│   ├── test/                  # node:test, sin dependencias. `npm test`. Fixtures: texto real
+│   │                          #   de guias y facturas de GOMAQ, con los terceros anonimizados
 │   ├── scripts/create-user.js # bootstrap de usuarios (no hay registro publico)
 │   └── uploads/, public/      # generados, no estan en git (.gitignore)
 ├── db/
@@ -93,6 +99,18 @@ Crear más usuarios: `node scripts/create-user.js <nombre> <email> <password> <r
 ## Diseño visual
 
 Paleta extraída de los mockups originales del informe (no inventada), definida una sola vez en `theme/gomaq_theme.dart` (duplicado en `mobile/` y `web/`, sin paquete compartido — es deliberadamente simple): naranja primario `#EA5B1F`, sidebar oscuro `#1B1210`, verde/ámbar/rojo para estados operativa/mantención/fuera de servicio.
+
+## Horómetro y mantención preventiva
+
+Módulo agregado a partir de la entrevista con el jefe de taller y la administrativa del 20-21 de julio de 2026 (ver `docs/entrevistas/`), donde el horómetro se lleva a mano en Excel por equipo, cliente y mes para calcular la preventiva de las 350 h.
+
+- **La lectura entra por tres vías**, y cada una queda registrada con su `origen`: la app del mecánico al cerrar una OT (`movil`), el panel del administrativo (`panel`), y la detección automática del PDF de la guía de entrega, que trae impreso `HOROMETRO: 1156` (`guia`). La guía de retiro y la factura no lo traen.
+- **El intervalo es por equipo**, con 350 h por defecto para toda la flota (`maquinarias.intervalo_mantencion_horas`). Lo que se cuenta son las horas desde la última mantención, no el horómetro absoluto.
+- **Aviso a las 50 h restantes**, encolado en el Outbox por WhatsApp y correo. Se manda una sola vez por ciclo (`alerta_mantencion_enviada`) y se apaga al reiniciar el contador. Los destinatarios se eligen desde el panel (pantalla Usuarios), no por `.env`.
+- **El contador se reinicia** de dos formas: el mecánico confirma "se hizo la mantención preventiva" al cerrar la OT, o el administrativo la marca desde el panel (sirve para corregir y para cargar mantenciones anteriores al sistema).
+- **La agenda mensual** (pantalla Horómetro, pestaña "Por medir") lista los equipos arrendados sin lectura en el mes en curso; al registrarla desaparecen. *Pendiente de confirmar con GOMAQ si también quieren medir los equipos que están en taller o en patio.*
+
+Como el aviso se evalúa al registrar una lectura, un equipo del que nadie toma el horómetro no alerta: para ese caso está la agenda mensual.
 
 ## Qué falta (en orden de importancia)
 

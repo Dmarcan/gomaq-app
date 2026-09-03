@@ -10,6 +10,7 @@ const {
     parsearFolio,
     parsearRutReceptor,
     parsearMonto,
+    parsearHorometro,
     normalizarRut,
     parsearGuia,
     parsearFactura,
@@ -132,6 +133,21 @@ describe('parsearMonto', () => {
     });
 });
 
+describe('parsearHorometro', () => {
+    test('lee el horometro de la guia de entrega', () => {
+        assert.strictEqual(parsearHorometro(GUIA_DESPACHO), 1156);
+    });
+
+    test('la guia de retiro y la factura no lo traen', () => {
+        assert.strictEqual(parsearHorometro(GUIA_RETIRO), null);
+        assert.strictEqual(parsearHorometro(FACTURA), null);
+    });
+
+    test('el punto es separador de miles, no decimal', () => {
+        assert.strictEqual(parsearHorometro('HOROMETRO: 1.156'), 1156);
+    });
+});
+
 describe('parsearGuia', () => {
     test('guia de entrega completa', () => {
         assert.deepStrictEqual(parsearGuia(GUIA_DESPACHO), {
@@ -140,6 +156,7 @@ describe('parsearGuia', () => {
             tipo_detectado: 'despacho',
             rut_detectado: '12345678-5',
             folio_detectado: '458',
+            horometro_detectado: 1156,
         });
     });
 
@@ -150,6 +167,7 @@ describe('parsearGuia', () => {
             tipo_detectado: 'recepcion',
             rut_detectado: '12345678-5',
             folio_detectado: '511',
+            horometro_detectado: null,
         });
     });
 

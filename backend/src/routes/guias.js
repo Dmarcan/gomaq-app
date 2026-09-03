@@ -7,6 +7,8 @@ const { calcularInicioCobro, calcularDiasTranscurridos } = require('../utils/dia
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
 const { detectarCliente } = require('../utils/detectarCliente');
 const { parsearGuia } = require('../utils/parsearDocumento');
+const { calcularEstadoMantencion, requiereAviso } = require('../utils/mantencion');
+const { encolarAvisoMantencion } = require('./horometro');
 
 const router = express.Router();
 
@@ -19,7 +21,7 @@ router.post('/guias/detectar', verifyToken, requireRole('administrativo'), subid
     }
     try {
         const texto = await leerTextoPdf(req.file.buffer);
-        const { fecha_detectada, hora_detectada, tipo_detectado, rut_detectado } = parsearGuia(texto);
+        const { fecha_detectada, hora_detectada, tipo_detectado, rut_detectado, horometro_detectado } = parsearGuia(texto);
 
         // el panel maneja un instante completo, asi que si el PDF no trae hora se compone
         // con 00:00 - pero se informa aparte en hora_detectada para que la UI no la de por
@@ -35,6 +37,7 @@ router.post('/guias/detectar', verifyToken, requireRole('administrativo'), subid
             fecha_hora_detectada: fechaHoraDetectada,
             hora_detectada: hora_detectada !== null,
             tipo_detectado,
+            horometro_detectado,
             cliente_detectado: await detectarCliente(texto, rut_detectado),
             texto_legible: texto.trim().length > 0,
         });
@@ -50,7 +53,7 @@ router.post('/guias/detectar', verifyToken, requireRole('administrativo'), subid
 // usan Dashboard/Flota para calcular disponibles vs arrendados, no hace falta un estado nuevo.
 router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
     const { id } = req.params;
-    const { tipo, fecha_hora, fallido, cliente_id } = req.body;
+    const { tipo, fecha_hora, fallido, cliente_id, horometro } = req.body;
     const validos = ['despacho', 'recepcion'];
     if (!validos.includes(tipo)) {
         return res.status(400).json({ error: `tipo debe ser uno de: ${validos.join(', ')}` });
@@ -108,6 +111,41 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
                 await client.query('UPDATE maquinarias SET cliente_id = $1 WHERE id = $2', [cliente_id, id]);
             } else {
                 await client.query('UPDATE maquinarias SET cliente_id = NULL WHERE id = $1', [id]);
+            }
+        }
+
+        // la guia de entrega trae impreso "HOROMETRO: 1156": si el administrativo lo confirmo
+        // en el formulario se guarda como una lectura mas del equipo, con origen 'guia'.
+        // Misma transaccion que la guia, y mismo patron Outbox para el aviso de mantencion.
+        const horometroLectura = horometro === undefined || horometro === null || horometro === ''
+            ? null
+            : Number(horometro);
+        if (horometroLectura !== null && !isNaN(horometroLectura) && horometroLectura >= 0 && !esFallido) {
+            const maq = await client.query(
+                `SELECT id, codigo, intervalo_mantencion_horas, horometro_ultima_mantencion,
+                        alerta_mantencion_enviada
+                 FROM maquinarias WHERE id = $1 FOR UPDATE`,
+                [id]
+            );
+            if (maq.rows[0]) {
+                await client.query(
+                    `INSERT INTO lecturas_horometro
+                        (maquinaria_id, valor, origen, cliente_id, guia_id, usuario_id, observacion)
+                     VALUES ($1, $2, 'guia', $3, $4, $5, $6)`,
+                    [id, horometroLectura, clienteGuia, result.rows[0].id, req.user.id,
+                     `Detectado en la guia de ${tipo}`]
+                );
+
+                const estado = calcularEstadoMantencion({
+                    ultimaLectura: horometroLectura,
+                    horometroUltimaMantencion: maq.rows[0].horometro_ultima_mantencion === null
+                        ? null
+                        : Number(maq.rows[0].horometro_ultima_mantencion),
+                    intervaloHoras: Number(maq.rows[0].intervalo_mantencion_horas),
+                });
+                if (requiereAviso(estado) && !maq.rows[0].alerta_mantencion_enviada) {
+                    await encolarAvisoMantencion(client, maq.rows[0], estado);
+                }
             }
         }
 

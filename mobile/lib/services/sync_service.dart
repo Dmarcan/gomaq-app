@@ -82,6 +82,25 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Lectura de horometro tomada en terreno. Se encola igual que el resto del trabajo del
+  /// mecanico para que funcione sin señal: la maquinaria va en el payload porque la cola se
+  /// indexa por orden de trabajo.
+  Future<void> encolarHorometro(
+    int ordenId, {
+    required int maquinariaId,
+    required double valor,
+    bool reiniciarContador = false,
+    String? observacion,
+  }) async {
+    await _encolar(ordenId, 'horometro', {
+      'maquinaria_id': maquinariaId,
+      'valor': valor,
+      'reiniciar_contador': reiniciarContador,
+      if (observacion != null && observacion.isNotEmpty) 'observacion': observacion,
+    });
+    notifyListeners();
+  }
+
   Future<void> encolarEvidencia(int ordenId, String rutaLocal, {String tipo = 'antes'}) async {
     final db = await _db;
     final evidenciaId = await db.insert('evidencias_locales', {
@@ -313,6 +332,9 @@ class SyncService extends ChangeNotifier {
       case 'insumo':
         await _registrarInsumo(ordenId, payload);
         break;
+      case 'horometro':
+        await _registrarHorometro(ordenId, payload);
+        break;
       default:
         throw Exception('Tipo de tarea desconocido: $tipo');
     }
@@ -407,6 +429,15 @@ class SyncService extends ChangeNotifier {
         whereArgs: [evidenciaLocalId],
       );
     }
+  }
+
+  Future<void> _registrarHorometro(int ordenId, Map<String, dynamic> payload) async {
+    await ApiClient.instance.post('/api/horometro/maquinaria/${payload['maquinaria_id']}', {
+      'valor': payload['valor'],
+      'orden_trabajo_id': ordenId,
+      'reiniciar_contador': payload['reiniciar_contador'] ?? false,
+      if (payload['observacion'] != null) 'observacion': payload['observacion'],
+    });
   }
 
   Future<void> _registrarInsumo(int ordenId, Map<String, dynamic> payload) async {

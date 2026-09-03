@@ -31,8 +31,10 @@ class CerrarOrdenScreen extends StatefulWidget {
 
 class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
   final _personaCtrl = TextEditingController();
+  final _horometroCtrl = TextEditingController();
   bool _sinPersona = false;
   bool _cerrando = false;
+  bool _reiniciarContador = false;
 
   late final SignatureController _firmaCtrl = SignatureController(
     penStrokeWidth: 3,
@@ -43,6 +45,7 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
   @override
   void dispose() {
     _personaCtrl.dispose();
+    _horometroCtrl.dispose();
     _firmaCtrl.dispose();
     super.dispose();
   }
@@ -72,6 +75,18 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
         sinPersona: _sinPersona,
         rutaFirmaLocal: rutaFirma,
       );
+
+      // la lectura va como tarea aparte y despues del cierre: si el horometro falla en el
+      // servidor (equipo sin permiso, valor rechazado) no debe arrastrar al cierre de la OT
+      final horometro = double.tryParse(_horometroCtrl.text.trim().replaceAll(',', '.'));
+      if (horometro != null && horometro >= 0) {
+        await syncService.encolarHorometro(
+          widget.orden.id,
+          maquinariaId: widget.orden.maquinariaId,
+          valor: horometro,
+          reiniciarContador: _reiniciarContador,
+        );
+      }
 
       // disparar la sincronizacion sin esperar: el cierre no queda bloqueado por la red
       syncService.sincronizar().catchError((_) {});
@@ -134,6 +149,32 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
               ),
             ),
           ),
+          const SizedBox(height: 8),
+          const Text('HORÓMETRO DEL EQUIPO',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario)),
+          const SizedBox(height: 4),
+          const Text('Opcional. Sirve para calcular cuándo toca la mantención preventiva.',
+              style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _horometroCtrl,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(hintText: 'Horas, por ejemplo 1156'),
+            onChanged: (_) => setState(() {}),
+          ),
+          // el reinicio se pregunta, no se deduce: solo el mecanico sabe si ademas de
+          // atender la falla dejo hecha la mantencion preventiva
+          if (_horometroCtrl.text.trim().isNotEmpty)
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: const Text('Se hizo la mantención preventiva', style: TextStyle(fontSize: 14)),
+              subtitle: const Text('Reinicia el contador desde esta lectura',
+                  style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
+              value: _reiniciarContador,
+              activeColor: GomaqColors.primario,
+              onChanged: (v) => setState(() => _reiniciarContador = v ?? false),
+            ),
           const SizedBox(height: 8),
           const Text('PERSONA QUE RECIBE EL EQUIPO',
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario)),

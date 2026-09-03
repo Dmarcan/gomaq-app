@@ -10,6 +10,7 @@ class UsuariosScreen extends StatefulWidget {
 
 class _UsuariosScreenState extends State<UsuariosScreen> {
   List<dynamic> _solicitudes = [];
+  List<dynamic> _internos = [];
   bool _cargando = true;
   String? _error;
 
@@ -26,8 +27,13 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     });
     try {
       final data = await ApiClient.instance.get('/api/usuarios/solicitudes');
+      final usuarios = await ApiClient.instance.get('/api/usuarios');
       if (!mounted) return;
-      setState(() => _solicitudes = data);
+      setState(() {
+        _solicitudes = data;
+        // los clientes no reciben el aviso de mantencion: es operativo interno
+        _internos = usuarios.where((u) => u['rol'] != 'cliente').toList();
+      });
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } finally {
@@ -117,20 +123,116 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     );
   }
 
+  Future<void> _guardarAlertas(Map<String, dynamic> usuario, {bool? recibe, String? telefono}) async {
+    try {
+      final actualizado = await ApiClient.instance.patch('/api/usuarios/${usuario['id']}/alertas', {
+        'recibe_alertas_mantencion': ?recibe,
+        'telefono_whatsapp': ?telefono,
+      });
+      if (!mounted) return;
+      setState(() {
+        final i = _internos.indexWhere((u) => u['id'] == usuario['id']);
+        if (i != -1) _internos[i] = actualizado;
+      });
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    }
+  }
+
+  Future<void> _editarWhatsapp(Map<String, dynamic> usuario) async {
+    final ctrl = TextEditingController(text: usuario['telefono_whatsapp'] ?? '');
+    final guardar = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('WhatsApp de ${usuario['nombre']}'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Número', hintText: '+56 9 1234 5678'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
+          ElevatedButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Guardar')),
+        ],
+      ),
+    );
+    if (guardar == true) await _guardarAlertas(usuario, telefono: ctrl.text.trim());
+  }
+
+  /// Quién recibe el aviso de mantención próxima. Se configura acá y no en el .env del
+  /// servidor, para que cambiar el destinatario no exija entrar por SSH.
+  Widget _tarjetaAlertas() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Alertas de mantención', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 4),
+            Text(
+              'Quiénes reciben el aviso cuando un equipo queda a 50 h o menos de su mantención. '
+              'Se envía por correo y, si hay número cargado, también por WhatsApp.',
+              style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+            ),
+            const SizedBox(height: 8),
+            if (_internos.isEmpty)
+              const Text('No hay usuarios internos registrados')
+            else
+              ..._internos.map((u) {
+                final telefono = u['telefono_whatsapp'];
+                return SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  value: u['recibe_alertas_mantencion'] == true,
+                  onChanged: (v) => _guardarAlertas(u, recibe: v),
+                  title: Text('${u['nombre']} · ${u['rol']}'),
+                  subtitle: Row(
+                    children: [
+                      Expanded(
+                        child: Text(
+                          '${u['email']}${telefono == null || telefono.toString().isEmpty ? ' · sin WhatsApp' : ' · $telefono'}',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      TextButton(
+                        onPressed: () => _editarWhatsapp(u),
+                        child: const Text('WhatsApp', style: TextStyle(fontSize: 12)),
+                      ),
+                    ],
+                  ),
+                );
+              }),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_cargando) return const Center(child: CircularProgressIndicator());
     if (_error != null) return Center(child: Text('Error: $_error'));
-    if (_solicitudes.isEmpty) {
-      return const Center(child: Text('No hay solicitudes de cuenta pendientes'));
-    }
 
     return RefreshIndicator(
       onRefresh: _cargar,
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
-        itemCount: _solicitudes.length,
-        itemBuilder: (context, i) {
+        // +2: la tarjeta de alertas de mantencion y el titulo de las solicitudes
+        itemCount: _solicitudes.length + 2,
+        itemBuilder: (context, index) {
+          if (index == 0) return _tarjetaAlertas();
+          if (index == 1) {
+            return Padding(
+              padding: const EdgeInsets.only(top: 24, bottom: 8),
+              child: Text(
+                _solicitudes.isEmpty
+                    ? 'No hay solicitudes de cuenta pendientes'
+                    : 'Solicitudes de cuenta pendientes (${_solicitudes.length})',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+            );
+          }
+          final i = index - 2;
           final s = _solicitudes[i];
           return Card(
             child: Padding(

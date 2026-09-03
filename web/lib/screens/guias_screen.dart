@@ -27,6 +27,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
   bool _detectando = false;
   bool _huboDeteccion = false;
   bool _horaDetectada = false;
+  final _horometroCtrl = TextEditingController();
   DateTime _fecha = DateTime.now();
   TimeOfDay _hora = TimeOfDay.now();
   bool _fallido = false;
@@ -35,6 +36,12 @@ class _GuiasScreenState extends State<GuiasScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargarDatos());
+  }
+
+  @override
+  void dispose() {
+    _horometroCtrl.dispose();
+    super.dispose();
   }
 
   List<dynamic> get _maquinariasDisponibles =>
@@ -72,6 +79,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
       _archivo = resultado.files.single;
       _huboDeteccion = false;
       _horaDetectada = false;
+      _horometroCtrl.clear();
     });
     await _detectarDatos();
   }
@@ -97,6 +105,11 @@ class _GuiasScreenState extends State<GuiasScreen> {
           // haria que HORA_CORTE cobre el dia del despacho sin que nadie lo haya decidido.
           _horaDetectada = resultado['hora_detectada'] == true;
           if (_horaDetectada) _hora = TimeOfDay(hour: detectada.hour, minute: detectada.minute);
+        }
+        // las guias de entrega traen impreso "HOROMETRO: 1156"; queda como una lectura
+        // mas del equipo, editable por si viene mal leido
+        if (resultado['horometro_detectado'] != null) {
+          _horometroCtrl.text = resultado['horometro_detectado'].toString();
         }
         // solo asignar el cliente detectado si existe en la lista ya cargada del dropdown
         // (si se creo despues de abrir la pantalla, un value sin item crashea el Dropdown)
@@ -147,6 +160,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
           'fecha_hora': fechaHora.toIso8601String(),
           'fallido': _fallido.toString(),
           if (_tipo == 'despacho' && _clienteId != null) 'cliente_id': _clienteId.toString(),
+          if (_horometroCtrl.text.trim().isNotEmpty) 'horometro': _horometroCtrl.text.trim(),
         },
       );
       if (mounted) {
@@ -156,6 +170,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
           _fallido = false;
           _huboDeteccion = false;
           _clienteId = null;
+          _horometroCtrl.clear();
         });
       }
     } on ApiException catch (e) {
@@ -313,6 +328,19 @@ class _GuiasScreenState extends State<GuiasScreen> {
                     ),
                   ),
                 ],
+              ),
+              const SizedBox(height: 20),
+              const Text('HORÓMETRO DEL EQUIPO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              const Text(
+                'Opcional. Las guías de entrega lo traen impreso; queda registrado como lectura del equipo.',
+                style: TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _horometroCtrl,
+                keyboardType: TextInputType.number,
+                decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'Horas, por ejemplo 1156'),
               ),
               CheckboxListTile(
                 contentPadding: EdgeInsets.zero,

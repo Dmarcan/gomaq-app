@@ -139,6 +139,21 @@ function parsearMonto(texto) {
     return isNaN(numero) ? null : numero;
 }
 
+/**
+ * Lectura del horometro impresa en la guia ("HOROMETRO: 1156"), o null.
+ *
+ * Solo viene en la guia de entrega: la de retiro y la factura no la traen, asi que esta es
+ * una lectura por despacho y no reemplaza al registro que hace el mecanico en terreno.
+ */
+function parsearHorometro(texto) {
+    if (!texto) return null;
+    const match = sinAcentos(texto).match(/hor[oO]metro\s*:?\s*([\d.,]+)/i);
+    if (!match) return null;
+    // el separador de miles chileno es el punto: "1.156" son 1156 horas, no 1,156
+    const numero = parseFloat(match[1].replace(/\./g, '').replace(',', '.'));
+    return isNaN(numero) ? null : numero;
+}
+
 function parsearGuia(texto) {
     return {
         fecha_detectada: parsearFechaEmision(texto),
@@ -146,6 +161,7 @@ function parsearGuia(texto) {
         tipo_detectado: detectarTipoGuia(texto),
         rut_detectado: parsearRutReceptor(texto),
         folio_detectado: parsearFolio(texto),
+        horometro_detectado: parsearHorometro(texto),
     };
 }
 
@@ -164,6 +180,7 @@ module.exports = {
     parsearFolio,
     parsearRutReceptor,
     parsearMonto,
+    parsearHorometro,
     normalizarRut,
     parsearGuia,
     parsearFactura,

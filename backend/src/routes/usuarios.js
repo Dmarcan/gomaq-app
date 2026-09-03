@@ -16,6 +16,7 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
     // (solo es relevante para mecanicos, pero se calcula igual para cualquier rol sin costo extra)
     const selectConOtAbiertas = `
         SELECT u.id, u.nombre, u.email, u.rol,
+               u.recibe_alertas_mantencion, u.telefono_whatsapp,
                COALESCE(ot.abiertas, 0) AS ot_abiertas
         FROM usuarios u
         LEFT JOIN (
@@ -117,6 +118,37 @@ router.post('/solicitudes/:id/rechazar', verifyToken, requireRole('administrativ
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al rechazar la solicitud' });
+    }
+});
+
+// PATCH /api/usuarios/:id/alertas - quien recibe el aviso de mantencion proxima y por donde.
+// Se configura desde el panel a proposito: cambiar el destinatario no deberia exigir entrar
+// por SSH a editar el .env del servidor.
+router.patch('/:id/alertas', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    const { recibe_alertas_mantencion, telefono_whatsapp } = req.body;
+    if (recibe_alertas_mantencion === undefined && telefono_whatsapp === undefined) {
+        return res.status(400).json({ error: 'Indique recibe_alertas_mantencion y/o telefono_whatsapp' });
+    }
+    try {
+        const result = await pool.query(
+            `UPDATE usuarios
+             SET recibe_alertas_mantencion = COALESCE($1, recibe_alertas_mantencion),
+                 telefono_whatsapp = COALESCE($2, telefono_whatsapp)
+             WHERE id = $3 AND rol <> 'cliente'
+             RETURNING id, nombre, email, rol, recibe_alertas_mantencion, telefono_whatsapp`,
+            [
+                recibe_alertas_mantencion === undefined ? null : recibe_alertas_mantencion === true || recibe_alertas_mantencion === 'true',
+                telefono_whatsapp === undefined ? null : (String(telefono_whatsapp).trim() || null),
+                req.params.id,
+            ]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Usuario interno no encontrado' });
+        }
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al actualizar las alertas del usuario' });
     }
 });
 

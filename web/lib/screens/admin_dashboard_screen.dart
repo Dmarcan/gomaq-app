@@ -12,6 +12,7 @@ import 'ordenes_screen.dart';
 import 'solicitudes_screen.dart';
 import 'notificaciones_screen.dart';
 import 'insumos_screen.dart';
+import 'horometro_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -39,6 +40,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     (icon: Icons.support_agent, label: 'Asistencias'),
     (icon: Icons.notifications, label: 'Notificaciones'),
     (icon: Icons.inventory_2, label: 'Insumos'),
+    (icon: Icons.timer, label: 'Horómetro'),
   ];
 
   List<Widget> get _pantallas => [
@@ -57,6 +59,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         const SolicitudesScreen(),
         const NotificacionesScreen(),
         const InsumosScreen(),
+        const HorometroScreen(),
       ];
 
   @override
