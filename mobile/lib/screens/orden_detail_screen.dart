@@ -25,17 +25,54 @@ class OrdenDetailScreen extends StatefulWidget {
 class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   OrdenTrabajo? _orden;
   final _diagnosticoCtrl = TextEditingController();
+  final _observacionFinalCtrl = TextEditingController();
+  final _folioPapelCtrl = TextEditingController();
   final _cantidadInsumoCtrl = TextEditingController();
+  final _descripcionInsumoCtrl = TextEditingController();
+  final _precioInsumoCtrl = TextEditingController();
   List<Map<String, dynamic>> _fotosLocales = [];
   List<Map<String, dynamic>> _insumosLocales = [];
   List<Map<String, dynamic>> _catalogoInsumos = [];
+  List<Map<String, dynamic>> _catalogoChecklist = [];
+  List<Map<String, dynamic>> _tramosLocales = [];
+  Set<int> _serviciosMarcados = {};
   int? _insumoSeleccionadoId;
-  bool _facturable = false;
+  String? _tipoServicio;
+  String _facturableLinea = 'pendiente';
+
+  /// Los seis tipos del talonario, en el mismo orden que el papel.
+  static const _tiposServicio = [
+    ('preventivo', 'Preventivo'),
+    ('reparacion', 'Reparación'),
+    ('garantia_full_mantencion', 'Garantía / Full Mantención'),
+    ('correctivo', 'Correctivo'),
+    ('bateria_cargador', 'Batería / Cargador'),
+    ('administrativo', 'Administrativo'),
+  ];
+
+  static const _titulosGrupo = {
+    'mecanicos': 'Servicios mecánicos',
+    'electronicos': 'Servicios electrónicos',
+    'hidraulicos': 'Servicios hidráulicos',
+    'administrativos': 'Servicios administrativos',
+    'complementos': 'Complementos máquinas',
+  };
 
   @override
   void initState() {
     super.initState();
     _cargar();
+  }
+
+  @override
+  void dispose() {
+    _diagnosticoCtrl.dispose();
+    _observacionFinalCtrl.dispose();
+    _folioPapelCtrl.dispose();
+    _cantidadInsumoCtrl.dispose();
+    _descripcionInsumoCtrl.dispose();
+    _precioInsumoCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _cargar() async {
@@ -44,18 +81,66 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     final fotos = await db.query('evidencias_locales', where: 'orden_trabajo_id = ?', whereArgs: [widget.ordenId]);
     final insumos = await db.query('insumos_locales', where: 'orden_trabajo_id = ?', whereArgs: [widget.ordenId]);
     final catalogo = await db.query('insumos_catalogo_local', orderBy: 'nombre ASC');
+    final checklist = await db.query('checklist_catalogo_local', orderBy: 'orden ASC');
+    final marcados = await db.query('ot_servicios_locales', where: 'orden_trabajo_id = ?', whereArgs: [widget.ordenId]);
+    final tramos = await db.query('tramos_locales', where: 'orden_trabajo_id = ?', whereArgs: [widget.ordenId], orderBy: 'inicio ASC');
     if (!mounted || rows.isEmpty) return;
     setState(() {
       _orden = OrdenTrabajo.fromLocalMap(rows.first);
       _diagnosticoCtrl.text = _orden!.diagnostico ?? '';
-      _facturable = _orden!.facturable;
       _fotosLocales = fotos;
       _insumosLocales = insumos;
       _catalogoInsumos = catalogo;
+      _catalogoChecklist = checklist;
+      _serviciosMarcados = marcados.map((m) => m['servicio_id'] as int).toSet();
+      _tramosLocales = tramos;
       if (_insumoSeleccionadoId == null && catalogo.isNotEmpty) {
         _insumoSeleccionadoId = catalogo.first['id'] as int;
       }
     });
+  }
+
+  /// Guarda la cabecera del talonario: tipo de servicio, observación final y folio del papel.
+  Future<void> _guardarDatosOt() async {
+    await context.read<SyncService>().encolarDatosOt(
+          widget.ordenId,
+          tipoServicio: _tipoServicio,
+          observacionFinal: _observacionFinalCtrl.text.trim().isEmpty ? null : _observacionFinalCtrl.text.trim(),
+          folioPapel: _folioPapelCtrl.text.trim().isEmpty ? null : _folioPapelCtrl.text.trim(),
+        );
+    await _cargar();
+    _intentarSincronizarAhora();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Guardado localmente, se sincroniza cuando haya señal')),
+      );
+    }
+  }
+
+  Future<void> _alternarServicio(int servicioId) async {
+    final nuevos = Set<int>.from(_serviciosMarcados);
+    if (!nuevos.remove(servicioId)) nuevos.add(servicioId);
+    setState(() => _serviciosMarcados = nuevos);
+    await context.read<SyncService>().encolarChecklist(widget.ordenId, nuevos.toList());
+    _intentarSincronizarAhora();
+  }
+
+  /// Cierra el tramo abierto, o abre uno nuevo. En el papel son los bloques
+  /// INICIO / TÉRMINO DEL TRABAJO, y hay más de uno porque el trabajo se puede retomar.
+  Future<void> _alternarTramo() async {
+    final abierto = _tramosLocales.where((t) => t['termino'] == null).toList();
+    final sync = context.read<SyncService>();
+    final db = await LocalDatabase.instance.database;
+    if (abierto.isEmpty) {
+      await sync.encolarTramo(widget.ordenId, inicio: DateTime.now());
+    } else {
+      final tramo = abierto.last;
+      final inicio = DateTime.parse(tramo['inicio'] as String);
+      await db.delete('tramos_locales', where: 'id = ?', whereArgs: [tramo['id']]);
+      await sync.encolarTramo(widget.ordenId, inicio: inicio, termino: DateTime.now());
+    }
+    await _cargar();
+    _intentarSincronizarAhora();
   }
 
   Future<void> _intentarSincronizarAhora() async {
@@ -107,17 +192,38 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
       _fotosLocales.where((f) => (f['tipo'] ?? 'antes') == tipo).toList();
 
   Future<void> _agregarInsumo() async {
-    final insumoId = _insumoSeleccionadoId;
     final cantidad = double.tryParse(_cantidadInsumoCtrl.text.replaceAll(',', '.'));
-    if (insumoId == null || cantidad == null || cantidad <= 0) {
+    final descripcion = _descripcionInsumoCtrl.text.trim();
+    final insumoId = _insumoSeleccionadoId;
+    if (cantidad == null || cantidad <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Selecciona un insumo y una cantidad valida')),
+        const SnackBar(content: Text('Ingresa una cantidad válida')),
       );
       return;
     }
-    final insumo = _catalogoInsumos.firstWhere((i) => i['id'] == insumoId);
-    await context.read<SyncService>().encolarInsumo(widget.ordenId, insumoId, insumo['nombre'] as String, cantidad);
+    // como en el papel: o se elige del catálogo, o se escribe el repuesto a mano
+    if (insumoId == null && descripcion.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Elige un repuesto del catálogo o escribe su descripción')),
+      );
+      return;
+    }
+    final nombre = insumoId != null
+        ? _catalogoInsumos.firstWhere((i) => i['id'] == insumoId)['nombre'] as String
+        : descripcion;
+    await context.read<SyncService>().encolarInsumo(
+          widget.ordenId,
+          insumoId: insumoId,
+          insumoNombre: nombre,
+          cantidad: cantidad,
+          descripcion: descripcion.isEmpty ? null : descripcion,
+          precioUnitario: double.tryParse(_precioInsumoCtrl.text.replaceAll('.', '').replaceAll(',', '.')),
+          facturable: _facturableLinea,
+        );
     _cantidadInsumoCtrl.clear();
+    _descripcionInsumoCtrl.clear();
+    _precioInsumoCtrl.clear();
+    setState(() => _facturableLinea = 'pendiente');
     await _cargar();
     _intentarSincronizarAhora();
   }
@@ -130,7 +236,6 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
       MaterialPageRoute(
         builder: (_) => CerrarOrdenScreen(
           orden: orden,
-          facturable: _facturable,
           fotosAntes: _fotosDeTipo('antes').length,
           fotosDespues: _fotosDeTipo('despues').length,
           insumos: _insumosLocales.length,
@@ -263,13 +368,40 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion(Icons.build_outlined, 'Diagnóstico y trabajo realizado'),
+            // El talonario separa OBSERVACIONES INICIALES de OBSERVACIONES FINALES:
+            // qué se encontró al llegar y qué se hizo (entrevista el jefe de taller, punto 5).
+            _tituloSeccion(Icons.build_outlined, 'Observaciones'),
             const SizedBox(height: 12),
+            const Text('INICIALES · qué se encontró al llegar',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario)),
+            const SizedBox(height: 4),
             TextField(
               controller: _diagnosticoCtrl,
-              maxLines: 4,
+              maxLines: 3,
               readOnly: soloLectura,
-              decoration: const InputDecoration(hintText: 'Describe el problema encontrado y los pasos realizados...'),
+              decoration: const InputDecoration(hintText: 'Ej: cliente solicita llave de contacto por pérdida'),
+            ),
+            const SizedBox(height: 12),
+            const Text('FINALES · qué se hizo',
+                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario)),
+            const SizedBox(height: 4),
+            TextField(
+              controller: _observacionFinalCtrl,
+              maxLines: 3,
+              readOnly: soloLectura,
+              decoration: const InputDecoration(hintText: 'Ej: se reemplaza llave de contacto'),
+              onEditingComplete: soloLectura ? null : _guardarDatosOt,
+            ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _folioPapelCtrl,
+              readOnly: soloLectura,
+              decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'N° de OT en papel (opcional)',
+                hintText: '00904',
+              ),
+              onEditingComplete: soloLectura ? null : _guardarDatosOt,
             ),
             if (!soloLectura) ...[
               const SizedBox(height: 10),
@@ -277,7 +409,10 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () => _guardarDiagnostico(),
+                      onPressed: () async {
+                        await _guardarDiagnostico();
+                        await _guardarDatosOt();
+                      },
                       icon: const Icon(Icons.save_outlined, size: 18),
                       label: const Text('Guardar'),
                     ),
@@ -308,60 +443,92 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion(Icons.inventory_2_outlined, 'Insumos y repuestos'),
-            const SizedBox(height: 12),
+            _tituloSeccion(Icons.inventory_2_outlined, 'Repuestos utilizados'),
+            const SizedBox(height: 4),
             if (!soloLectura) ...[
-              if (_catalogoInsumos.isEmpty)
-                const Text(
-                  'Sin señal para cargar el catálogo de insumos todavía',
-                  style: TextStyle(color: GomaqColors.textoSecundario),
-                )
-              else
-                Row(
-                  children: [
-                    Expanded(
-                      child: DropdownButtonFormField<int>(
-                        initialValue: _insumoSeleccionadoId,
-                        decoration: const InputDecoration(isDense: true),
-                        items: [
-                          for (final insumo in _catalogoInsumos)
-                            DropdownMenuItem(
-                              value: insumo['id'] as int,
-                              child: Text(
-                                '${insumo['nombre']} (${insumo['unidad_medida']})',
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                            ),
-                        ],
-                        onChanged: (v) => setState(() => _insumoSeleccionadoId = v),
+              const Text(
+                'Elige del catálogo o escribe el repuesto a mano, e indica si se le cobra al cliente',
+                style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario),
+              ),
+              const SizedBox(height: 8),
+              if (_catalogoInsumos.isNotEmpty)
+                DropdownButtonFormField<int?>(
+                  initialValue: _insumoSeleccionadoId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(isDense: true, labelText: 'Repuesto del catálogo'),
+                  items: [
+                    const DropdownMenuItem<int?>(value: null, child: Text('— escribir a mano —')),
+                    for (final insumo in _catalogoInsumos)
+                      DropdownMenuItem<int?>(
+                        value: insumo['id'] as int,
+                        child: Text(
+                          '${insumo['nombre']} (${insumo['unidad_medida']})',
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                    ),
-                    const SizedBox(width: 8),
-                    SizedBox(
-                      width: 80,
-                      child: TextField(
-                        controller: _cantidadInsumoCtrl,
-                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                        decoration: const InputDecoration(isDense: true, hintText: 'Cant.'),
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    IconButton(
-                      onPressed: _agregarInsumo,
-                      icon: const Icon(Icons.add_circle, color: GomaqColors.primario, size: 30),
-                    ),
                   ],
+                  onChanged: (v) => setState(() => _insumoSeleccionadoId = v),
                 ),
+              TextField(
+                controller: _descripcionInsumoCtrl,
+                decoration: const InputDecoration(isDense: true, labelText: 'Descripción / observación'),
+              ),
               const SizedBox(height: 4),
+              Row(
+                children: [
+                  SizedBox(
+                    width: 80,
+                    child: TextField(
+                      controller: _cantidadInsumoCtrl,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      decoration: const InputDecoration(isDense: true, labelText: 'Cant.'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: TextField(
+                      controller: _precioInsumoCtrl,
+                      keyboardType: TextInputType.number,
+                      decoration: const InputDecoration(isDense: true, labelText: 'Precio unitario'),
+                    ),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    onPressed: _agregarInsumo,
+                    icon: const Icon(Icons.add_circle, color: GomaqColors.primario, size: 30),
+                  ),
+                ],
+              ),
+              // las tres casillas del papel: SI / NO / ?
+              Row(
+                children: [
+                  const Text('Facturable:', style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
+                  const SizedBox(width: 8),
+                  for (final (valor, etiqueta) in [('si', 'Sí'), ('no', 'No'), ('pendiente', 'Por decidir')])
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                        label: Text(etiqueta, style: const TextStyle(fontSize: 12)),
+                        selected: _facturableLinea == valor,
+                        onSelected: (_) => setState(() => _facturableLinea = valor),
+                      ),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
             ],
-            if (_insumosLocales.isEmpty && soloLectura)
-              const Text('Sin insumos registrados', style: TextStyle(color: GomaqColors.textoSecundario)),
+            if (_insumosLocales.isEmpty)
+              const Text('Sin repuestos registrados', style: TextStyle(color: GomaqColors.textoSecundario)),
             for (final insumo in _insumosLocales)
               ListTile(
                 dense: true,
                 contentPadding: EdgeInsets.zero,
                 leading: const Icon(Icons.build_circle_outlined),
-                title: Text('${insumo['insumo_nombre']} - ${insumo['cantidad']}'),
+                title: Text('${insumo['insumo_nombre']} · ${insumo['cantidad']}'),
+                subtitle: Text(
+                  _resumenLinea(insumo),
+                  style: const TextStyle(fontSize: 12, color: GomaqColors.textoSecundario),
+                ),
                 trailing: insumo['sincronizado'] == 0
                     ? const Icon(Icons.cloud_upload, size: 16, color: GomaqColors.estadoAdvertencia)
                     : const Icon(Icons.cloud_done, size: 16, color: GomaqColors.estadoPositivo),
@@ -372,19 +539,152 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     );
   }
 
-  Widget _seccionFacturable({required bool soloLectura}) {
+  static const _etiquetaFacturable = {'si': 'Se cobra', 'no': 'No se cobra', 'pendiente': 'Por decidir'};
+
+  String _resumenLinea(Map<String, dynamic> linea) {
+    final partes = <String>[_etiquetaFacturable[linea['facturable']] ?? 'Por decidir'];
+    if (linea['precio_unitario'] != null) partes.add('\$${linea['precio_unitario']}');
+    if (linea['descripcion'] != null && (linea['descripcion'] as String).isNotEmpty) {
+      partes.add(linea['descripcion'] as String);
+    }
+    return partes.join(' · ');
+  }
+
+  /// TIPO DE SERVICIO del talonario. Lo marca el mecánico, que es quien sabe de qué se trató.
+  Widget _seccionTipoServicio({required bool soloLectura}) {
     return Card(
-      child: SwitchListTile(
-        title: const Text('Trabajo facturable', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
-        subtitle: const Text(
-          'Marcar si el trabajo se cobra al cliente (daño de su responsabilidad)',
-          style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _tituloSeccion(Icons.assignment_outlined, 'Tipo de servicio'),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 4,
+              children: [
+                for (final (valor, etiqueta) in _tiposServicio)
+                  ChoiceChip(
+                    label: Text(etiqueta, style: const TextStyle(fontSize: 12)),
+                    selected: _tipoServicio == valor,
+                    onSelected: soloLectura
+                        ? null
+                        : (_) {
+                            setState(() => _tipoServicio = valor);
+                            _guardarDatosOt();
+                          },
+                  ),
+              ],
+            ),
+          ],
         ),
-        activeThumbColor: GomaqColors.primario,
-        value: _facturable,
-        onChanged: soloLectura ? null : (v) => setState(() => _facturable = v),
       ),
     );
+  }
+
+  /// Checklist del talonario: marca DÓNDE SE INTERVINO, no una pauta de revisión.
+  Widget _seccionChecklist({required bool soloLectura}) {
+    if (_catalogoChecklist.isEmpty) {
+      return const Card(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: Text(
+            'Sin señal para cargar el checklist de servicios todavía',
+            style: TextStyle(color: GomaqColors.textoSecundario),
+          ),
+        ),
+      );
+    }
+    final grupos = <String, List<Map<String, dynamic>>>{};
+    for (final item in _catalogoChecklist) {
+      grupos.putIfAbsent(item['grupo'] as String, () => []).add(item);
+    }
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _tituloSeccion(Icons.checklist_outlined, 'Sistemas intervenidos'),
+            const Text(
+              'Marca dónde se intervino en esta visita',
+              style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario),
+            ),
+            for (final entrada in grupos.entries) ...[
+              const SizedBox(height: 8),
+              Text(
+                _titulosGrupo[entrada.key] ?? entrada.key,
+                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario),
+              ),
+              for (final item in entrada.value)
+                CheckboxListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  activeColor: GomaqColors.primario,
+                  title: Text(item['nombre'] as String, style: const TextStyle(fontSize: 14)),
+                  value: _serviciosMarcados.contains(item['id']),
+                  onChanged: soloLectura ? null : (_) => _alternarServicio(item['id'] as int),
+                ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// INICIO / TÉRMINO DEL TRABAJO. El papel trae dos bloques porque el trabajo se puede
+  /// retomar en otra visita; aquí se pueden registrar los que hagan falta.
+  Widget _seccionTramos({required bool soloLectura}) {
+    final abierto = _tramosLocales.where((t) => t['termino'] == null).toList();
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _tituloSeccion(Icons.schedule_outlined, 'Tiempos de trabajo'),
+            const SizedBox(height: 8),
+            if (_tramosLocales.isEmpty)
+              const Text('Sin tramos registrados', style: TextStyle(color: GomaqColors.textoSecundario)),
+            for (final tramo in _tramosLocales)
+              ListTile(
+                dense: true,
+                contentPadding: EdgeInsets.zero,
+                leading: Icon(
+                  tramo['termino'] == null ? Icons.play_circle_outline : Icons.check_circle_outline,
+                  color: tramo['termino'] == null ? GomaqColors.estadoAdvertencia : GomaqColors.estadoPositivo,
+                ),
+                title: Text(_rangoTramo(tramo), style: const TextStyle(fontSize: 14)),
+                trailing: tramo['sincronizado'] == 0
+                    ? const Icon(Icons.cloud_upload, size: 16, color: GomaqColors.estadoAdvertencia)
+                    : const Icon(Icons.cloud_done, size: 16, color: GomaqColors.estadoPositivo),
+              ),
+            if (!soloLectura) ...[
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: OutlinedButton.icon(
+                  onPressed: _alternarTramo,
+                  icon: Icon(abierto.isEmpty ? Icons.play_arrow : Icons.stop, size: 18),
+                  label: Text(abierto.isEmpty ? 'INICIAR TRAMO' : 'TERMINAR TRAMO'),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
+  String _rangoTramo(Map<String, dynamic> tramo) {
+    String hhmm(DateTime f) => '${f.day}/${f.month} ${f.hour.toString().padLeft(2, '0')}:${f.minute.toString().padLeft(2, '0')}';
+    final inicio = DateTime.parse(tramo['inicio'] as String).toLocal();
+    final termino = tramo['termino'] == null ? null : DateTime.parse(tramo['termino'] as String).toLocal();
+    if (termino == null) return '${hhmm(inicio)} — en curso';
+    final minutos = termino.difference(inicio).inMinutes;
+    return '${hhmm(inicio)} a ${hhmm(termino)}  ·  ${minutos ~/ 60}h ${minutos % 60}m';
   }
 
   Widget? _botonInferior(OrdenTrabajo orden) {
@@ -479,9 +779,14 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
               puedeAgregar: true,
               ayuda: 'Documenta el estado inicial de la máquina antes de intervenirla',
             ),
-            const SeccionBloqueada(titulo: 'Diagnóstico y trabajo realizado', icono: Icons.build_outlined),
-            const SeccionBloqueada(titulo: 'Insumos y repuestos', icono: Icons.inventory_2_outlined),
+            const SeccionBloqueada(titulo: 'Tipo de servicio', icono: Icons.assignment_outlined),
+            const SeccionBloqueada(titulo: 'Observaciones', icono: Icons.build_outlined),
+            const SeccionBloqueada(titulo: 'Repuestos utilizados', icono: Icons.inventory_2_outlined),
           ] else if (enProgreso) ...[
+            // mismo orden que el talonario en papel
+            _seccionTipoServicio(soloLectura: false),
+            _seccionChecklist(soloLectura: false),
+            _seccionTramos(soloLectura: false),
             _seccionDiagnostico(soloLectura: false, enTerreno: orden.estado == 'en_terreno'),
             _seccionInsumos(soloLectura: false),
             _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: true),
@@ -491,15 +796,19 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
               puedeAgregar: true,
               ayuda: 'Se requiere al menos ${ReglasNegocio.minFotosDespues} foto del trabajo terminado para cerrar',
             ),
-            _seccionFacturable(soloLectura: false),
           ] else if (finalizada) ...[
+            _seccionTipoServicio(soloLectura: true),
+            _seccionChecklist(soloLectura: true),
+            _seccionTramos(soloLectura: true),
             _seccionDiagnostico(soloLectura: true, enTerreno: false),
             _seccionInsumos(soloLectura: true),
             _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: false),
             _seccionFotos(tipo: 'despues', titulo: 'Fotos DESPUÉS', puedeAgregar: false),
-            _seccionFacturable(soloLectura: true),
           ] else ...[
             // estado no contemplado: mostrar todo editable para no bloquear al mecanico
+            _seccionTipoServicio(soloLectura: false),
+            _seccionChecklist(soloLectura: false),
+            _seccionTramos(soloLectura: false),
             _seccionDiagnostico(soloLectura: false, enTerreno: false),
             _seccionInsumos(soloLectura: false),
             _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: true),

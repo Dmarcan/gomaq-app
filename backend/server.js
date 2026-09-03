@@ -25,6 +25,7 @@ const ejecutivosRouter = require('./src/routes/ejecutivos');
 const facturacionRouter = require('./src/routes/facturacion');
 const registroRouter = require('./src/routes/registro');
 const { router: horometroRouter } = require('./src/routes/horometro');
+const checklistRouter = require('./src/routes/checklist');
 const { iniciarWorker } = require('./src/workers/notificaciones');
 const { manejarErroresDeSubida } = require('./src/middleware/upload');
 
@@ -63,6 +64,7 @@ app.use('/api/ejecutivos', ejecutivosRouter);
 app.use('/api/facturacion', facturacionRouter);
 app.use('/api/registro-cliente', registroRouter);
 app.use('/api/horometro', horometroRouter);
+app.use('/api/checklist', checklistRouter);
 
 // traduce los rechazos de multer (archivo muy grande, tipo no permitido) a 4xx con
 // mensaje entendible; sin esto terminan como un 500 generico

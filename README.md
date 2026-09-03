@@ -112,6 +112,30 @@ Módulo agregado a partir de la entrevista con el jefe de taller y la administra
 
 Como el aviso se evalúa al registrar una lectura, un equipo del que nadie toma el horómetro no alerta: para ese caso está la agenda mensual.
 
+## La Orden de Trabajo en papel
+
+El talonario físico de GOMAQ (ejemplo: OT N° 00904) está trasladado a la app del mecánico. Equivalencia campo por campo:
+
+| Formulario en papel | Dónde vive ahora |
+|---|---|
+| N° preimpreso del talonario | `ordenes_trabajo.folio_papel` (opcional; la app usa su propio correlativo) |
+| Cliente / RUT / Planta | Ya existían: `clientes` y `maquinarias.ubicacion` |
+| N° Serie / Modelo / N° Activo | Ficha técnica del equipo (migración 007) |
+| Horómetro | `lecturas_horometro` (migración 012) |
+| Tipo de servicio (6 casillas) | `ordenes_trabajo.tipo_servicio`, lo marca el mecánico |
+| Checklist de 31 ítems en 5 grupos | `servicios_checklist` + `ot_servicios`. Marca **dónde se intervino**, no es pauta de revisión |
+| Inicio / Término del trabajo | `tramos_trabajo`, varios por OT (el trabajo se puede retomar en otra visita) |
+| Cant. / Código / Descripción / Precio | `movimientos_insumo`, con `insumo_id` nullable para el repuesto escrito a mano |
+| Facturable SÍ / NO / ? por línea | `movimientos_insumo.facturable`. `ordenes_trabajo.facturable` pasó a ser **derivado** |
+| Observaciones iniciales | `ordenes_trabajo.diagnostico` (mismo concepto, ya existía) |
+| Observaciones finales | `ordenes_trabajo.observacion_final` |
+| Firma del cliente | `firmas_recepcion` (migración 011) |
+| Firma del técnico | Se identifica por el usuario autenticado que cierra la OT; no se dibuja |
+
+**El facturable dejó de vivir en la OT.** En el papel es una columna con tres casillas en cada línea de repuesto, así que la fuente de verdad es la línea y el campo de la orden lo recalcula el backend (`src/utils/facturableOt.js`) dentro de la misma transacción. `facturacion.js` y `dashboard.js` siguen leyéndolo sin cambios. Regla acordada: **sin repuestos no se cobra**. El "?" del papel es `pendiente`, y esas líneas se le muestran a gerencia para que las resuelva desde el panel — es el caso que describió el jefe de taller de decidir después si se le cobra a un cliente antiguo.
+
+**Pendiente de preguntar a GOMAQ**, deliberadamente fuera del alcance: qué significa el campo **LLAMADO**, qué significa el checkbox **TRABAJO REALIZADO** de la cabecera, y de dónde salen las columnas **NORMALES / EXTRAS** de horas (¿se calculan desde los tramos o se escriben a mano?).
+
 ## Qué falta (en orden de importancia)
 
 1. **Notificación al cerrar una Orden de Trabajo** — el patrón Outbox ya está armado y se usa al *asignar* un mecánico (HU-07), pero no se dispara nada al *finalizar* la OT, aunque el diagrama BPMN del informe sí lo contempla. Es un fix chico, mismo patrón ya construido.

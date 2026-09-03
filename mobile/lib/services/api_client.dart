@@ -79,4 +79,15 @@ class ApiClient {
         .timeout(_timeout);
     return _procesar(resp);
   }
+
+  Future<dynamic> put(String path, Map<String, dynamic> body) async {
+    final resp = await http
+        .put(
+          Uri.parse('$baseUrl$path'),
+          headers: await _headers(),
+          body: jsonEncode(body),
+        )
+        .timeout(_timeout);
+    return _procesar(resp);
+  }
 }

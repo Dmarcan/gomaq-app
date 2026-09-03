@@ -1,6 +1,7 @@
 const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
+const { calcularFacturableOt } = require('../utils/facturableOt');
 
 const router = express.Router();
 
@@ -112,9 +113,10 @@ router.get('/movimientos', verifyToken, requireRole('gerente', 'administrativo')
 router.get('/orden/:ordenId', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     try {
         const result = await pool.query(
+            // LEFT JOIN: una linea puede estar escrita a mano, sin insumo del catalogo
             `SELECT mi.*, i.nombre AS insumo_nombre, i.unidad_medida
              FROM movimientos_insumo mi
-             JOIN insumos i ON i.id = mi.insumo_id
+             LEFT JOIN insumos i ON i.id = mi.insumo_id
              WHERE mi.orden_trabajo_id = $1 AND mi.tipo = 'salida'
              ORDER BY mi.created_at DESC`,
             [req.params.ordenId]
@@ -126,34 +128,118 @@ router.get('/orden/:ordenId', verifyToken, requireRole('gerente', 'administrativ
     }
 });
 
-// POST /api/insumos/orden/:ordenId - registrar consumo de insumo en una OT (descuenta stock)
+const FACTURABLE_VALIDOS = ['si', 'no', 'pendiente'];
+
+/**
+ * Recalcula ordenes_trabajo.facturable a partir de las lineas de la OT.
+ * Se llama SIEMPRE dentro de la transaccion que modifico una linea: en el talonario el
+ * facturable es por linea, asi que el campo de la orden quedo derivado (ver
+ * utils/facturableOt.js) y facturacion.js / dashboard.js lo siguen leyendo sin cambios.
+ */
+async function recalcularFacturableOt(client, ordenId) {
+    const lineas = await client.query(
+        `SELECT facturable FROM movimientos_insumo WHERE orden_trabajo_id = $1 AND tipo = 'salida'`,
+        [ordenId]
+    );
+    const facturable = calcularFacturableOt(lineas.rows);
+    await client.query('UPDATE ordenes_trabajo SET facturable = $1 WHERE id = $2', [facturable, ordenId]);
+    return facturable;
+}
+
+// POST /api/insumos/orden/:ordenId - agregar una linea de repuesto a la OT.
+// Replica la tabla del talonario: cantidad, insumo del catalogo o descripcion escrita a mano,
+// precio, y el facturable SI/NO/? de esa linea.
 router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrativo'), async (req, res) => {
-    const { insumo_id, cantidad } = req.body;
-    if (!insumo_id || !cantidad || isNaN(cantidad) || Number(cantidad) <= 0) {
-        return res.status(400).json({ error: 'insumo_id y cantidad (numerica positiva) son requeridos' });
+    const { insumo_id, cantidad, descripcion, precio_unitario, facturable } = req.body;
+    if (!cantidad || isNaN(cantidad) || Number(cantidad) <= 0) {
+        return res.status(400).json({ error: 'cantidad (numerica positiva) es requerida' });
+    }
+    // el stock parte de cero y en el papel el repuesto se escribe a mano: se acepta una linea
+    // sin catalogo mientras venga descrita
+    if (!insumo_id && !(descripcion && descripcion.trim())) {
+        return res.status(400).json({ error: 'Indique un insumo del catalogo o una descripcion' });
+    }
+    if (facturable !== undefined && !FACTURABLE_VALIDOS.includes(facturable)) {
+        return res.status(400).json({ error: `facturable debe ser uno de: ${FACTURABLE_VALIDOS.join(', ')}` });
     }
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const insumoResult = await client.query(
-            `UPDATE insumos SET stock_actual = stock_actual - $1 WHERE id = $2 RETURNING *`,
-            [cantidad, insumo_id]
-        );
-        if (insumoResult.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Insumo no encontrado' });
+        // solo descuenta stock si la linea apunta al catalogo
+        if (insumo_id) {
+            const insumoResult = await client.query(
+                `UPDATE insumos SET stock_actual = stock_actual - $1 WHERE id = $2 RETURNING *`,
+                [cantidad, insumo_id]
+            );
+            if (insumoResult.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(404).json({ error: 'Insumo no encontrado' });
+            }
         }
         const movimiento = await client.query(
-            `INSERT INTO movimientos_insumo (insumo_id, orden_trabajo_id, cantidad, tipo, usuario_id)
-             VALUES ($1, $2, $3, 'salida', $4) RETURNING *`,
-            [insumo_id, req.params.ordenId, cantidad, req.user.id]
+            `INSERT INTO movimientos_insumo
+                (insumo_id, orden_trabajo_id, cantidad, tipo, usuario_id, descripcion, precio_unitario, facturable)
+             VALUES ($1, $2, $3, 'salida', $4, $5, $6, COALESCE($7::estado_facturable_linea, 'pendiente'))
+             RETURNING *`,
+            [
+                insumo_id || null,
+                req.params.ordenId,
+                cantidad,
+                req.user.id,
+                descripcion && descripcion.trim() ? descripcion.trim() : null,
+                precio_unitario === undefined || precio_unitario === null || precio_unitario === '' ? null : precio_unitario,
+                facturable || null,
+            ]
         );
+        const facturableOt = await recalcularFacturableOt(client, req.params.ordenId);
         await client.query('COMMIT');
-        res.status(201).json(movimiento.rows[0]);
+        res.status(201).json({ ...movimiento.rows[0], orden_facturable: facturableOt });
     } catch (err) {
         await client.query('ROLLBACK');
         console.error(err);
-        res.status(500).json({ error: 'Error al registrar consumo de insumo' });
+        res.status(500).json({ error: 'Error al registrar la linea de repuesto' });
+    } finally {
+        client.release();
+    }
+});
+
+// PATCH /api/insumos/orden/:ordenId/linea/:lineaId - resolver el "?" del papel o corregir el
+// precio. Es la decision que describio el jefe de taller (entrevista, punto 9): clientes antiguos a los
+// que se decide despues no cobrarles, aunque el trabajo se haya hecho.
+router.patch('/orden/:ordenId/linea/:lineaId', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    const { facturable, precio_unitario, descripcion } = req.body;
+    if (facturable !== undefined && !FACTURABLE_VALIDOS.includes(facturable)) {
+        return res.status(400).json({ error: `facturable debe ser uno de: ${FACTURABLE_VALIDOS.join(', ')}` });
+    }
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const result = await client.query(
+            `UPDATE movimientos_insumo
+             SET facturable = COALESCE($1::estado_facturable_linea, facturable),
+                 precio_unitario = COALESCE($2, precio_unitario),
+                 descripcion = COALESCE($3, descripcion)
+             WHERE id = $4 AND orden_trabajo_id = $5
+             RETURNING *`,
+            [
+                facturable || null,
+                precio_unitario === undefined || precio_unitario === null || precio_unitario === '' ? null : precio_unitario,
+                descripcion === undefined ? null : descripcion,
+                req.params.lineaId,
+                req.params.ordenId,
+            ]
+        );
+        if (result.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Linea no encontrada en esta orden de trabajo' });
+        }
+        const facturableOt = await recalcularFacturableOt(client, req.params.ordenId);
+        await client.query('COMMIT');
+        res.json({ ...result.rows[0], orden_facturable: facturableOt });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error(err);
+        res.status(500).json({ error: 'Error al actualizar la linea' });
     } finally {
         client.release();
     }

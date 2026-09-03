@@ -163,6 +163,7 @@ class _DetalleOrdenDialog extends StatefulWidget {
 
 class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
   List<dynamic> _mecanicos = [];
+  List<dynamic> _lineas = [];
   int? _mecanicoSeleccionado;
   final _valorizacionCtrl = TextEditingController();
   bool _cargandoAccion = false;
@@ -170,7 +171,10 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _cargarMecanicos());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _cargarMecanicos();
+      _cargarLineas();
+    });
   }
 
   Future<void> _cargarMecanicos() async {
@@ -178,6 +182,31 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
       final data = await ApiClient.instance.get('/api/usuarios?rol=mecanico');
       if (mounted) setState(() => _mecanicos = data);
     } catch (_) {}
+  }
+
+  Future<void> _cargarLineas() async {
+    try {
+      final data = await ApiClient.instance.get('/api/insumos/orden/${widget.orden['id']}');
+      if (mounted) setState(() => _lineas = data);
+    } catch (_) {}
+  }
+
+  /// Resuelve el "?" del papel. Al cambiar una línea el backend recalcula el facturable de
+  /// la OT, así que se refresca el listado para que Facturación quede consistente.
+  Future<void> _resolverLinea(dynamic lineaId, String facturable) async {
+    setState(() => _cargandoAccion = true);
+    try {
+      await ApiClient.instance.patch(
+        '/api/insumos/orden/${widget.orden['id']}/linea/$lineaId',
+        {'facturable': facturable},
+      );
+      await _cargarLineas();
+      widget.onCambio();
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    } finally {
+      if (mounted) setState(() => _cargandoAccion = false);
+    }
   }
 
   Future<void> _asignar() async {
@@ -239,6 +268,59 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
     }
   }
 
+  static const _etiquetasTipoServicio = {
+    'preventivo': 'Preventivo',
+    'reparacion': 'Reparación',
+    'garantia_full_mantencion': 'Garantía / Full Mantención',
+    'correctivo': 'Correctivo',
+    'bateria_cargador': 'Batería / Cargador',
+    'administrativo': 'Administrativo',
+  };
+
+  String _etiquetaTipoServicio(dynamic valor) =>
+      valor == null ? 'Sin marcar' : (_etiquetasTipoServicio[valor] ?? valor.toString());
+
+  /// Repuestos de la OT con su facturable por línea, como la tabla del talonario.
+  /// Las líneas "por decidir" (el "?" del papel) son las que gerencia tiene que resolver.
+  Widget _seccionLineas(AuthService auth) {
+    if (_lineas.isEmpty) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 16),
+        child: Text('Sin repuestos registrados', style: TextStyle(color: Colors.black54)),
+      );
+    }
+    final puedeResolver = auth.esGerente || auth.esAdministrativo;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Repuestos utilizados', style: TextStyle(fontWeight: FontWeight.bold)),
+        for (final l in _lineas)
+          ListTile(
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            title: Text('${l['insumo_nombre'] ?? l['descripcion'] ?? 'Repuesto'} · ${l['cantidad']}'),
+            subtitle: Text(
+              l['precio_unitario'] == null ? 'Sin precio' : '\$${l['precio_unitario']}',
+              style: const TextStyle(fontSize: 12),
+            ),
+            trailing: puedeResolver
+                ? DropdownButton<String>(
+                    value: l['facturable'] as String? ?? 'pendiente',
+                    underline: const SizedBox.shrink(),
+                    items: const [
+                      DropdownMenuItem(value: 'si', child: Text('Se cobra')),
+                      DropdownMenuItem(value: 'no', child: Text('No se cobra')),
+                      DropdownMenuItem(value: 'pendiente', child: Text('Por decidir')),
+                    ],
+                    onChanged: _cargandoAccion ? null : (v) => _resolverLinea(l['id'], v!),
+                  )
+                : Text(l['facturable']?.toString() ?? 'pendiente'),
+          ),
+        const Divider(height: 32),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
@@ -255,11 +337,17 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
             children: [
               Text('Estado: ${o['estado']}'),
               Text('Cliente: ${o['cliente_nombre'] ?? '-'}'),
+              Text('Tipo de servicio: ${_etiquetaTipoServicio(o['tipo_servicio'])}'),
               Text('Motivo: ${o['motivo'] ?? '-'}'),
-              Text('Diagnostico: ${o['diagnostico'] ?? 'Aun sin diagnostico'}'),
+              // el talonario separa lo que se encontró al llegar de lo que se hizo
+              Text('Observaciones iniciales: ${o['diagnostico'] ?? 'Sin registrar'}'),
+              Text('Observaciones finales: ${o['observacion_final'] ?? 'Sin registrar'}'),
+              if (o['folio_papel'] != null) Text('OT en papel: N° ${o['folio_papel']}'),
               Text('Facturable: ${o['facturable'] == true ? 'Si' : 'No'}'),
               Text('Valorizacion: ${o['valorizacion'] ?? 'Sin aprobar'}'),
               const Divider(height: 32),
+
+              _seccionLineas(auth),
 
               if (auth.esAdministrativo && o['mecanico_id'] == null) ...[
                 const Text('Asignar mecanico', style: TextStyle(fontWeight: FontWeight.bold)),

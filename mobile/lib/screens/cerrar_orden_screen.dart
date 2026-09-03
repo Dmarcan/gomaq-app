@@ -11,7 +11,6 @@ import '../theme/gomaq_theme.dart';
 /// Todo queda encolado offline; la firma se sube cuando haya señal.
 class CerrarOrdenScreen extends StatefulWidget {
   final OrdenTrabajo orden;
-  final bool facturable;
   final int fotosAntes;
   final int fotosDespues;
   final int insumos;
@@ -19,7 +18,6 @@ class CerrarOrdenScreen extends StatefulWidget {
   const CerrarOrdenScreen({
     super.key,
     required this.orden,
-    required this.facturable,
     required this.fotosAntes,
     required this.fotosDespues,
     required this.insumos,
@@ -70,7 +68,6 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
 
       await syncService.encolarFinalizar(
         widget.orden.id,
-        facturable: widget.facturable,
         personaRecibe: _sinPersona ? null : _personaCtrl.text.trim(),
         sinPersona: _sinPersona,
         rutaFirmaLocal: rutaFirma,
@@ -240,12 +237,7 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
                   const SizedBox(height: 8),
                   _filaResumen(Icons.photo_camera_outlined, 'Fotos antes', '${widget.fotosAntes}'),
                   _filaResumen(Icons.photo_camera, 'Fotos después', '${widget.fotosDespues}'),
-                  _filaResumen(Icons.inventory_2_outlined, 'Insumos registrados', '${widget.insumos}'),
-                  _filaResumen(
-                    Icons.request_quote_outlined,
-                    'Trabajo facturable',
-                    widget.facturable ? 'Sí' : 'No',
-                  ),
+                  _filaResumen(Icons.inventory_2_outlined, 'Repuestos registrados', '${widget.insumos}'),
                 ],
               ),
             ),

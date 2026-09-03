@@ -6,6 +6,13 @@ const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 
 const router = express.Router();
 
+// Los seis tipos del talonario. Los marca el mecanico en terreno, que es quien sabe de que
+// se trato la visita; el administrativo no lo fija al crear la OT.
+const TIPOS_SERVICIO = [
+    'preventivo', 'reparacion', 'garantia_full_mantencion',
+    'correctivo', 'bateria_cargador', 'administrativo',
+];
+
 // POST /api/ordenes-trabajo - crear OT
 router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { maquinaria_id, cliente_id, origen, motivo } = req.body;
@@ -102,7 +109,18 @@ router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecani
         if (req.user.rol === 'mecanico' && orden.mecanico_id !== req.user.id) {
             return res.status(403).json({ error: 'No tiene permiso para ver esta orden' });
         }
-        res.json(orden);
+
+        // el resto del talonario: sistemas intervenidos y tramos de trabajo
+        const [servicios, tramos] = await Promise.all([
+            pool.query('SELECT servicio_id FROM ot_servicios WHERE orden_trabajo_id = $1', [orden.id]),
+            pool.query('SELECT * FROM tramos_trabajo WHERE orden_trabajo_id = $1 ORDER BY inicio', [orden.id]),
+        ]);
+
+        res.json({
+            ...orden,
+            servicio_ids: servicios.rows.map((s) => s.servicio_id),
+            tramos: tramos.rows,
+        });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar orden de trabajo' });
@@ -200,11 +218,108 @@ router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (re
     }
 });
 
-// PATCH /api/ordenes-trabajo/:id/finalizar - mecanico cierra la OT y decide si es facturable
-// (entrevista la administrativa: "el mecanico decide si es culpa al cliente o no" - esa decision es
-// la que determina si la OT queda facturable, no algo que Administrativo elige al crearla)
+// PATCH /api/ordenes-trabajo/:id/datos - cabecera de la OT tal como esta en el talonario:
+// tipo de servicio, observaciones iniciales y finales, y el folio del papel.
+// `diagnostico` es la observacion INICIAL (mismo concepto, ya lo leen el portal del cliente y
+// el panel); `observacion_final` es lo que se hizo. el jefe de taller pidio separarlas (entrevista, punto 5).
+router.patch('/:id/datos', verifyToken, requireRole('mecanico'), async (req, res) => {
+    const { tipo_servicio, diagnostico, observacion_final, folio_papel } = req.body;
+    if (tipo_servicio !== undefined && tipo_servicio !== null && !TIPOS_SERVICIO.includes(tipo_servicio)) {
+        return res.status(400).json({ error: `tipo_servicio debe ser uno de: ${TIPOS_SERVICIO.join(', ')}` });
+    }
+    try {
+        const check = await verificarDuenoOrden(req.params.id, req.user.id);
+        if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+
+        const result = await pool.query(
+            `UPDATE ordenes_trabajo
+             SET tipo_servicio = COALESCE($1::tipo_servicio_ot, tipo_servicio),
+                 diagnostico = COALESCE($2, diagnostico),
+                 observacion_final = COALESCE($3, observacion_final),
+                 folio_papel = COALESCE($4, folio_papel)
+             WHERE id = $5 RETURNING *`,
+            [
+                tipo_servicio || null,
+                diagnostico === undefined ? null : diagnostico,
+                observacion_final === undefined ? null : observacion_final,
+                folio_papel === undefined ? null : folio_papel,
+                req.params.id,
+            ]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al actualizar los datos de la orden' });
+    }
+});
+
+// PUT /api/ordenes-trabajo/:id/checklist - sistemas donde SE INTERVINO (no una pauta de
+// revision). Se envia la lista completa de ids marcados y reemplaza la anterior: es
+// idempotente, que es lo que necesita la cola offline del movil ante un reintento.
+router.put('/:id/checklist', verifyToken, requireRole('mecanico'), async (req, res) => {
+    const { servicio_ids } = req.body;
+    if (!Array.isArray(servicio_ids)) {
+        return res.status(400).json({ error: 'servicio_ids debe ser una lista' });
+    }
+    const client = await pool.connect();
+    try {
+        const check = await verificarDuenoOrden(req.params.id, req.user.id);
+        if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+
+        await client.query('BEGIN');
+        await client.query('DELETE FROM ot_servicios WHERE orden_trabajo_id = $1', [req.params.id]);
+        for (const servicioId of servicio_ids) {
+            await client.query(
+                `INSERT INTO ot_servicios (orden_trabajo_id, servicio_id) VALUES ($1, $2)
+                 ON CONFLICT (orden_trabajo_id, servicio_id) DO NOTHING`,
+                [req.params.id, servicioId]
+            );
+        }
+        await client.query('COMMIT');
+        res.json({ orden_trabajo_id: Number(req.params.id), servicio_ids });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error(err);
+        res.status(500).json({ error: 'Error al guardar el checklist' });
+    } finally {
+        client.release();
+    }
+});
+
+// POST /api/ordenes-trabajo/:id/tramos - registrar un tramo de trabajo (inicio y termino).
+// El papel trae dos bloques porque el trabajo se puede retomar en otra visita; aca son N.
+router.post('/:id/tramos', verifyToken, requireRole('mecanico'), async (req, res) => {
+    const { inicio, termino } = req.body;
+    if (!inicio) {
+        return res.status(400).json({ error: 'inicio es requerido' });
+    }
+    if (termino && new Date(termino) < new Date(inicio)) {
+        return res.status(400).json({ error: 'El termino no puede ser anterior al inicio' });
+    }
+    try {
+        const check = await verificarDuenoOrden(req.params.id, req.user.id);
+        if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+
+        const result = await pool.query(
+            `INSERT INTO tramos_trabajo (orden_trabajo_id, inicio, termino, usuario_id)
+             VALUES ($1, $2, $3, $4) RETURNING *`,
+            [req.params.id, inicio, termino || null, req.user.id]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al registrar el tramo de trabajo' });
+    }
+});
+
+// PATCH /api/ordenes-trabajo/:id/finalizar - mecanico cierra la OT.
+// Ya NO recibe `facturable`: en el talonario esa marca es por linea de repuesto, asi que el
+// campo de la orden lo deriva insumos.js al cambiar una linea (ver utils/facturableOt.js).
 router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req, res) => {
-    const { facturable, persona_recibe, sin_persona, firma_path } = req.body;
+    const { persona_recibe, sin_persona, firma_path } = req.body;
     // Datos de recepcion opcionales: los APK anteriores al rediseño no los envian.
     const tieneRecepcion = persona_recibe !== undefined || sin_persona !== undefined || firma_path !== undefined;
     if (tieneRecepcion && !sin_persona && !persona_recibe) {
@@ -219,9 +334,9 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
         await client.query('BEGIN');
         const result = await client.query(
             `UPDATE ordenes_trabajo
-             SET estado = 'finalizada', fecha_cierre = now(), facturable = COALESCE($2, facturable)
+             SET estado = 'finalizada', fecha_cierre = now()
              WHERE id = $1 RETURNING *`,
-            [req.params.id, facturable === undefined ? null : Boolean(facturable)]
+            [req.params.id]
         );
         if (tieneRecepcion) {
             // ON CONFLICT: la cola offline puede reintentar el PATCH; no debe duplicar ni fallar

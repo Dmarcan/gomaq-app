@@ -59,9 +59,10 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Cierra la OT. Ya no lleva `facturable`: en el talonario esa marca es por linea de
+  /// repuesto, y el backend la deriva de ahi (ver utils/facturableOt.js).
   Future<void> encolarFinalizar(
     int ordenId, {
-    bool facturable = false,
     String? personaRecibe,
     bool sinPersona = false,
     String? rutaFirmaLocal,
@@ -69,15 +70,71 @@ class SyncService extends ChangeNotifier {
     final db = await _db;
     await db.update(
       'ordenes_locales',
-      {'estado': 'finalizada', 'facturable': facturable ? 1 : 0, 'actualizado_en': DateTime.now().toIso8601String()},
+      {'estado': 'finalizada', 'actualizado_en': DateTime.now().toIso8601String()},
       where: 'id = ?',
       whereArgs: [ordenId],
     );
     await _encolar(ordenId, 'finalizar', {
-      'facturable': facturable,
       if (personaRecibe != null) 'persona_recibe': personaRecibe,
       'sin_persona': sinPersona,
       if (rutaFirmaLocal != null) 'ruta_firma_local': rutaFirmaLocal,
+    });
+    notifyListeners();
+  }
+
+  /// Cabecera de la OT tal como esta en el talonario: tipo de servicio, observaciones
+  /// iniciales y finales, y el folio del papel. Se guarda local primero, como todo lo demas.
+  Future<void> encolarDatosOt(
+    int ordenId, {
+    String? tipoServicio,
+    String? diagnostico,
+    String? observacionFinal,
+    String? folioPapel,
+  }) async {
+    final db = await _db;
+    await db.update(
+      'ordenes_locales',
+      {
+        'diagnostico': ?diagnostico,
+        'actualizado_en': DateTime.now().toIso8601String(),
+      },
+      where: 'id = ?',
+      whereArgs: [ordenId],
+    );
+    await _encolar(ordenId, 'datos_ot', {
+      'tipo_servicio': ?tipoServicio,
+      'diagnostico': ?diagnostico,
+      'observacion_final': ?observacionFinal,
+      'folio_papel': ?folioPapel,
+    });
+    notifyListeners();
+  }
+
+  /// Sistemas donde se intervino. Se manda la lista completa, no incrementos: asi un reintento
+  /// de la cola deja el mismo resultado en vez de acumular marcas.
+  Future<void> encolarChecklist(int ordenId, List<int> servicioIds) async {
+    final db = await _db;
+    await db.delete('ot_servicios_locales', where: 'orden_trabajo_id = ?', whereArgs: [ordenId]);
+    for (final id in servicioIds) {
+      await db.insert('ot_servicios_locales', {'orden_trabajo_id': ordenId, 'servicio_id': id});
+    }
+    await _encolar(ordenId, 'checklist', {'servicio_ids': servicioIds});
+    notifyListeners();
+  }
+
+  /// Tramo de trabajo (una visita). El papel trae dos bloques; aca puede haber varios.
+  Future<void> encolarTramo(int ordenId, {required DateTime inicio, DateTime? termino}) async {
+    final db = await _db;
+    final tramoLocalId = await db.insert('tramos_locales', {
+      'orden_trabajo_id': ordenId,
+      'inicio': inicio.toIso8601String(),
+      'termino': termino?.toIso8601String(),
+      'sincronizado': 0,
+    });
+    await _encolar(ordenId, 'tramo', {
+      'tramo_local_id': tramoLocalId,
+      'inicio': inicio.toIso8601String(),
+      if (termino != null) 'termino': termino.toIso8601String(),
     });
     notifyListeners();
   }
@@ -118,20 +175,36 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> encolarInsumo(int ordenId, int insumoId, String insumoNombre, double cantidad) async {
+  /// Linea de repuesto de la OT, como la tabla del talonario: cantidad, insumo del catalogo
+  /// o descripcion escrita a mano, precio, y el facturable si/no/pendiente de esa linea.
+  Future<void> encolarInsumo(
+    int ordenId, {
+    int? insumoId,
+    required String insumoNombre,
+    required double cantidad,
+    String? descripcion,
+    double? precioUnitario,
+    String facturable = 'pendiente',
+  }) async {
     final db = await _db;
     final insumoLocalId = await db.insert('insumos_locales', {
       'orden_trabajo_id': ordenId,
       'insumo_id': insumoId,
       'insumo_nombre': insumoNombre,
       'cantidad': cantidad,
+      'descripcion': descripcion,
+      'precio_unitario': precioUnitario,
+      'facturable': facturable,
       'sincronizado': 0,
       'creado_en': DateTime.now().toIso8601String(),
     });
     await _encolar(ordenId, 'insumo', {
       'insumo_local_id': insumoLocalId,
-      'insumo_id': insumoId,
+      'insumo_id': ?insumoId,
       'cantidad': cantidad,
+      if (descripcion != null && descripcion.isNotEmpty) 'descripcion': descripcion,
+      'precio_unitario': ?precioUnitario,
+      'facturable': facturable,
     });
     notifyListeners();
   }
@@ -195,6 +268,7 @@ class SyncService extends ChangeNotifier {
       // el pull respondio autorizado: si habia un aviso de sesion expirada, ya no aplica
       reiniciarSesion();
       await _pullCatalogoInsumos();
+      await _pullCatalogoChecklist();
     } finally {
       _sincronizando = false;
       notifyListeners();
@@ -216,6 +290,20 @@ class SyncService extends ChangeNotifier {
       final orden = OrdenTrabajo.fromApiJson(item);
       if (idsConPendientes.contains(orden.id)) continue;
       await db.insert('ordenes_locales', orden.toLocalMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+  }
+
+  /// Catalogo del checklist (31 sistemas del talonario). Se cachea igual que el de insumos
+  /// para poder llenar la OT en terreno sin señal.
+  Future<void> _pullCatalogoChecklist() async {
+    final data = await ApiClient.instance.get('/api/checklist');
+    final db = await _db;
+    for (final item in (data as List)) {
+      await db.insert(
+        'checklist_catalogo_local',
+        {'id': item['id'], 'grupo': item['grupo'], 'nombre': item['nombre'], 'orden': item['orden']},
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
     }
   }
 
@@ -335,6 +423,16 @@ class SyncService extends ChangeNotifier {
       case 'horometro':
         await _registrarHorometro(ordenId, payload);
         break;
+      case 'datos_ot':
+        await ApiClient.instance.patch('/api/ordenes-trabajo/$ordenId/datos', payload);
+        break;
+      case 'checklist':
+        // se manda la lista completa de marcados: es idempotente ante un reintento de la cola
+        await ApiClient.instance.put('/api/ordenes-trabajo/$ordenId/checklist', payload);
+        break;
+      case 'tramo':
+        await _registrarTramo(ordenId, payload);
+        break;
       default:
         throw Exception('Tipo de tarea desconocido: $tipo');
     }
@@ -381,7 +479,6 @@ class SyncService extends ChangeNotifier {
     }
 
     await ApiClient.instance.patch('/api/ordenes-trabajo/$ordenId/finalizar', {
-      'facturable': payload['facturable'],
       if (payload['persona_recibe'] != null) 'persona_recibe': payload['persona_recibe'],
       if (payload['sin_persona'] != null) 'sin_persona': payload['sin_persona'],
       if (firmaPath != null) 'firma_path': firmaPath,
@@ -431,6 +528,23 @@ class SyncService extends ChangeNotifier {
     }
   }
 
+  Future<void> _registrarTramo(int ordenId, Map<String, dynamic> payload) async {
+    await ApiClient.instance.post('/api/ordenes-trabajo/$ordenId/tramos', {
+      'inicio': payload['inicio'],
+      if (payload['termino'] != null) 'termino': payload['termino'],
+    });
+    final tramoLocalId = payload['tramo_local_id'];
+    if (tramoLocalId != null) {
+      final db = await _db;
+      await db.update(
+        'tramos_locales',
+        {'sincronizado': 1},
+        where: 'id = ?',
+        whereArgs: [tramoLocalId],
+      );
+    }
+  }
+
   Future<void> _registrarHorometro(int ordenId, Map<String, dynamic> payload) async {
     await ApiClient.instance.post('/api/horometro/maquinaria/${payload['maquinaria_id']}', {
       'valor': payload['valor'],
@@ -442,8 +556,11 @@ class SyncService extends ChangeNotifier {
 
   Future<void> _registrarInsumo(int ordenId, Map<String, dynamic> payload) async {
     await ApiClient.instance.post('/api/insumos/orden/$ordenId', {
-      'insumo_id': payload['insumo_id'],
+      if (payload['insumo_id'] != null) 'insumo_id': payload['insumo_id'],
       'cantidad': payload['cantidad'],
+      if (payload['descripcion'] != null) 'descripcion': payload['descripcion'],
+      if (payload['precio_unitario'] != null) 'precio_unitario': payload['precio_unitario'],
+      'facturable': payload['facturable'] ?? 'pendiente',
     });
 
     final db = await _db;
