@@ -62,6 +62,8 @@ gomaq/
 │   │                          #   dashboard, horometro)
 │   ├── src/utils/parsearDocumento.js  # heuristicas sobre el texto de los PDF (fecha, tipo, folio, RUT, horometro)
 │   ├── src/utils/mantencion.js        # regla de la preventiva por horas de uso
+│   ├── src/utils/facturableOt.js      # facturable de la OT derivado de sus lineas
+│   ├── src/utils/rentabilidad.js      # gasto vs ingreso por equipo
 │   ├── src/workers/notificaciones.js  # patron Outbox: reintentos con backoff exponencial
 │   ├── src/middleware/auth.js # verifyToken + requireRole(...roles)
 │   ├── src/middleware/upload.js  # limites de tamano/tipo de las subidas (multer)
@@ -136,20 +138,30 @@ El talonario físico de GOMAQ (ejemplo: OT N° 00904) está trasladado a la app 
 
 **Pendiente de preguntar a GOMAQ**, deliberadamente fuera del alcance: qué significa el campo **LLAMADO**, qué significa el checkbox **TRABAJO REALIZADO** de la cabecera, y de dónde salen las columnas **NORMALES / EXTRAS** de horas (¿se calculan desde los tramos o se escriben a mano?).
 
+## Costo real por equipo
+
+Responde el punto 1 de la entrevista con el jefe de taller, textual: *"no sabemos si en los tres meses que estuvo la máquina se gastó más plata de la que dejaba el arriendo"*.
+
+- **Gasto** = repuestos (`cantidad × precio_unitario` de las líneas de la OT). Cuenta **todas** las líneas, se hayan cobrado o no: es el costo real para GOMAQ, no lo facturado al cliente. Las líneas sin precio se informan aparte, para que un total bajo no se confunda con un equipo barato.
+- **Ingreso** = facturas del equipo, por sus dos caminos: arriendo (`facturas.maquinaria_id`) y reparación (vía `orden_trabajo_id`).
+- **Dos vistas**: la pantalla "Costo por equipo" lista la flota con lo que sale a pérdida primero, y el perfil de cada equipo muestra su propio desglose.
+- Traslados y horas de trabajo **quedan fuera**: `guias` no guarda el monto del traslado y no existe ningún valor hora definido en el negocio.
+
+**Atribución del gasto:** si el mecánico interviene un segundo equipo durante la misma visita, abre una OT aparte para ese equipo desde la app (`POST /api/ordenes-trabajo/en-terreno`), en vez de cargarle el repuesto a la orden en curso. Es la respuesta al problema que el jefe de taller describió como que el repuesto *"queda en el aire"*. Esa OT se puede crear sin señal: nace con un id local negativo y la cola lo reemplaza por el real al sincronizar, remapeando de paso sus fotos, repuestos y tramos.
+
 ## Qué falta (en orden de importancia)
 
-1. **Notificación al cerrar una Orden de Trabajo** — el patrón Outbox ya está armado y se usa al *asignar* un mecánico (HU-07), pero no se dispara nada al *finalizar* la OT, aunque el diagrama BPMN del informe sí lo contempla. Es un fix chico, mismo patrón ya construido.
-2. **Gestión de Usuarios completa desde el panel** — la pantalla "Usuarios" hoy solo cubre la aprobación de solicitudes de cuenta de clientes (auto-registro); crear/editar mecánicos y administrativos sigue siendo por SSH con `create-user.js`.
-3. **Login social (Google/Microsoft) para clientes** — el registro hoy es solo email+contraseña. Se investigó el patrón de NextAuth (otro proyecto del usuario) pero no se implementó porque requiere registrar la app ante Google/Microsoft con una URL de callback fija, y hoy la URL pública cambia en cada reinicio del túnel de Cloudflare. Queda listo para agregar cuando el proyecto tenga un dominio fijo (ej. desplegado en Railway).
-4. **Dirección de cliente con mapa** — el campo "dirección" en el registro de cliente es texto libre; un selector tipo Google Maps requiere una API key que no se activó en esta sesión.
-5. **WhatsApp Business real** — deliberadamente pospuesto hasta el final del proyecto. El worker (`backend/src/workers/notificaciones.js`) ya tiene todo el mecanismo (reintentos, backoff, estado de error) — la función `enviarNotificacion` hoy lanza un error simulado ("Proveedor no configurado"); cuando exista la cuenta, se reemplaza esa única función por la llamada real a la Cloud API.
-6. **Envío de correo real** (SMTP/SES) — mismo caso que WhatsApp, mismo patrón Outbox ya listo (usado también por la vista previa de correo de Facturación).
-7. **Dominio propio** — hoy la URL pública cambia en cada reinicio del túnel; con un dominio en Cloudflare se puede pasar a un túnel nombrado con URL fija (esto además desbloquea el punto 3).
-8. **Tarifa de arriendo por día** — Facturación muestra los días calculados de cada arriendo pero el monto se ingresa a mano (no existe una tarifa fija por equipo en ningún lado de la entrevista a la administrativa; el jefe la decide caso a caso, igual que en reparaciones).
-9. **Detección de datos desde PDF (Guías y Facturación)** — la extracción de fecha/hora/tipo/monto es heurística sobre el texto del PDF (`pdf-parse` + expresiones regulares), no garantizada; si el PDF es una imagen escaneada sin texto, no detecta nada y el usuario llena a mano. Suficiente para el flujo de UI, pero no es un parser robusto.
-10. **Routing con URLs en el panel web** — como Flutter Web corre sin rutas en la URL, presionar F5 siempre vuelve al Dashboard (la sesión sí se mantiene) y no hay deep links. Arreglarlo requiere `go_router` + estrategia de URL — trabajo mayor, baja prioridad.
-11. **Refresh token / renovación de sesión** — hoy el token JWT dura 12 h y al expirar la app cierra sesión limpiamente con aviso (tanto web como móvil, donde además el trabajo offline queda protegido en cola). La práctica completa de la industria es access token corto + refresh token; queda para cuando el sistema salga de la etapa de demo.
-12. Pulido menor: ver/descargar una factura ya subida directo desde la pantalla de Facturación (hoy solo permite subir).
+1. **Gestión de Usuarios completa desde el panel** — la pantalla "Usuarios" hoy solo cubre la aprobación de solicitudes de cuenta de clientes (auto-registro); crear/editar mecánicos y administrativos sigue siendo por SSH con `create-user.js`.
+2. **Login social (Google/Microsoft) para clientes** — el registro hoy es solo email+contraseña. Se investigó el patrón de NextAuth (otro proyecto del usuario) pero no se implementó porque requiere registrar la app ante Google/Microsoft con una URL de callback fija, y hoy la URL pública cambia en cada reinicio del túnel de Cloudflare. Queda listo para agregar cuando el proyecto tenga un dominio fijo (ej. desplegado en Railway).
+3. **Dirección de cliente con mapa** — el campo "dirección" en el registro de cliente es texto libre; un selector tipo Google Maps requiere una API key que no se activó en esta sesión.
+4. **WhatsApp Business real** — deliberadamente pospuesto hasta el final del proyecto. El worker (`backend/src/workers/notificaciones.js`) ya tiene todo el mecanismo (reintentos, backoff, estado de error) — la función `enviarNotificacion` hoy lanza un error simulado ("Proveedor no configurado"); cuando exista la cuenta, se reemplaza esa única función por la llamada real a la Cloud API.
+5. **Envío de correo real** (SMTP/SES) — mismo caso que WhatsApp, mismo patrón Outbox ya listo (usado también por la vista previa de correo de Facturación).
+6. **Dominio propio** — hoy la URL pública cambia en cada reinicio del túnel; con un dominio en Cloudflare se puede pasar a un túnel nombrado con URL fija (esto además desbloquea el punto 3).
+7. **Tarifa de arriendo por día** — Facturación muestra los días calculados de cada arriendo pero el monto se ingresa a mano (no existe una tarifa fija por equipo en ningún lado de la entrevista a la administrativa; el jefe la decide caso a caso, igual que en reparaciones).
+8. **Detección de datos desde PDF** — verificada contra los documentos reales de GOMAQ (guía de entrega, guía de retiro y factura): acierta fecha, tipo, folio, RUT, monto y horómetro, y está cubierta por tests con ese texto real como fixture. Sigue siendo heurística: si el PDF es una imagen escaneada sin capa de texto no detecta nada y el usuario llena a mano, y un facturador con otro formato requeriría ajustar las expresiones.
+9. **Routing con URLs en el panel web** — como Flutter Web corre sin rutas en la URL, presionar F5 siempre vuelve al Dashboard (la sesión sí se mantiene) y no hay deep links. Arreglarlo requiere `go_router` + estrategia de URL — trabajo mayor, baja prioridad.
+10. **Refresh token / renovación de sesión** — hoy el token JWT dura 12 h y al expirar la app cierra sesión limpiamente con aviso (tanto web como móvil, donde además el trabajo offline queda protegido en cola). La práctica completa de la industria es access token corto + refresh token; queda para cuando el sistema salga de la etapa de demo.
+11. Pulido menor: ver/descargar una factura ya subida directo desde la pantalla de Facturación (hoy solo permite subir).
 
 ## Notas para quien retome esto
 

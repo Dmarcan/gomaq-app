@@ -13,6 +13,7 @@ import '../widgets/estado_chip.dart';
 import '../widgets/foto_thumbnail.dart';
 import '../widgets/seccion_bloqueada.dart';
 import 'cerrar_orden_screen.dart';
+import 'maquinaria_historial_screen.dart';
 
 class OrdenDetailScreen extends StatefulWidget {
   final int ordenId;
@@ -278,9 +279,29 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
               ],
             ),
             const SizedBox(height: 10),
-            Text(
-              orden.maquinariaCodigo ?? 'Sin código',
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    orden.maquinariaCodigo ?? 'Sin código',
+                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                // el informe dice que el mecanico consulta el historial tecnico del equipo
+                TextButton.icon(
+                  onPressed: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) => MaquinariaHistorialScreen(
+                        maquinariaId: orden.maquinariaId,
+                        codigo: orden.maquinariaCodigo ?? '',
+                      ),
+                    ),
+                  ),
+                  icon: const Icon(Icons.history, size: 16),
+                  label: const Text('Historial', style: TextStyle(fontSize: 12)),
+                ),
+              ],
             ),
             if (orden.motivo != null && orden.motivo!.isNotEmpty) ...[
               const SizedBox(height: 4),
@@ -517,6 +538,15 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
               ),
               const SizedBox(height: 8),
             ],
+            if (!soloLectura)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _intervenirOtroEquipo,
+                  icon: const Icon(Icons.add_box_outlined, size: 18),
+                  label: const Text('El repuesto va a otro equipo', style: TextStyle(fontSize: 12)),
+                ),
+              ),
             if (_insumosLocales.isEmpty)
               const Text('Sin repuestos registrados', style: TextStyle(color: GomaqColors.textoSecundario)),
             for (final insumo in _insumosLocales)
@@ -548,6 +578,80 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
       partes.add(linea['descripcion'] as String);
     }
     return partes.join(' · ');
+  }
+
+  /// Abre una OT para otro equipo intervenido durante esta misma visita.
+  ///
+  /// el jefe de taller lo describió como el caso donde el repuesto "queda en el aire": si el técnico
+  /// atiende una segunda máquina, su gasto tiene que quedar contra ESA máquina y no contra
+  /// la de la orden en curso, o el costo por equipo queda mal atribuido.
+  Future<void> _intervenirOtroEquipo() async {
+    final db = await LocalDatabase.instance.database;
+    final flota = await db.query('maquinarias_local', orderBy: 'codigo ASC');
+    if (!mounted) return;
+    if (flota.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Sin señal para cargar la lista de equipos todavía')),
+      );
+      return;
+    }
+
+    final motivoCtrl = TextEditingController();
+    int? elegido;
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Intervine otro equipo'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'Se abre una orden aparte para ese equipo, para que sus repuestos queden a su nombre.',
+                style: TextStyle(fontSize: 12),
+              ),
+              const SizedBox(height: 12),
+              DropdownButtonFormField<int>(
+                isExpanded: true,
+                decoration: const InputDecoration(labelText: 'Equipo'),
+                items: [
+                  for (final m in flota.where((m) => m['id'] != _orden?.maquinariaId))
+                    DropdownMenuItem(
+                      value: m['id'] as int,
+                      child: Text('${m['codigo']} · ${m['tipo'] ?? ''}', overflow: TextOverflow.ellipsis),
+                    ),
+                ],
+                onChanged: (v) => setDialogState(() => elegido = v),
+              ),
+              TextField(
+                controller: motivoCtrl,
+                decoration: const InputDecoration(labelText: 'Qué se encontró'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
+            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Crear orden')),
+          ],
+        ),
+      ),
+    );
+    final motivo = motivoCtrl.text.trim();
+    motivoCtrl.dispose();
+    if (confirmado != true || elegido == null || !mounted) return;
+
+    final equipo = flota.firstWhere((m) => m['id'] == elegido);
+    await context.read<SyncService>().encolarOtEnTerreno(
+          maquinariaId: elegido!,
+          maquinariaCodigo: equipo['codigo'] as String,
+          motivo: motivo.isEmpty ? null : motivo,
+        );
+    _intentarSincronizarAhora();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Orden creada. Aparece en tu lista de OT.')),
+      );
+    }
   }
 
   /// TIPO DE SERVICIO del talonario. Lo marca el mecánico, que es quien sabe de qué se trató.

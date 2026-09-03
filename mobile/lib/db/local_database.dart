@@ -17,7 +17,7 @@ class LocalDatabase {
     final path = join(dbPath, 'gomaq_mecanico.db');
     return openDatabase(
       path,
-      version: 4,
+      version: 5,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE ordenes_locales (
@@ -61,6 +61,7 @@ class LocalDatabase {
         await _crearCatalogoInsumos(db);
         await _crearTablaLineas(db);
         await _crearTablasOrdenPapel(db);
+        await _crearTablasEquipos(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -95,8 +96,62 @@ class LocalDatabase {
           ''');
           await db.execute('DROP TABLE insumos_locales_v3');
         }
+        if (oldVersion < 5) {
+          await _crearTablasEquipos(db);
+        }
       },
     );
+  }
+
+  /// Ficha y historial de los equipos, para que el mecanico pueda consultarlos en terreno
+  /// sin señal. El catalogo trae toda la flota pero solo con lo minimo para el selector;
+  /// los campos de ficha se completan unicamente en los equipos de sus OT.
+  Future<void> _crearTablasEquipos(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS maquinarias_local (
+        id INTEGER PRIMARY KEY,
+        codigo TEXT NOT NULL,
+        tipo TEXT,
+        estado TEXT,
+        categoria_equipo TEXT,
+        marca TEXT,
+        modelo TEXT,
+        anio INTEGER,
+        numero_serie TEXT,
+        numero_motor TEXT,
+        numero_chasis TEXT,
+        numero_mastil TEXT,
+        capacidad_carga REAL,
+        altura_trabajo REAL,
+        tipo_combustible TEXT,
+        ubicacion TEXT,
+        cliente_nombre TEXT,
+        ficha_completa INTEGER NOT NULL DEFAULT 0
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS historial_ot_local (
+        id INTEGER PRIMARY KEY,
+        maquinaria_id INTEGER NOT NULL,
+        motivo TEXT,
+        diagnostico TEXT,
+        observacion_final TEXT,
+        estado TEXT,
+        fecha_creacion TEXT,
+        fecha_cierre TEXT
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS horometro_local (
+        id INTEGER PRIMARY KEY,
+        maquinaria_id INTEGER NOT NULL,
+        valor REAL NOT NULL,
+        origen TEXT,
+        fecha TEXT
+      )
+    ''');
   }
 
   /// Catalogo del checklist (solo lectura, se refresca en cada sync) y las marcas locales

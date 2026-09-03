@@ -82,6 +82,33 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Abre una OT para un segundo equipo intervenido en la misma visita.
+  ///
+  /// Devuelve el id LOCAL (negativo) con el que la OT vive hasta sincronizar. Se usa un
+  /// negativo derivado del reloj para que no choque nunca con un id del servidor, y para que
+  /// dos OT creadas sin señal no se pisen entre si.
+  Future<int> encolarOtEnTerreno({required int maquinariaId, required String maquinariaCodigo, String? motivo}) async {
+    final db = await _db;
+    final idLocal = -DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    await db.insert('ordenes_locales', {
+      'id': idLocal,
+      'maquinaria_id': maquinariaId,
+      'maquinaria_codigo': maquinariaCodigo,
+      'motivo': motivo,
+      'estado': 'en_terreno',
+      'facturable': 0,
+      'fecha_creacion': DateTime.now().toIso8601String(),
+      'actualizado_en': DateTime.now().toIso8601String(),
+    });
+    // primera tarea de la OT: la cola procesa por creado_en, asi que corre antes que sus hijas
+    await _encolar(idLocal, 'crear_ot', {
+      'maquinaria_id': maquinariaId,
+      if (motivo != null && motivo.isNotEmpty) 'motivo': motivo,
+    });
+    notifyListeners();
+    return idLocal;
+  }
+
   /// Cabecera de la OT tal como esta en el talonario: tipo de servicio, observaciones
   /// iniciales y finales, y el folio del papel. Se guarda local primero, como todo lo demas.
   Future<void> encolarDatosOt(
@@ -269,6 +296,8 @@ class SyncService extends ChangeNotifier {
       reiniciarSesion();
       await _pullCatalogoInsumos();
       await _pullCatalogoChecklist();
+      await _pullMaquinarias();
+      await _pullHistorialEquipos();
     } finally {
       _sincronizando = false;
       notifyListeners();
@@ -291,6 +320,101 @@ class SyncService extends ChangeNotifier {
       if (idsConPendientes.contains(orden.id)) continue;
       await db.insert('ordenes_locales', orden.toLocalMap(), conflictAlgorithm: ConflictAlgorithm.replace);
     }
+  }
+
+  /// Catalogo liviano de la flota, para el selector de "intervine otro equipo". Solo id,
+  /// codigo y tipo: son ~500 equipos y no tiene sentido bajar la ficha completa de todos.
+  Future<void> _pullMaquinarias() async {
+    final data = await ApiClient.instance.get('/api/maquinarias');
+    final db = await _db;
+    for (final item in (data as List)) {
+      await db.insert(
+        'maquinarias_local',
+        {
+          'id': item['id'],
+          'codigo': item['codigo'],
+          'tipo': item['tipo'],
+          'estado': item['estado'],
+          'ubicacion': item['ubicacion'],
+          'cliente_nombre': item['cliente'],
+        },
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+    }
+  }
+
+  /// Ficha completa, historial de OT y lecturas de horometro de los equipos que el mecanico
+  /// tiene asignados. Solo esos: es lo que necesita en terreno y evita arrastrarse la flota.
+  Future<void> _pullHistorialEquipos() async {
+    final db = await _db;
+    final filas = await db.rawQuery(
+      'SELECT DISTINCT maquinaria_id FROM ordenes_locales WHERE maquinaria_id IS NOT NULL',
+    );
+    for (final fila in filas) {
+      final maquinariaId = fila['maquinaria_id'] as int;
+      try {
+        final ficha = await ApiClient.instance.get('/api/maquinarias/$maquinariaId');
+        await db.insert(
+          'maquinarias_local',
+          {
+            'id': ficha['id'],
+            'codigo': ficha['codigo'],
+            'tipo': ficha['tipo'],
+            'estado': ficha['estado'],
+            'categoria_equipo': ficha['categoria_equipo'],
+            'marca': ficha['marca'],
+            'modelo': ficha['modelo'],
+            'anio': ficha['anio'],
+            'numero_serie': ficha['numero_serie'],
+            'numero_motor': ficha['numero_motor'],
+            'numero_chasis': ficha['numero_chasis'],
+            'numero_mastil': ficha['numero_mastil'],
+            'capacidad_carga': _aDouble(ficha['capacidad_carga']),
+            'altura_trabajo': _aDouble(ficha['altura_trabajo']),
+            'tipo_combustible': ficha['tipo_combustible'],
+            'ubicacion': ficha['ubicacion'],
+            'ficha_completa': 1,
+          },
+          conflictAlgorithm: ConflictAlgorithm.replace,
+        );
+
+        final historial = await ApiClient.instance.get('/api/maquinarias/$maquinariaId/ordenes-trabajo');
+        await db.delete('historial_ot_local', where: 'maquinaria_id = ?', whereArgs: [maquinariaId]);
+        for (final ot in (historial as List)) {
+          await db.insert('historial_ot_local', {
+            'id': ot['id'],
+            'maquinaria_id': maquinariaId,
+            'motivo': ot['motivo'],
+            'diagnostico': ot['diagnostico'],
+            'observacion_final': ot['observacion_final'],
+            'estado': ot['estado'],
+            'fecha_creacion': ot['fecha_creacion'],
+            'fecha_cierre': ot['fecha_cierre'],
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+
+        final horometro = await ApiClient.instance.get('/api/horometro/maquinaria/$maquinariaId');
+        await db.delete('horometro_local', where: 'maquinaria_id = ?', whereArgs: [maquinariaId]);
+        for (final l in (horometro['lecturas'] as List? ?? [])) {
+          await db.insert('horometro_local', {
+            'id': l['id'],
+            'maquinaria_id': maquinariaId,
+            'valor': _aDouble(l['valor']) ?? 0,
+            'origen': l['origen'],
+            'fecha': l['fecha'],
+          }, conflictAlgorithm: ConflictAlgorithm.replace);
+        }
+      } on ApiException catch (_) {
+        // un equipo que ya no existe o al que perdio acceso no debe abortar el resto del pull
+        continue;
+      }
+    }
+  }
+
+  static double? _aDouble(dynamic v) {
+    if (v == null) return null;
+    if (v is num) return v.toDouble();
+    return double.tryParse(v.toString());
   }
 
   /// Catalogo del checklist (31 sistemas del talonario). Se cachea igual que el de insumos
@@ -341,11 +465,16 @@ class SyncService extends ChangeNotifier {
     // evidencia anterior de la misma OT fue rechazada) - quedan para el proximo push
     final otsConFallo = <int>{};
 
+    // Traduccion de id local (negativo) a id real, para las OT creadas en terreno sin señal.
+    // Hace falta en memoria porque `pendientes` es un snapshot tomado ANTES del bucle: las
+    // tareas hijas ya cargadas siguen trayendo el id negativo aunque la base ya se remapeo.
+    final remapeo = <int, int>{};
+
     for (final tarea in pendientes) {
-      final otId = tarea['orden_trabajo_id'] as int;
+      final otId = remapeo[tarea['orden_trabajo_id'] as int] ?? tarea['orden_trabajo_id'] as int;
       if (otsConFallo.contains(otId)) continue;
       try {
-        await _ejecutarTarea(tarea);
+        await _ejecutarTarea({...tarea, 'orden_trabajo_id': otId}, remapeo);
         await db.delete('cola_sincronizacion', where: 'id = ?', whereArgs: [tarea['id']]);
         if (_sesionExpirada) {
           _sesionExpirada = false;
@@ -402,12 +531,15 @@ class SyncService extends ChangeNotifier {
     }
   }
 
-  Future<void> _ejecutarTarea(Map<String, dynamic> tarea) async {
+  Future<void> _ejecutarTarea(Map<String, dynamic> tarea, [Map<int, int>? remapeo]) async {
     final tipo = tarea['tipo'] as String;
     final ordenId = tarea['orden_trabajo_id'] as int;
     final payload = jsonDecode(tarea['payload'] as String) as Map<String, dynamic>;
 
     switch (tipo) {
+      case 'crear_ot':
+        await _crearOtEnTerreno(ordenId, payload, remapeo);
+        break;
       case 'diagnostico':
         await ApiClient.instance.patch('/api/ordenes-trabajo/$ordenId/diagnostico', payload);
         break;
@@ -526,6 +658,31 @@ class SyncService extends ChangeNotifier {
         whereArgs: [evidenciaLocalId],
       );
     }
+  }
+
+  /// Crea en el servidor una OT que nacio en terreno y traduce su id local por el real.
+  ///
+  /// Sin señal la OT no puede tener id del servidor, asi que nace con uno negativo (imposible
+  /// que choque con uno real) y sus fotos, repuestos y tramos cuelgan de ese id. Al sincronizar
+  /// hay que reescribir esa referencia en todas partes.
+  Future<void> _crearOtEnTerreno(int idLocal, Map<String, dynamic> payload, Map<int, int>? remapeo) async {
+    final creada = await ApiClient.instance.post('/api/ordenes-trabajo/en-terreno', {
+      'maquinaria_id': payload['maquinaria_id'],
+      if (payload['motivo'] != null) 'motivo': payload['motivo'],
+    });
+    final idReal = creada['id'] as int;
+    if (idReal == idLocal) return;
+
+    final db = await _db;
+    await db.transaction((txn) async {
+      for (final tabla in ['cola_sincronizacion', 'evidencias_locales', 'insumos_locales',
+                           'ot_servicios_locales', 'tramos_locales']) {
+        await txn.update(tabla, {'orden_trabajo_id': idReal},
+            where: 'orden_trabajo_id = ?', whereArgs: [idLocal]);
+      }
+      await txn.update('ordenes_locales', {'id': idReal}, where: 'id = ?', whereArgs: [idLocal]);
+    });
+    remapeo?[idLocal] = idReal;
   }
 
   Future<void> _registrarTramo(int ordenId, Map<String, dynamic> payload) async {

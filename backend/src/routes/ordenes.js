@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
-const { verificarDuenoOrden } = require('../utils/ordenes');
+const { verificarDuenoOrden, contactoCliente } = require('../utils/ordenes');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 
 const router = express.Router();
@@ -31,6 +31,38 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al crear orden de trabajo' });
+    }
+});
+
+// POST /api/ordenes-trabajo/en-terreno - el mecanico abre una OT para un segundo equipo.
+//
+// Entrevista el jefe de taller, punto 1: "voy por este equipo pero veo otro... si yo le puse el repuesto
+// al otro equipo, ese repuesto queda en el aire". Se resuelve forzando una OT por equipo
+// intervenido, en vez de dejar que una linea apunte a una maquina distinta a la de su orden:
+// asi el costo por equipo queda bien atribuido sin casos especiales.
+//
+// Nace ya asignada a quien la crea y en 'en_terreno', para que pueda cargarle repuestos de
+// inmediato sin pasar por el administrativo.
+router.post('/en-terreno', verifyToken, requireRole('mecanico'), async (req, res) => {
+    const { maquinaria_id, motivo } = req.body;
+    if (!maquinaria_id) {
+        return res.status(400).json({ error: 'maquinaria_id es requerido' });
+    }
+    try {
+        const maquinaria = await pool.query('SELECT id, cliente_id FROM maquinarias WHERE id = $1', [maquinaria_id]);
+        if (maquinaria.rows.length === 0) {
+            return res.status(404).json({ error: 'Maquinaria no encontrada' });
+        }
+        const result = await pool.query(
+            `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, mecanico_id, origen, motivo, estado)
+             VALUES ($1, $2, $3, 'directo', $4, 'en_terreno')
+             RETURNING *`,
+            [maquinaria_id, maquinaria.rows[0].cliente_id, req.user.id, motivo || 'Equipo intervenido durante otra visita']
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al crear la orden de trabajo en terreno' });
     }
 });
 
@@ -155,25 +187,11 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
         }
         const orden = otResult.rows[0];
 
-        // datos de contacto del cliente para la notificacion; whatsapp si hay telefono, si no email
-        let destinatario = null;
-        let canal = null;
-        if (orden.cliente_id) {
-            const clienteResult = await client.query('SELECT telefono, email FROM clientes WHERE id = $1', [orden.cliente_id]);
-            const cli = clienteResult.rows[0];
-            if (cli && cli.telefono) {
-                destinatario = cli.telefono;
-                canal = 'whatsapp';
-            } else if (cli && cli.email) {
-                destinatario = cli.email;
-                canal = 'email';
-            }
-        }
-
-        if (destinatario) {
+        const contacto = await contactoCliente(client, orden.cliente_id);
+        if (contacto) {
             await client.query(
                 `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ($1, $2, $3)`,
-                [canal, destinatario, JSON.stringify({
+                [contacto.canal, contacto.destinatario, JSON.stringify({
                     tipo: 'mecanico_asignado',
                     orden_trabajo_id: orden.id,
                     maquinaria_codigo: orden.maquinaria_codigo,
@@ -350,6 +368,25 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
                 [req.params.id, persona_recibe || null, Boolean(sin_persona), firma_path || null]
             );
         }
+
+        // Aviso de cierre al cliente, mismo patron Outbox que /asignar: la notificacion se
+        // inserta en la misma transaccion que cierra la OT. Cierra el par que dibuja el BPMN
+        // del informe - HU-07 avisa quien va a atender el equipo, esto avisa que quedo listo.
+        const orden = result.rows[0];
+        const contactoCierre = await contactoCliente(client, orden.cliente_id);
+        if (contactoCierre) {
+            const maquinaria = await client.query('SELECT codigo FROM maquinarias WHERE id = $1', [orden.maquinaria_id]);
+            await client.query(
+                `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ($1, $2, $3)`,
+                [contactoCierre.canal, contactoCierre.destinatario, JSON.stringify({
+                    tipo: 'ot_finalizada',
+                    orden_trabajo_id: orden.id,
+                    maquinaria_codigo: maquinaria.rows[0] ? maquinaria.rows[0].codigo : null,
+                    observacion_final: orden.observacion_final,
+                })]
+            );
+        }
+
         await client.query('COMMIT');
         res.json(result.rows[0]);
     } catch (err) {

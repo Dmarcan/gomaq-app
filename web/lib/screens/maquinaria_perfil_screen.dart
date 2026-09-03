@@ -17,6 +17,7 @@ class MaquinariaPerfilScreen extends StatefulWidget {
 class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
   Map<String, dynamic>? _maquinaria;
   List<dynamic> _historial = [];
+  Map<String, dynamic>? _rentabilidad;
   bool _cargando = true;
   String? _error;
   bool _subiendoFoto = false;
@@ -40,11 +41,76 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
         _maquinaria = maquinaria;
         _historial = historial;
       });
+      // el costo va aparte: solo lo ven gerente y administrativo, y si falla no debe
+      // impedir que se vea la ficha del equipo
+      try {
+        final rentabilidad = await ApiClient.instance.get('/api/rentabilidad/maquinaria/${widget.maquinariaId}');
+        if (mounted) setState(() => _rentabilidad = rentabilidad);
+      } on ApiException catch (_) {}
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
+  }
+
+  String _clp(num? valor) {
+    if (valor == null) return '-';
+    final entero = valor.round().abs().toString();
+    final conPuntos = entero.replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]}.');
+    return '${valor < 0 ? '-' : ''}\$$conPuntos';
+  }
+
+  /// Gasto en repuestos contra lo facturado. El gasto cuenta todas las líneas, se hayan
+  /// cobrado o no: es el costo real para GOMAQ (entrevista el jefe de taller, punto 1).
+  Widget _bloqueCosto() {
+    final r = _rentabilidad!;
+    final perdida = r['sale_a_perdida'] == true;
+    final sinPrecio = (r['lineas_sin_precio'] ?? 0) as int;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Wrap(
+          spacing: 32,
+          runSpacing: 12,
+          children: [
+            _cifra('Gasto en repuestos', _clp(r['gasto']), Colors.black87),
+            _cifra('Facturado', _clp(r['ingreso']), Colors.black87),
+            _cifra(
+              perdida ? 'Pérdida' : 'Margen',
+              _clp(r['margen']),
+              perdida ? const Color(0xFFB23A2E) : const Color(0xFF2F8F4E),
+            ),
+          ],
+        ),
+        if (perdida)
+          const Padding(
+            padding: EdgeInsets.only(top: 8),
+            child: Text(
+              'Este equipo gastó más de lo que facturó en el período.',
+              style: TextStyle(fontSize: 12, color: Color(0xFFB23A2E), fontWeight: FontWeight.bold),
+            ),
+          ),
+        if (sinPrecio > 0)
+          Padding(
+            padding: const EdgeInsets.only(top: 4),
+            child: Text(
+              '$sinPrecio línea${sinPrecio == 1 ? '' : 's'} sin precio cargado: el gasto real es mayor.',
+              style: const TextStyle(fontSize: 12, color: Color(0xFFC9820A)),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _cifra(String etiqueta, String valor, Color color) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(etiqueta, style: const TextStyle(fontSize: 11, color: Colors.black54)),
+        Text(valor, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: color)),
+      ],
+    );
   }
 
   Future<void> _cambiarFoto() async {
@@ -304,6 +370,13 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
           if ((m['descripcion'] as String?)?.trim().isNotEmpty ?? false) ...[
             const SizedBox(height: 16),
             Text(m['descripcion'], style: const TextStyle(fontSize: 13, color: Colors.black87)),
+          ],
+          if (_rentabilidad != null) ...[
+            const SizedBox(height: 28),
+            const Text('COSTO DEL EQUIPO (ÚLTIMOS 12 MESES)',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+            const SizedBox(height: 12),
+            _bloqueCosto(),
           ],
           const SizedBox(height: 28),
           const Text('HISTORIAL DE ÓRDENES DE TRABAJO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
