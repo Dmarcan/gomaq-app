@@ -121,6 +121,51 @@ router.post('/solicitudes/:id/rechazar', verifyToken, requireRole('administrativ
     }
 });
 
+// GET /api/usuarios/mi-perfil - los datos propios del usuario autenticado.
+// Incluye lo que se le muestra al cliente en el aviso previo a la visita (HU-07), para que
+// el mecanico sepa exactamente que de su ficha sale de la empresa.
+router.get('/mi-perfil', verifyToken, async (req, res) => {
+    try {
+        const result = await pool.query(
+            'SELECT id, nombre, email, rol, rut, telefono_whatsapp FROM usuarios WHERE id = $1',
+            [req.user.id]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al consultar su perfil' });
+    }
+});
+
+// PATCH /api/usuarios/mi-perfil - el usuario completa su RUT y telefono.
+// El RUT lo pide el bloque de firmas del talonario y se le muestra al cliente en el aviso.
+router.patch('/mi-perfil', verifyToken, async (req, res) => {
+    const { rut, telefono_whatsapp } = req.body;
+    if (rut === undefined && telefono_whatsapp === undefined) {
+        return res.status(400).json({ error: 'Indique rut y/o telefono_whatsapp' });
+    }
+    try {
+        const result = await pool.query(
+            `UPDATE usuarios
+             SET rut = COALESCE($1, rut), telefono_whatsapp = COALESCE($2, telefono_whatsapp)
+             WHERE id = $3
+             RETURNING id, nombre, email, rol, rut, telefono_whatsapp`,
+            [
+                rut === undefined ? null : (String(rut).trim() || null),
+                telefono_whatsapp === undefined ? null : (String(telefono_whatsapp).trim() || null),
+                req.user.id,
+            ]
+        );
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al actualizar su perfil' });
+    }
+});
+
 // PATCH /api/usuarios/:id/alertas - quien recibe el aviso de mantencion proxima y por donde.
 // Se configura desde el panel a proposito: cambiar el destinatario no deberia exigir entrar
 // por SSH a editar el .env del servidor.

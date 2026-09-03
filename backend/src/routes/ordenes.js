@@ -169,7 +169,7 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
     }
     const client = await pool.connect();
     try {
-        const mecanico = await client.query('SELECT id, nombre FROM usuarios WHERE id = $1 AND rol = $2', [mecanico_id, 'mecanico']);
+        const mecanico = await client.query('SELECT id, nombre, rut FROM usuarios WHERE id = $1 AND rol = $2', [mecanico_id, 'mecanico']);
         if (mecanico.rows.length === 0) {
             return res.status(400).json({ error: 'mecanico_id no corresponde a un usuario con rol mecanico' });
         }
@@ -189,6 +189,13 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
 
         const contacto = await contactoCliente(client, orden.cliente_id);
         if (contacto) {
+            // HU-07 promete avisar "quien llega a reparar su equipo Y CON QUE VEHICULO":
+            // el vehiculo y el RUT permiten que porteria reconozca el furgon y valide al
+            // tecnico al ingresar a la planta.
+            const vehiculo = await client.query(
+                'SELECT marca, modelo, patente FROM vehiculos WHERE usuario_id = $1 AND activo = true',
+                [mecanico_id]
+            );
             await client.query(
                 `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ($1, $2, $3)`,
                 [contacto.canal, contacto.destinatario, JSON.stringify({
@@ -196,6 +203,8 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
                     orden_trabajo_id: orden.id,
                     maquinaria_codigo: orden.maquinaria_codigo,
                     mecanico_nombre: mecanico.rows[0].nombre,
+                    mecanico_rut: mecanico.rows[0].rut,
+                    vehiculo: vehiculo.rows[0] || null,
                 })]
             );
         }

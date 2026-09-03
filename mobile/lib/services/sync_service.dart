@@ -298,6 +298,7 @@ class SyncService extends ChangeNotifier {
       await _pullCatalogoChecklist();
       await _pullMaquinarias();
       await _pullHistorialEquipos();
+      await _pullMiFurgon();
     } finally {
       _sincronizando = false;
       notifyListeners();
@@ -319,6 +320,51 @@ class SyncService extends ChangeNotifier {
       final orden = OrdenTrabajo.fromApiJson(item);
       if (idsConPendientes.contains(orden.id)) continue;
       await db.insert('ordenes_locales', orden.toLocalMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+  }
+
+  /// Stock del furgon, vehiculo asignado y perfil propio. Se cachean para poder consultarlos
+  /// en terreno; la carga del furgon en cambio es solo online (se hace en el taller).
+  Future<void> _pullMiFurgon() async {
+    final db = await _db;
+    try {
+      final furgon = await ApiClient.instance.get('/api/insumos/mi-furgon');
+      await db.delete('furgon_stock_local');
+      for (final item in (furgon['items'] as List? ?? [])) {
+        await db.insert('furgon_stock_local', {
+          'insumo_id': item['insumo_id'],
+          'nombre': item['nombre'],
+          'unidad_medida': item['unidad_medida'],
+          'cantidad': _aDouble(item['cantidad']) ?? 0,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+
+      final mio = await ApiClient.instance.get('/api/vehiculos/mio');
+      await db.delete('mi_vehiculo_local');
+      final v = mio['vehiculo'];
+      if (v != null) {
+        await db.insert('mi_vehiculo_local', {
+          'id': v['id'],
+          'patente': v['patente'],
+          'marca': v['marca'],
+          'modelo': v['modelo'],
+          'anio': v['anio'],
+          'tipo': v['tipo'],
+          'kilometraje': v['kilometraje'],
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
+
+      final perfil = await ApiClient.instance.get('/api/usuarios/mi-perfil');
+      await db.delete('mi_perfil_local');
+      await db.insert('mi_perfil_local', {
+        'id': perfil['id'],
+        'nombre': perfil['nombre'],
+        'email': perfil['email'],
+        'rut': perfil['rut'],
+        'telefono_whatsapp': perfil['telefono_whatsapp'],
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    } on ApiException catch (_) {
+      // un mecanico sin furgon asignado todavia no debe romper la sincronizacion
     }
   }
 

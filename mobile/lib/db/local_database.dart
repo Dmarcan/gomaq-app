@@ -17,7 +17,7 @@ class LocalDatabase {
     final path = join(dbPath, 'gomaq_mecanico.db');
     return openDatabase(
       path,
-      version: 5,
+      version: 6,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE ordenes_locales (
@@ -62,6 +62,7 @@ class LocalDatabase {
         await _crearTablaLineas(db);
         await _crearTablasOrdenPapel(db);
         await _crearTablasEquipos(db);
+        await _crearTablasFurgon(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -99,8 +100,47 @@ class LocalDatabase {
         if (oldVersion < 5) {
           await _crearTablasEquipos(db);
         }
+        if (oldVersion < 6) {
+          await _crearTablasFurgon(db);
+        }
       },
     );
+  }
+
+  /// Stock del furgon y datos del vehiculo asignado, para consultarlos en terreno sin señal.
+  /// La CARGA del furgon en cambio es solo online: se hace en el taller y hay que validar
+  /// contra la bodega en el momento (ver /api/insumos/transferencia).
+  Future<void> _crearTablasFurgon(Database db) async {
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS furgon_stock_local (
+        insumo_id INTEGER PRIMARY KEY,
+        nombre TEXT NOT NULL,
+        unidad_medida TEXT,
+        cantidad REAL NOT NULL
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS mi_vehiculo_local (
+        id INTEGER PRIMARY KEY,
+        patente TEXT,
+        marca TEXT,
+        modelo TEXT,
+        anio INTEGER,
+        tipo TEXT,
+        kilometraje INTEGER
+      )
+    ''');
+
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS mi_perfil_local (
+        id INTEGER PRIMARY KEY,
+        nombre TEXT,
+        email TEXT,
+        rut TEXT,
+        telefono_whatsapp TEXT
+      )
+    ''');
   }
 
   /// Ficha y historial de los equipos, para que el mecanico pueda consultarlos en terreno

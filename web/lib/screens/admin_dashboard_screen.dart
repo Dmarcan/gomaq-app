@@ -14,6 +14,7 @@ import 'notificaciones_screen.dart';
 import 'insumos_screen.dart';
 import 'horometro_screen.dart';
 import 'rentabilidad_screen.dart';
+import 'vehiculos_screen.dart';
 
 class AdminDashboardScreen extends StatefulWidget {
   const AdminDashboardScreen({super.key});
@@ -43,6 +44,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     (icon: Icons.inventory_2, label: 'Insumos'),
     (icon: Icons.timer, label: 'Horómetro'),
     (icon: Icons.trending_up, label: 'Costo por equipo'),
+    (icon: Icons.local_shipping, label: 'Vehículos'),
   ];
 
   List<Widget> get _pantallas => [
@@ -63,6 +65,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         const InsumosScreen(),
         const HorometroScreen(),
         const RentabilidadScreen(),
+        const VehiculosScreen(),
       ];
 
   @override

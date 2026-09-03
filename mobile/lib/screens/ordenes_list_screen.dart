@@ -9,6 +9,8 @@ import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../widgets/orden_card.dart';
 import '../widgets/sync_banner.dart';
+import 'mi_cuenta_screen.dart';
+import 'mi_furgon_screen.dart';
 import 'orden_detail_screen.dart';
 
 class OrdenesListScreen extends StatefulWidget {
@@ -145,6 +147,42 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
             onPressed: () => context.read<AuthService>().logout(),
           ),
         ],
+      ),
+      drawer: Drawer(
+        backgroundColor: GomaqColors.fondoOscuro,
+        child: SafeArea(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Padding(
+                padding: EdgeInsets.all(20),
+                child: Text('GOMAQ',
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: GomaqColors.primario)),
+              ),
+              ListTile(
+                leading: const Icon(Icons.assignment_outlined),
+                title: const Text('Mis órdenes'),
+                onTap: () => Navigator.pop(context),
+              ),
+              ListTile(
+                leading: const Icon(Icons.person_outline),
+                title: const Text('Mi cuenta'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const MiCuentaScreen()));
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.local_shipping_outlined),
+                title: const Text('Mi furgón'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const MiFurgonScreen()));
+                },
+              ),
+            ],
+          ),
+        ),
       ),
       body: Column(
         children: [

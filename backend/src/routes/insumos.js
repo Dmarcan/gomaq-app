@@ -2,8 +2,54 @@ const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularFacturableOt } = require('../utils/facturableOt');
+const { validarTransferencia } = require('../utils/stock');
 
 const router = express.Router();
+
+const num = (v) => (v === null || v === undefined ? null : Number(v));
+
+/** La bodega central: destino de las compras y origen de lo que se carga a los furgones. */
+async function bodegaCentral(client) {
+    const r = await client.query("SELECT id FROM ubicaciones_stock WHERE tipo = 'bodega' ORDER BY id LIMIT 1");
+    return r.rows[0] ? r.rows[0].id : null;
+}
+
+/** Ubicacion de stock del mecanico: el furgon de su vehiculo asignado. */
+async function furgonDe(client, usuarioId) {
+    const r = await client.query(
+        `SELECT u.id FROM ubicaciones_stock u
+         JOIN vehiculos v ON v.id = u.vehiculo_id
+         WHERE v.usuario_id = $1 AND u.activa = true AND v.activo = true
+         LIMIT 1`,
+        [usuarioId]
+    );
+    return r.rows[0] ? r.rows[0].id : null;
+}
+
+/**
+ * Mueve stock en una ubicacion y deja `insumos.stock_actual` como el total de todas ellas.
+ *
+ * Mantener `stock_actual` derivado, en vez de borrarlo, deja intacta la pantalla de Insumos
+ * del panel y `GET /api/insumos` - mismo criterio que se uso con ordenes_trabajo.facturable.
+ *
+ * La cantidad puede quedar negativa: si el mecanico instalo un repuesto que el sistema no
+ * tenia registrado en su furgon, bloquearlo solo haria que el dato se pierda.
+ */
+async function moverStock(client, { ubicacionId, insumoId, delta }) {
+    await client.query(
+        `INSERT INTO stock_ubicacion (ubicacion_id, insumo_id, cantidad)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (ubicacion_id, insumo_id)
+         DO UPDATE SET cantidad = stock_ubicacion.cantidad + EXCLUDED.cantidad`,
+        [ubicacionId, insumoId, delta]
+    );
+    await client.query(
+        `UPDATE insumos SET stock_actual = COALESCE(
+            (SELECT SUM(cantidad) FROM stock_ubicacion WHERE insumo_id = $1), 0
+         ) WHERE id = $1`,
+        [insumoId]
+    );
+}
 
 // GET /api/insumos - catalogo completo (mecanico lo usa para el picker de consumo)
 router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
@@ -56,6 +102,137 @@ router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res
     }
 });
 
+// GET /api/insumos/mi-furgon - lo que lleva el furgon del mecanico autenticado
+router.get('/mi-furgon', verifyToken, requireRole('mecanico'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        const furgon = await furgonDe(client, req.user.id);
+        if (!furgon) {
+            // no es error: puede que todavia no le hayan asignado vehiculo
+            return res.json({ ubicacion_id: null, items: [] });
+        }
+        const result = await client.query(
+            `SELECT su.insumo_id, su.cantidad, i.nombre, i.unidad_medida
+             FROM stock_ubicacion su
+             JOIN insumos i ON i.id = su.insumo_id
+             WHERE su.ubicacion_id = $1 AND su.cantidad <> 0
+             ORDER BY i.nombre`,
+            [furgon]
+        );
+        res.json({
+            ubicacion_id: furgon,
+            items: result.rows.map((f) => ({ ...f, cantidad: num(f.cantidad) })),
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al consultar el stock de su furgon' });
+    } finally {
+        client.release();
+    }
+});
+
+// POST /api/insumos/transferencia - el mecanico carga repuestos de la bodega a su furgon.
+//
+// Solo con señal, a proposito: la carga se hace en el taller y validar contra la bodega en el
+// momento evita que dos mecanicos reclamen sin saberlo la misma pieza. Por eso aca SI se
+// rechaza sacar mas de lo que hay, a diferencia del consumo en terreno.
+router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrativo'), async (req, res) => {
+    const { insumo_id, cantidad } = req.body;
+    if (!insumo_id) {
+        return res.status(400).json({ error: 'insumo_id es requerido' });
+    }
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const bodega = await bodegaCentral(client);
+        const destino = req.body.ubicacion_destino_id || await furgonDe(client, req.user.id);
+        if (!destino) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'No tiene un furgon asignado' });
+        }
+
+        // FOR UPDATE: dos mecanicos cargando el mismo repuesto a la vez no pueden pasarse del stock
+        const existencia = await client.query(
+            'SELECT cantidad FROM stock_ubicacion WHERE ubicacion_id = $1 AND insumo_id = $2 FOR UPDATE',
+            [bodega, insumo_id]
+        );
+        const disponible = existencia.rows[0] ? Number(existencia.rows[0].cantidad) : 0;
+
+        const validacion = validarTransferencia({
+            cantidad,
+            disponibleOrigen: disponible,
+            origenId: bodega,
+            destinoId: destino,
+        });
+        if (!validacion.valida) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: validacion.error });
+        }
+
+        await moverStock(client, { ubicacionId: bodega, insumoId: insumo_id, delta: -cantidad });
+        await moverStock(client, { ubicacionId: destino, insumoId: insumo_id, delta: cantidad });
+        await client.query(
+            `INSERT INTO movimientos_insumo
+                (insumo_id, cantidad, tipo, usuario_id, ubicacion_origen_id, ubicacion_destino_id, descripcion)
+             VALUES ($1, $2, 'salida', $3, $4, $5, 'Carga de furgon desde bodega')`,
+            [insumo_id, cantidad, req.user.id, bodega, destino]
+        );
+
+        await client.query('COMMIT');
+        res.status(201).json({ ok: true, ubicacion_destino_id: destino, cantidad: Number(cantidad) });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error(err);
+        res.status(500).json({ error: 'Error al cargar el furgon' });
+    } finally {
+        client.release();
+    }
+});
+
+// GET /api/insumos/descuadres - existencias negativas, para que bodega las cuadre.
+// Aparecen cuando un mecanico registro el consumo de un repuesto que el sistema no tenia en
+// su furgon; el dato del trabajo se conserva y la diferencia queda a la vista.
+router.get('/descuadres', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT su.cantidad, i.id AS insumo_id, i.nombre AS insumo_nombre, i.unidad_medida,
+                    u.nombre AS ubicacion_nombre, u.tipo AS ubicacion_tipo, v.patente
+             FROM stock_ubicacion su
+             JOIN insumos i ON i.id = su.insumo_id
+             JOIN ubicaciones_stock u ON u.id = su.ubicacion_id
+             LEFT JOIN vehiculos v ON v.id = u.vehiculo_id
+             WHERE su.cantidad < 0
+             ORDER BY su.cantidad ASC`
+        );
+        res.json(result.rows.map((f) => ({ ...f, cantidad: num(f.cantidad) })));
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al consultar los descuadres de stock' });
+    }
+});
+
+// GET /api/insumos/por-ubicacion - existencias de todo el inventario, agrupadas por lugar
+router.get('/por-ubicacion', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT u.id AS ubicacion_id, u.nombre AS ubicacion_nombre, u.tipo AS ubicacion_tipo,
+                    v.patente, usr.nombre AS mecanico_nombre,
+                    i.id AS insumo_id, i.nombre AS insumo_nombre, i.unidad_medida, su.cantidad
+             FROM ubicaciones_stock u
+             LEFT JOIN vehiculos v ON v.id = u.vehiculo_id
+             LEFT JOIN usuarios usr ON usr.id = v.usuario_id
+             LEFT JOIN stock_ubicacion su ON su.ubicacion_id = u.id AND su.cantidad <> 0
+             LEFT JOIN insumos i ON i.id = su.insumo_id
+             WHERE u.activa = true
+             ORDER BY u.tipo, u.nombre, i.nombre`
+        );
+        res.json(result.rows.map((f) => ({ ...f, cantidad: num(f.cantidad) })));
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al consultar el inventario por ubicacion' });
+    }
+});
+
 // POST /api/insumos/:id/ingreso - suma stock (compra de insumo)
 router.post('/:id/ingreso', verifyToken, requireRole('administrativo'), async (req, res) => {
     const { cantidad } = req.body;
@@ -65,18 +242,24 @@ router.post('/:id/ingreso', verifyToken, requireRole('administrativo'), async (r
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        const result = await client.query(
-            `UPDATE insumos SET stock_actual = stock_actual + $1 WHERE id = $2 RETURNING *`,
-            [cantidad, req.params.id]
-        );
-        if (result.rows.length === 0) {
+        const existe = await client.query('SELECT id FROM insumos WHERE id = $1', [req.params.id]);
+        if (existe.rows.length === 0) {
             await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Insumo no encontrado' });
         }
+        // una compra entra siempre a la bodega central; de ahi se reparte a los furgones
+        const bodega = await bodegaCentral(client);
+        if (!bodega) {
+            await client.query('ROLLBACK');
+            return res.status(500).json({ error: 'No hay una bodega central configurada' });
+        }
+        await moverStock(client, { ubicacionId: bodega, insumoId: req.params.id, delta: cantidad });
         await client.query(
-            `INSERT INTO movimientos_insumo (insumo_id, cantidad, tipo, usuario_id) VALUES ($1, $2, 'ingreso', $3)`,
-            [req.params.id, cantidad, req.user.id]
+            `INSERT INTO movimientos_insumo (insumo_id, cantidad, tipo, usuario_id, ubicacion_destino_id)
+             VALUES ($1, $2, 'ingreso', $3, $4)`,
+            [req.params.id, cantidad, req.user.id, bodega]
         );
+        const result = await client.query('SELECT * FROM insumos WHERE id = $1', [req.params.id]);
         await client.query('COMMIT');
         res.json(result.rows[0]);
     } catch (err) {
@@ -165,21 +348,29 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        // solo descuenta stock si la linea apunta al catalogo
+        // El repuesto sale de donde estaba fisicamente: del furgon si lo registra el mecanico,
+        // de la bodega si lo registra el administrativo. Se permite dejar el furgon en negativo
+        // (ver utils/stock.js): la pieza ya se instalo y el descuadre queda visible para bodega.
+        let ubicacionOrigen = null;
         if (insumo_id) {
-            const insumoResult = await client.query(
-                `UPDATE insumos SET stock_actual = stock_actual - $1 WHERE id = $2 RETURNING *`,
-                [cantidad, insumo_id]
-            );
+            const insumoResult = await client.query('SELECT id FROM insumos WHERE id = $1', [insumo_id]);
             if (insumoResult.rows.length === 0) {
                 await client.query('ROLLBACK');
                 return res.status(404).json({ error: 'Insumo no encontrado' });
             }
+            ubicacionOrigen = req.user.rol === 'mecanico'
+                ? await furgonDe(client, req.user.id)
+                : await bodegaCentral(client);
+            if (ubicacionOrigen) {
+                await moverStock(client, { ubicacionId: ubicacionOrigen, insumoId: insumo_id, delta: -cantidad });
+            }
+            // sin furgon asignado el consumo igual se registra: la OT no puede quedar bloqueada
+            // porque a un mecanico todavia no le hayan cargado su vehiculo en el sistema
         }
         const movimiento = await client.query(
             `INSERT INTO movimientos_insumo
-                (insumo_id, orden_trabajo_id, cantidad, tipo, usuario_id, descripcion, precio_unitario, facturable)
-             VALUES ($1, $2, $3, 'salida', $4, $5, $6, COALESCE($7::estado_facturable_linea, 'pendiente'))
+                (insumo_id, orden_trabajo_id, cantidad, tipo, usuario_id, descripcion, precio_unitario, facturable, ubicacion_origen_id)
+             VALUES ($1, $2, $3, 'salida', $4, $5, $6, COALESCE($7::estado_facturable_linea, 'pendiente'), $8)
              RETURNING *`,
             [
                 insumo_id || null,
@@ -189,6 +380,7 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
                 descripcion && descripcion.trim() ? descripcion.trim() : null,
                 precio_unitario === undefined || precio_unitario === null || precio_unitario === '' ? null : precio_unitario,
                 facturable || null,
+                ubicacionOrigen,
             ]
         );
         const facturableOt = await recalcularFacturableOt(client, req.params.ordenId);

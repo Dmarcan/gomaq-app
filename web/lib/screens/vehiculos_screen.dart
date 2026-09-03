@@ -1,0 +1,220 @@
+import 'package:flutter/material.dart';
+import '../services/api_client.dart';
+
+/// Vehículos del personal. Asignar uno a un mecánico le crea además su ubicación de stock:
+/// ese furgón pasa a tener existencias propias, separadas de la bodega central.
+///
+/// Un vehículo sin mecánico asignado no lleva stock — es el caso del furgón de compras, que
+/// no sale a terreno (entrevista el jefe de taller, punto 3).
+class VehiculosScreen extends StatefulWidget {
+  const VehiculosScreen({super.key});
+
+  @override
+  State<VehiculosScreen> createState() => _VehiculosScreenState();
+}
+
+class _VehiculosScreenState extends State<VehiculosScreen> {
+  List<dynamic> _vehiculos = [];
+  List<dynamic> _mecanicos = [];
+  bool _cargando = true;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
+  }
+
+  Future<void> _cargar() async {
+    setState(() {
+      _cargando = true;
+      _error = null;
+    });
+    try {
+      final vehiculos = await ApiClient.instance.get('/api/vehiculos');
+      final mecanicos = await ApiClient.instance.get('/api/usuarios?rol=mecanico');
+      if (!mounted) return;
+      setState(() {
+        _vehiculos = vehiculos;
+        _mecanicos = mecanicos;
+      });
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _error = e.message);
+    } finally {
+      if (mounted) setState(() => _cargando = false);
+    }
+  }
+
+  Future<void> _formulario({Map<String, dynamic>? vehiculo}) async {
+    final esNuevo = vehiculo == null;
+    final patenteCtrl = TextEditingController(text: vehiculo?['patente']?.toString() ?? '');
+    final marcaCtrl = TextEditingController(text: vehiculo?['marca']?.toString() ?? '');
+    final modeloCtrl = TextEditingController(text: vehiculo?['modelo']?.toString() ?? '');
+    final anioCtrl = TextEditingController(text: vehiculo?['anio']?.toString() ?? '');
+    final tipoCtrl = TextEditingController(text: vehiculo?['tipo']?.toString() ?? 'Furgón');
+    final kmCtrl = TextEditingController(text: vehiculo?['kilometraje']?.toString() ?? '');
+    int? mecanicoId = vehiculo?['usuario_id'] as int?;
+
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: Text(esNuevo ? 'Nuevo vehículo' : 'Editar ${vehiculo['patente']}'),
+          content: SizedBox(
+            width: 420,
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (esNuevo)
+                    TextField(
+                      controller: patenteCtrl,
+                      textCapitalization: TextCapitalization.characters,
+                      decoration: const InputDecoration(labelText: 'Patente'),
+                    ),
+                  TextField(controller: marcaCtrl, decoration: const InputDecoration(labelText: 'Marca')),
+                  TextField(controller: modeloCtrl, decoration: const InputDecoration(labelText: 'Modelo')),
+                  TextField(
+                    controller: anioCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Año'),
+                  ),
+                  TextField(controller: tipoCtrl, decoration: const InputDecoration(labelText: 'Tipo')),
+                  TextField(
+                    controller: kmCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(labelText: 'Kilometraje'),
+                  ),
+                  const SizedBox(height: 12),
+                  DropdownButtonFormField<int?>(
+                    initialValue: mecanicoId,
+                    isExpanded: true,
+                    decoration: const InputDecoration(labelText: 'Mecánico asignado'),
+                    items: [
+                      const DropdownMenuItem<int?>(value: null, child: Text('Sin asignar (no lleva stock)')),
+                      for (final m in _mecanicos)
+                        DropdownMenuItem<int?>(value: m['id'] as int, child: Text(m['nombre'])),
+                    ],
+                    onChanged: (v) => setDialogState(() => mecanicoId = v),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'Al asignarle un mecánico se crea el furgón como ubicación de stock propia.',
+                    style: TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
+            FilledButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: Text(esNuevo ? 'Crear' : 'Guardar'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    final datos = {
+      if (esNuevo) 'patente': patenteCtrl.text.trim(),
+      'marca': marcaCtrl.text.trim(),
+      'modelo': modeloCtrl.text.trim(),
+      'anio': int.tryParse(anioCtrl.text.trim()),
+      'tipo': tipoCtrl.text.trim(),
+      'kilometraje': int.tryParse(kmCtrl.text.trim().replaceAll('.', '')),
+      'usuario_id': mecanicoId,
+    };
+    for (final c in [patenteCtrl, marcaCtrl, modeloCtrl, anioCtrl, tipoCtrl, kmCtrl]) {
+      c.dispose();
+    }
+    if (confirmado != true || !mounted) return;
+    if (esNuevo && (datos['patente'] as String).isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('La patente es obligatoria')));
+      return;
+    }
+
+    try {
+      if (esNuevo) {
+        await ApiClient.instance.post('/api/vehiculos', datos);
+      } else {
+        await ApiClient.instance.patch('/api/vehiculos/${vehiculo['id']}', datos);
+      }
+      _cargar();
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_cargando) return const Center(child: CircularProgressIndicator());
+    if (_error != null) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('Error: $_error'),
+            const SizedBox(height: 12),
+            ElevatedButton(onPressed: _cargar, child: const Text('Reintentar')),
+          ],
+        ),
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            const Text('Vehículos', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            FilledButton.icon(
+              onPressed: () => _formulario(),
+              icon: const Icon(Icons.add),
+              label: const Text('Nuevo vehículo'),
+            ),
+          ],
+        ),
+        Text(
+          'Cada mecánico tiene un furgón asignado y ese furgón lleva su propio stock de repuestos.',
+          style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+        ),
+        const SizedBox(height: 16),
+        Expanded(
+          child: _vehiculos.isEmpty
+              ? const Center(child: Text('Sin vehículos registrados'))
+              : ListView.separated(
+                  itemCount: _vehiculos.length,
+                  separatorBuilder: (_, _) => const Divider(height: 1),
+                  itemBuilder: (_, i) {
+                    final v = _vehiculos[i] as Map<String, dynamic>;
+                    final asignado = v['usuario_nombre'] != null;
+                    return ListTile(
+                      leading: Icon(
+                        Icons.local_shipping_outlined,
+                        color: asignado ? null : Colors.grey,
+                      ),
+                      title: Text(
+                        '${v['patente']}  ·  ${[v['marca'], v['modelo']].where((x) => x != null).join(' ')}',
+                        style: const TextStyle(fontWeight: FontWeight.bold),
+                      ),
+                      subtitle: Text(
+                        asignado
+                            ? '${v['usuario_nombre']}${v['kilometraje'] == null ? '' : ' · ${v['kilometraje']} km'}'
+                            : 'Sin mecánico asignado · no lleva stock',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      trailing: TextButton(
+                        onPressed: () => _formulario(vehiculo: v),
+                        child: const Text('Editar'),
+                      ),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+}

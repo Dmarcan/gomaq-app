@@ -64,6 +64,7 @@ gomaq/
 │   ├── src/utils/mantencion.js        # regla de la preventiva por horas de uso
 │   ├── src/utils/facturableOt.js      # facturable de la OT derivado de sus lineas
 │   ├── src/utils/rentabilidad.js      # gasto vs ingreso por equipo
+│   ├── src/utils/stock.js             # inventario por ubicacion (bodega / furgon)
 │   ├── src/workers/notificaciones.js  # patron Outbox: reintentos con backoff exponencial
 │   ├── src/middleware/auth.js # verifyToken + requireRole(...roles)
 │   ├── src/middleware/upload.js  # limites de tamano/tipo de las subidas (multer)
@@ -148,6 +149,19 @@ Responde el punto 1 de la entrevista con el jefe de taller, textual: *"no sabemo
 - Traslados y horas de trabajo **quedan fuera**: `guias` no guarda el monto del traslado y no existe ningún valor hora definido en el negocio.
 
 **Atribución del gasto:** si el mecánico interviene un segundo equipo durante la misma visita, abre una OT aparte para ese equipo desde la app (`POST /api/ordenes-trabajo/en-terreno`), en vez de cargarle el repuesto a la orden en curso. Es la respuesta al problema que el jefe de taller describió como que el repuesto *"queda en el aire"*. Esa OT se puede crear sin señal: nace con un id local negativo y la cola lo reemplaza por el real al sincronizar, remapeando de paso sus fotos, repuestos y tramos.
+
+## Vehículos y stock del furgón
+
+Cada mecánico tiene un furgón asignado y no rotan (entrevista el jefe de taller, punto 3), y en ese furgón lleva su propio stock de repuestos. Existe además un furgón exclusivo de compras que no sale a terreno: por eso un vehículo puede no tener mecánico, y solo los asignados tienen stock.
+
+**Inventario multi-ubicación** (patrón *van stock*, como lo modelan Salesforce Field Service o SAP FSM): `ubicaciones_stock` (bodega central + un furgón por vehículo asignado) → `stock_ubicacion` (existencia de cada insumo en cada lugar) → transferencia (bodega → furgón) → consumo (furgón → OT).
+
+- `insumos.stock_actual` **no se eliminó**: pasó a ser el total derivado de todas las ubicaciones, recalculado en la misma transacción que mueve stock. La pantalla de Insumos y `GET /api/insumos` siguen funcionando sin cambios — mismo criterio que con `ordenes_trabajo.facturable`.
+- **Consumir en una OT descuenta del furgón** de quien lo registra (de la bodega si lo registra el administrativo). Puede dejar el furgón **en negativo** a propósito: si el mecánico instaló un repuesto que el sistema no tenía, bloquearlo solo haría que el dato se pierda. El descuadre queda visible en `GET /api/insumos/descuadres`.
+- **Cargar el furgón es solo online**, a diferencia del resto de la app. Se hace en el taller y hay que validar contra la bodega en el momento, para que dos mecánicos no reclamen la misma pieza. Ahí sí se rechaza sacar más de lo que hay.
+- En la app: **Mi cuenta** (datos del mecánico, vehículo, documentos fotografiados) y **Mi furgón** (stock, cacheado para verlo en terreno). En el panel: **Vehículos**, donde se crean y asignan.
+
+Esto además completa **HU-07**, que prometía avisar al cliente *"quién llega a reparar su equipo y con qué vehículo"*: el aviso ahora lleva nombre, RUT y marca/modelo/patente. La app le dice al mecánico exactamente qué de su ficha sale hacia el cliente.
 
 ## Qué falta (en orden de importancia)
 

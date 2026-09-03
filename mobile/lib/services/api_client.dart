@@ -80,6 +80,22 @@ class ApiClient {
     return _procesar(resp);
   }
 
+  /// Subida multipart de un archivo. La evidencia de las OT usa URL firmada de Supabase, pero
+  /// los documentos del vehiculo van por multipart al backend, que es quien decide el bucket.
+  Future<dynamic> postMultipart(
+    String path, {
+    required List<int> bytes,
+    required String filename,
+    Map<String, String> fields = const {},
+  }) async {
+    final solicitud = http.MultipartRequest('POST', Uri.parse('$baseUrl$path'))
+      ..headers.addAll(await _headers(json: false))
+      ..fields.addAll(fields)
+      ..files.add(http.MultipartFile.fromBytes('archivo', bytes, filename: filename));
+    final streamed = await solicitud.send().timeout(_timeout);
+    return _procesar(await http.Response.fromStream(streamed));
+  }
+
   Future<dynamic> put(String path, Map<String, dynamic> body) async {
     final resp = await http
         .put(
