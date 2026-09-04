@@ -23,7 +23,7 @@ class ApiClient {
   // (server.js) desde el mismo origen que la API, asi que las rutas relativas
   // ('/api/...') apuntan solas al servidor correcto sin importar si se accede por
   // la IP LAN, el tunel de Cloudflare, o un dominio propio mas adelante.
-  // Solo hace falta pasar --dart-define=GOMAQ_API_URL=http://192.168.1.29:3000
+  // Solo hace falta pasar --dart-define=GOMAQ_API_URL=http://192.168.1.132:3000
   // para `flutter run` en desarrollo, donde la app NO corre en el mismo origen que el backend.
   static const String baseUrl = String.fromEnvironment('GOMAQ_API_URL', defaultValue: '');
 

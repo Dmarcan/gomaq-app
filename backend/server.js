@@ -70,7 +70,7 @@ app.use(helmet({
             frameAncestors: ["'none'"],
             // helmet la activa por defecto, pero hoy el backend sirve HTTP plano: por el
             // tunel de Cloudflare llega como HTTPS y no molesta, pero a alguien que abra el
-            // panel directo en http://192.168.1.29:3000 le romperia todas las llamadas.
+            // panel directo en http://192.168.1.132:3000 le romperia todas las llamadas.
             // Se reactiva cuando el proyecto tenga HTTPS propio (pendiente del README).
             upgradeInsecureRequests: null,
         },

@@ -18,7 +18,7 @@ class ApiClient {
   // Para pruebas fuera de la red local, cambiar por la URL de Cloudflare Tunnel.
   static const String baseUrl = String.fromEnvironment(
     'GOMAQ_API_URL',
-    defaultValue: 'http://192.168.1.29:3000',
+    defaultValue: 'http://192.168.1.132:3000',
   );
 
   final _storage = const FlutterSecureStorage();

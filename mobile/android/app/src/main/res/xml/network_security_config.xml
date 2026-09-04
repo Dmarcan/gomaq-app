@@ -13,6 +13,9 @@
 -->
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
+        <!-- El GX520 toma IP por DHCP: si el router le cambia la direccion hay que
+             agregarla aca o la app deja de conectar. Conviene fijarle una reserva. -->
+        <domain includeSubdomains="false">192.168.1.132</domain>
         <domain includeSubdomains="false">192.168.1.29</domain>
         <!-- emulador de Android: el host se ve en esta IP -->
         <domain includeSubdomains="false">10.0.2.2</domain>

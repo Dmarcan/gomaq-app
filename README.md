@@ -12,13 +12,13 @@ Un sistema con 3 aplicaciones que comparten un mismo backend:
 
 ## Infraestructura actual (todo corre en un Dell OptiPlex GX520 viejo, no en la nube)
 
-- **Servidor:** un Dell OptiPlex GX520 (2005, 3GB RAM, HDD) con Debian 13, nombre de host `debianMARCAN`, IP LAN `192.168.1.29`, usuario `dmarcan`
+- **Servidor:** un Dell OptiPlex GX520 (2005, 3GB RAM, HDD) con Debian 13, nombre de host `debianMARCAN`, IP LAN `192.168.1.132` (por DHCP: ya cambio una vez desde `192.168.1.29`, conviene fijarle una reserva en el router porque la app movil la trae cableada), usuario `dmarcan`
 - **Por qué no está en la nube:** se decidió partir en hardware local para no gastar en cloud antes de tener el MVP funcionando; migrar a AWS/GCP quedó para más adelante (la arquitectura ya está pensada para eso, ver el informe del seminario)
 - **Backend:** corre como servicio `systemd` (`gomaq-backend`), puerto 3000, arranca solo al encender el equipo
 - **Base de datos:** PostgreSQL 17, base `gomaq`, usuario `gomaq_user` (contraseña en el `.env` del backend en el servidor, no está en este repo)
 - **Acceso externo:** Cloudflare Tunnel modo "Quick Tunnel" (`cloudflared-quick.service`) — **la URL pública cambia cada vez que se reinicia el servicio o el equipo**. Para verla:
   ```bash
-  ssh dmarcan@192.168.1.29
+  ssh dmarcan@192.168.1.132
   journalctl -u cloudflared-quick --no-pager | grep -o "https://[a-zA-Z0-9.-]*trycloudflare.com" | tail -1
   ```
   Esa misma URL sirve tanto la API (`/api/*`) como el Panel Web (`/`), porque el build de Flutter Web se sirve como estático desde el propio backend Node — no hay un segundo túnel.
@@ -26,14 +26,14 @@ Un sistema con 3 aplicaciones que comparten un mismo backend:
   - `evidencias-ot` — fotos de evidencia subidas por el mecánico desde terreno
   - `documentos-gomaq` — PDFs de guías y facturas subidos por el administrativo desde el panel web
 - `backend/uploads/` prácticamente no se usa — quedó de una decisión anterior (guías/facturas en disco local) que se corrigió; puede tener archivos de prueba viejos ahí, no se están sirviendo
-- **Monitoreo del servidor:** `ssh dmarcan@192.168.1.29` y luego `htop` (ya instalado) para ver CPU/RAM/procesos en vivo
+- **Monitoreo del servidor:** `ssh dmarcan@192.168.1.132` y luego `htop` (ya instalado) para ver CPU/RAM/procesos en vivo
 
 ## Cómo desplegar un cambio
 
 **Backend:**
 ```bash
 # en tu maquina: git push (con confirmacion del usuario)
-ssh dmarcan@192.168.1.29
+ssh dmarcan@192.168.1.132
 cd ~/gomaq && git pull origin main
 # si hay migracion nueva en db/migrations/, aplicarla:
 #   sudo -u postgres psql -d gomaq -f db/migrations/00X_nombre.sql
@@ -46,7 +46,7 @@ sudo systemctl restart gomaq-backend
 cd web
 flutter build web --release --dart-define=GOMAQ_API_URL=   # IMPORTANTE: URL vacia = rutas relativas, mismo origen que el backend
 # copiar build/web/* a ~/gomaq/backend/public/ en el servidor (via sftp/scp)
-ssh dmarcan@192.168.1.29 "sudo systemctl restart gomaq-backend"
+ssh dmarcan@192.168.1.132 "sudo systemctl restart gomaq-backend"
 ```
 
 **App del Mecánico:** conectar el celular por USB o depuración inalámbrica (`adb pair`/`adb connect`), luego `flutter run -d <device>` desde `mobile/`. El celular usado en pruebas es Android con MIUI — si la instalación falla con `INSTALL_FAILED_USER_RESTRICTED`, activar "Instalar vía USB" en Opciones de Desarrollador.
