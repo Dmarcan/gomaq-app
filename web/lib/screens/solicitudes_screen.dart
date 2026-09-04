@@ -48,6 +48,36 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
     }
   }
 
+  /// Foto que adjuntó el cliente al reportar la falla. La URL viene firmada por el backend
+  /// y vence en una hora, porque el bucket es privado.
+  Widget _adjunto(String url) {
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('FOTO ADJUNTA POR EL CLIENTE',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.black54)),
+          const SizedBox(height: 6),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(6),
+            child: Image.network(
+              url,
+              height: 180,
+              fit: BoxFit.cover,
+              errorBuilder: (_, _, _) => const Text(
+                'No se pudo cargar la imagen (el enlace pudo vencer, recarga la pantalla)',
+                style: TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+              loadingBuilder: (context, hijo, progreso) =>
+                  progreso == null ? hijo : const SizedBox(height: 180, child: Center(child: CircularProgressIndicator())),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
@@ -62,19 +92,26 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
                   itemBuilder: (context, i) {
                     final s = _solicitudes[i];
                     return Card(
-                      child: ListTile(
-                        title: Text('${s['cliente_nombre']} - ${s['maquinaria_codigo']}'),
-                        subtitle: Text(s['descripcion']),
-                        trailing: s['estado'] == 'pendiente'
-                            ? FilledButton(
-                                onPressed: () => _convertir(s['id']),
-                                child: const Text('Convertir en OT'),
-                              )
-                            : Chip(
-                                label: Text(s['estado']),
-                                backgroundColor: GomaqColors.fondoChip(s['estado']),
-                                labelStyle: TextStyle(color: GomaqColors.colorEstado(s['estado'])),
-                              ),
+                      child: Column(
+                        children: [
+                          ListTile(
+                            title: Text('${s['cliente_nombre']} - ${s['maquinaria_codigo']}'),
+                            subtitle: Text(s['descripcion']),
+                            trailing: s['estado'] == 'pendiente'
+                                ? FilledButton(
+                                    onPressed: () => _convertir(s['id']),
+                                    child: const Text('Convertir en OT'),
+                                  )
+                                : Chip(
+                                    label: Text(s['estado']),
+                                    backgroundColor: GomaqColors.fondoChip(s['estado']),
+                                    labelStyle: TextStyle(color: GomaqColors.colorEstado(s['estado'])),
+                                  ),
+                          ),
+                          // El cliente podía adjuntar una foto de la falla desde el portal, pero
+                          // no se mostraba en ninguna pantalla: se guardaba y nadie la veía.
+                          if (s['evidencia_url'] != null) _adjunto(s['evidencia_url']),
+                        ],
                       ),
                     );
                   },

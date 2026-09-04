@@ -3,6 +3,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularFacturableOt } = require('../utils/facturableOt');
 const { validarTransferencia } = require('../utils/stock');
+const { verificarDuenoOrden } = require('../utils/ordenes');
 
 const router = express.Router();
 
@@ -145,7 +146,11 @@ router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrati
     try {
         await client.query('BEGIN');
         const bodega = await bodegaCentral(client);
-        const destino = req.body.ubicacion_destino_id || await furgonDe(client, req.user.id);
+        // un mecanico siempre carga a SU furgon: aceptar un destino del cuerpo le permitia
+        // cargarle stock al furgon de otro. Solo el administrativo puede indicar destino.
+        const destino = req.user.rol === 'administrativo' && req.body.ubicacion_destino_id
+            ? req.body.ubicacion_destino_id
+            : await furgonDe(client, req.user.id);
         if (!destino) {
             await client.query('ROLLBACK');
             return res.status(400).json({ error: 'No tiene un furgon asignado' });
@@ -295,6 +300,12 @@ router.get('/movimientos', verifyToken, requireRole('gerente', 'administrativo')
 // GET /api/insumos/orden/:ordenId - insumos consumidos por una OT puntual
 router.get('/orden/:ordenId', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     try {
+        // un mecanico solo ve las lineas de sus propias OT, igual que en el resto de su flujo
+        if (req.user.rol === 'mecanico') {
+            const check = await verificarDuenoOrden(req.params.ordenId, req.user.id);
+            if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+            if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        }
         const result = await pool.query(
             // LEFT JOIN: una linea puede estar escrita a mano, sin insumo del catalogo
             `SELECT mi.*, i.nombre AS insumo_nombre, i.unidad_medida
@@ -344,6 +355,13 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
     }
     if (facturable !== undefined && !FACTURABLE_VALIDOS.includes(facturable)) {
         return res.status(400).json({ error: `facturable debe ser uno de: ${FACTURABLE_VALIDOS.join(', ')}` });
+    }
+    // un mecanico solo carga repuestos a sus propias OT: sin esto podia agregar lineas a la
+    // orden de otro y, de paso, cambiarle el facturable (que se deriva de las lineas)
+    if (req.user.rol === 'mecanico') {
+        const check = await verificarDuenoOrden(req.params.ordenId, req.user.id);
+        if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
     }
     const client = await pool.connect();
     try {

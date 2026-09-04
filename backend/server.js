@@ -34,7 +34,6 @@ const { manejarErroresDeSubida } = require('./src/middleware/upload');
 const app = express();
 app.use(cors());
 app.use(express.json());
-app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // build de produccion del panel web (Flutter Web), servido en la raiz para
 // reutilizar la misma URL/tunel que la API (ver `npm run build:web` / db/README)
@@ -74,10 +73,10 @@ app.use('/api/vehiculos', vehiculosRouter);
 // mensaje entendible; sin esto terminan como un 500 generico
 app.use(manejarErroresDeSubida);
 
-// fallback de SPA: cualquier ruta que no sea /api ni /uploads devuelve el index.html
-// del panel web (si existe), para que el enrutamiento propio de Flutter Web funcione
+// fallback de SPA: cualquier ruta que no sea /api devuelve el index.html del panel web
+// (si existe), para que el enrutamiento propio de Flutter Web funcione
 app.get('*', (req, res, next) => {
-    if (req.path.startsWith('/api') || req.path.startsWith('/uploads')) return next();
+    if (req.path.startsWith('/api')) return next();
     res.sendFile(path.join(publicDir, 'index.html'), (err) => {
         if (err) next();
     });

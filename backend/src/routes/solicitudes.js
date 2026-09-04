@@ -1,28 +1,28 @@
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
-const multer = require('multer');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
-const { MAX_ADJUNTO_BYTES } = require('../middleware/upload');
+const { subidaImagen } = require('../middleware/upload');
+const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
+const { rutaAdjuntoSolicitud } = require('../utils/rutaArchivo');
 
 const router = express.Router();
 
-const uploadDir = path.join(__dirname, '..', '..', 'uploads', 'solicitudes');
-fs.mkdirSync(uploadDir, { recursive: true });
-
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => cb(null, uploadDir),
-    filename: (req, file, cb) => cb(null, `${Date.now()}-${file.originalname}`),
-});
-// adjunto opcional del cliente (foto o PDF). A diferencia del resto va a disco, no a
-// memoria, pero sin tope un solo envio puede llenar el disco del servidor
-const upload = multer({ storage, limits: { fileSize: MAX_ADJUNTO_BYTES, files: 1 } });
-
 const TIPOS_VALIDOS = ['falla', 'mantencion_preventiva'];
+const URL_EXPIRACION_SEGUNDOS = 3600;
+
+/** El bucket es privado: la ruta guardada se cambia por una URL firmada temporal al leer. */
+async function conUrlFirmada(filas) {
+    return Promise.all(filas.map(async (fila) => {
+        if (!fila.evidencia_url) return fila;
+        const { data, error } = await supabase.storage
+            .from(BUCKET_DOCUMENTOS)
+            .createSignedUrl(fila.evidencia_url, URL_EXPIRACION_SEGUNDOS);
+        return { ...fila, evidencia_url: error ? null : data.signedUrl };
+    }));
+}
 
 // POST /api/solicitudes - el cliente reporta una falla o pide mantencion sobre su propia maquinaria
-router.post('/', verifyToken, requireRole('cliente'), upload.single('archivo'), async (req, res) => {
+router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archivo'), async (req, res) => {
     const { maquinaria_id, descripcion, tipo } = req.body;
     if (!maquinaria_id || !descripcion) {
         return res.status(400).json({ error: 'maquinaria_id y descripcion son requeridos' });
@@ -39,13 +39,30 @@ router.post('/', verifyToken, requireRole('cliente'), upload.single('archivo'), 
         if (maquinaria.rows.length === 0) {
             return res.status(403).json({ error: 'Esa maquinaria no pertenece a su empresa' });
         }
-        const evidenciaUrl = req.file ? `/uploads/solicitudes/${req.file.filename}` : null;
-        const result = await pool.query(
-            `INSERT INTO solicitudes (cliente_id, maquinaria_id, descripcion, tipo, evidencia_url)
-             VALUES ($1, $2, $3, $4::tipo_solicitud, $5) RETURNING *`,
-            [req.user.cliente_id, maquinaria_id, descripcion, tipoFinal, evidenciaUrl]
-        );
-        res.status(201).json(result.rows[0]);
+        let evidenciaUrl = null;
+        if (req.file) {
+            // la ruta la arma el servidor: el nombre del cliente solo aporta la extension
+            evidenciaUrl = rutaAdjuntoSolicitud(req.user.cliente_id, req.file.originalname);
+            const { error: errorSubida } = await supabase.storage
+                .from(BUCKET_DOCUMENTOS)
+                .upload(evidenciaUrl, req.file.buffer, { contentType: req.file.mimetype });
+            if (errorSubida) throw errorSubida;
+        }
+
+        try {
+            const result = await pool.query(
+                `INSERT INTO solicitudes (cliente_id, maquinaria_id, descripcion, tipo, evidencia_url)
+                 VALUES ($1, $2, $3, $4::tipo_solicitud, $5) RETURNING *`,
+                [req.user.cliente_id, maquinaria_id, descripcion, tipoFinal, evidenciaUrl]
+            );
+            res.status(201).json(result.rows[0]);
+        } catch (errorBd) {
+            // compensacion: si el archivo subio pero la BD fallo, no dejarlo huerfano
+            if (evidenciaUrl) {
+                await supabase.storage.from(BUCKET_DOCUMENTOS).remove([evidenciaUrl]).catch(() => {});
+            }
+            throw errorBd;
+        }
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al crear solicitud' });
@@ -70,7 +87,7 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
              ORDER BY s.created_at DESC`,
             [req.user.cliente_id]
         );
-        res.json(result.rows);
+        res.json(await conUrlFirmada(result.rows));
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar sus solicitudes' });
@@ -87,7 +104,7 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
              JOIN maquinarias m ON m.id = s.maquinaria_id
              ORDER BY s.created_at DESC`
         );
-        res.json(result.rows);
+        res.json(await conUrlFirmada(result.rows));
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar solicitudes' });
