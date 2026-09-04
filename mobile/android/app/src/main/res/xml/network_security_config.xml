@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Trafico sin cifrar acotado al servidor de GOMAQ en la LAN.
+
+  Antes el manifiesto llevaba android:usesCleartextTraffic="true", que permite HTTP hacia
+  CUALQUIER host: si la app se apuntaba a otra URL, el token de sesion viajaba en claro sin
+  que nada lo impidiera. Aca el HTTP queda permitido solo para el GX520, y todo el resto
+  del trafico obliga HTTPS.
+
+  Esto acota el daño, no lo elimina: mientras el backend hable HTTP, el JWT sigue viajando
+  sin cifrar dentro de la red local. Se cierra de verdad cuando el proyecto tenga dominio
+  propio y HTTPS (pendiente 6 del README).
+-->
+<network-security-config>
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">192.168.1.29</domain>
+        <!-- emulador de Android: el host se ve en esta IP -->
+        <domain includeSubdomains="false">10.0.2.2</domain>
+        <domain includeSubdomains="false">localhost</domain>
+    </domain-config>
+    <base-config cleartextTrafficPermitted="false" />
+</network-security-config>

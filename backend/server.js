@@ -5,9 +5,21 @@
 process.env.TZ = 'America/Santiago';
 
 require('dotenv').config();
+
+// Arranque a prueba de fallos, ANTES de cargar nada mas: sin estas variables el servidor
+// arrancaba igual y fallaba recien al primer login, con un 500 que no explicaba nada (o
+// reventaba con un error de Supabase sin contexto). Mejor no partir y decir cual falta.
+const VARIABLES_REQUERIDAS = ['DATABASE_URL', 'JWT_SECRET', 'SUPABASE_URL', 'SUPABASE_SERVICE_KEY'];
+const faltantes = VARIABLES_REQUERIDAS.filter((v) => !process.env[v]);
+if (faltantes.length > 0) {
+    console.error(`Faltan variables de entorno obligatorias: ${faltantes.join(', ')}. Revisa el .env`);
+    process.exit(1);
+}
+
 const path = require('path');
 const express = require('express');
 const cors = require('cors');
+const helmet = require('helmet');
 const pool = require('./src/config/db');
 const maquinariasRouter = require('./src/routes/maquinarias');
 const authRouter = require('./src/routes/auth');
@@ -32,7 +44,29 @@ const { iniciarWorker } = require('./src/workers/notificaciones');
 const { manejarErroresDeSubida } = require('./src/middleware/upload');
 
 const app = express();
-app.use(cors());
+
+// x-powered-by anuncia el stack a cualquiera que mire las cabeceras
+app.disable('x-powered-by');
+
+// Cabeceras de seguridad. crossOriginResourcePolicy se relaja porque el panel carga imagenes
+// firmadas de Supabase, que es otro origen.
+app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+
+// CORS acotado: el panel se sirve desde este mismo backend y la app movil es nativa (no aplica
+// CORS), asi que en la practica nadie necesita un origen cruzado. CORS_ORIGENES permite
+// habilitar alguno puntual (por ejemplo un `flutter run -d chrome` durante el desarrollo).
+const origenesPermitidos = (process.env.CORS_ORIGENES || '')
+    .split(',')
+    .map((o) => o.trim())
+    .filter(Boolean);
+app.use(cors({
+    origin: (origin, cb) => {
+        // sin Origin: cliente nativo o same-origin, no es una peticion cruzada
+        if (!origin) return cb(null, true);
+        return cb(null, origenesPermitidos.includes(origin));
+    },
+}));
+
 app.use(express.json());
 
 // build de produccion del panel web (Flutter Web), servido en la raiz para

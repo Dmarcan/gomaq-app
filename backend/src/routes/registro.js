@@ -2,12 +2,14 @@ const express = require('express');
 const bcrypt = require('bcryptjs');
 const pool = require('../config/db');
 
+const { limiteRegistro } = require('../middleware/limites');
+
 const router = express.Router();
 
 // POST /api/registro-cliente - publico (sin verifyToken): el cliente postula su cuenta,
 // queda "pendiente" hasta que Administrativo/Gerente la revisen en Usuarios y la activen.
 // Nunca crea filas en usuarios ni clientes directamente.
-router.post('/', async (req, res) => {
+router.post('/', limiteRegistro, async (req, res) => {
     const {
         nombre_contacto, email, password,
         rut_empresa, telefono_whatsapp, horario_trabajo, horario_colacion, direccion,
