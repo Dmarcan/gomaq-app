@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../utils/formato.dart';
 
 /// Mismo tope que aplica el backend (middleware/upload.js).
 const _maxArchivoBytes = 10 * 1024 * 1024;
@@ -164,7 +165,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
         },
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Guia guardada correctamente')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Guía guardada correctamente')));
         setState(() {
           _archivo = null;
           _fallido = false;
@@ -316,7 +317,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
                     child: OutlinedButton.icon(
                       onPressed: _elegirFecha,
                       icon: const Icon(Icons.calendar_today, size: 16),
-                      label: Text('${_fecha.day}/${_fecha.month}/${_fecha.year}'),
+                      label: Text(Formato.fecha(_fecha)),
                     ),
                   ),
                   const SizedBox(width: 12),

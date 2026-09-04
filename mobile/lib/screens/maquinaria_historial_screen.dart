@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../db/local_database.dart';
 import '../theme/gomaq_theme.dart';
+import '../utils/formato.dart';
 
 /// Historial tecnico del equipo, para consultarlo en terreno.
 ///
@@ -50,15 +51,18 @@ class _MaquinariaHistorialScreenState extends State<MaquinariaHistorialScreen> {
       appBar: AppBar(title: Text('Equipo ${widget.codigo}')),
       body: _cargando
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                _tarjetaFicha(),
-                const SizedBox(height: 8),
-                _tarjetaHorometro(),
-                const SizedBox(height: 8),
-                _tarjetaHistorial(),
-              ],
+          : RefreshIndicator(
+              onRefresh: _cargar,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  _tarjetaFicha(),
+                  const SizedBox(height: 8),
+                  _tarjetaHorometro(),
+                  const SizedBox(height: 8),
+                  _tarjetaHistorial(),
+                ],
+              ),
             ),
     );
   }
@@ -193,10 +197,5 @@ class _MaquinariaHistorialScreenState extends State<MaquinariaHistorialScreen> {
     );
   }
 
-  String _fecha(dynamic iso) {
-    if (iso == null) return '-';
-    final f = DateTime.tryParse(iso.toString())?.toLocal();
-    if (f == null) return '-';
-    return '${f.day}/${f.month}/${f.year}';
-  }
+  String _fecha(dynamic iso) => Formato.fecha(iso);
 }

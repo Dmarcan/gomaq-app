@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../theme/gomaq_theme.dart';
+import '../utils/formato.dart';
 
 /// Costo real por equipo (entrevista el jefe de taller, punto 1).
 ///
@@ -96,16 +97,6 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
-  }
-
-  String _clp(num? valor) {
-    if (valor == null) return '-';
-    final entero = valor.round().abs().toString();
-    final conPuntos = entero.replaceAllMapped(
-      RegExp(r'(\d)(?=(\d{3})+$)'),
-      (m) => '${m[1]}.',
-    );
-    return '${valor < 0 ? '-' : ''}\$$conPuntos';
   }
 
   @override
@@ -205,10 +196,10 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
                           cells: [
                             DataCell(Text(e['codigo'] ?? '')),
                             DataCell(Text(e['tipo'] ?? '')),
-                            DataCell(Text(_clp(e['gasto']))),
-                            DataCell(Text(_clp(e['ingreso']))),
+                            DataCell(Text(Formato.clp(e['gasto']))),
+                            DataCell(Text(Formato.clp(e['ingreso']))),
                             DataCell(Text(
-                              _clp(e['margen']),
+                              Formato.clp(e['margen']),
                               style: TextStyle(
                                 fontWeight: FontWeight.bold,
                                 color: e['sale_a_perdida'] == true ? GomaqColors.estadoNegativo : GomaqColors.estadoPositivo,

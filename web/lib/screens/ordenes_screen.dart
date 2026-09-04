@@ -343,14 +343,14 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
               Text('Observaciones iniciales: ${o['diagnostico'] ?? 'Sin registrar'}'),
               Text('Observaciones finales: ${o['observacion_final'] ?? 'Sin registrar'}'),
               if (o['folio_papel'] != null) Text('OT en papel: N° ${o['folio_papel']}'),
-              Text('Facturable: ${o['facturable'] == true ? 'Si' : 'No'}'),
-              Text('Valorizacion: ${o['valorizacion'] ?? 'Sin aprobar'}'),
+              Text('Facturable: ${o['facturable'] == true ? 'Sí' : 'No'}'),
+              Text('Valorización: ${o['valorizacion'] ?? 'Sin aprobar'}'),
               const Divider(height: 32),
 
               _seccionLineas(auth),
 
               if (auth.esAdministrativo && o['mecanico_id'] == null) ...[
-                const Text('Asignar mecanico', style: TextStyle(fontWeight: FontWeight.bold)),
+                const Text('Asignar mecánico', style: TextStyle(fontWeight: FontWeight.bold)),
                 DropdownButtonFormField<int>(
                   items: _mecanicos
                       .map<DropdownMenuItem<int>>((m) => DropdownMenuItem(value: m['id'], child: Text(m['nombre'])))
@@ -365,7 +365,7 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
               ],
 
               if (auth.esGerente && o['facturable'] == true && o['valorizacion'] == null) ...[
-                const Text('Aprobar valorizacion', style: TextStyle(fontWeight: FontWeight.bold)),
+                const Text('Aprobar valorización', style: TextStyle(fontWeight: FontWeight.bold)),
                 TextField(
                   controller: _valorizacionCtrl,
                   decoration: const InputDecoration(labelText: 'Monto (CLP)'),
@@ -379,8 +379,8 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
               ],
 
               if (auth.esAdministrativo && o['facturable'] == true) ...[
-                const Text('Gestion documental - factura', style: TextStyle(fontWeight: FontWeight.bold)),
-                TextField(controller: _folioCtrl, decoration: const InputDecoration(labelText: 'Numero de folio SII')),
+                const Text('Gestión documental - factura', style: TextStyle(fontWeight: FontWeight.bold)),
+                TextField(controller: _folioCtrl, decoration: const InputDecoration(labelText: 'Número de folio SII')),
                 OutlinedButton.icon(
                   onPressed: _cargandoAccion ? null : _subirFactura,
                   icon: const Icon(Icons.upload_file),

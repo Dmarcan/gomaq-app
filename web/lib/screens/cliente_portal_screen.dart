@@ -41,7 +41,7 @@ class _ClientePortalScreenState extends State<ClientePortalScreen> {
             tooltip: 'Refrescar',
             onPressed: () => setState(() => _refreshKey = UniqueKey()),
           ),
-          IconButton(icon: const Icon(Icons.logout), onPressed: () => auth.logout()),
+          IconButton(tooltip: 'Cerrar sesión', icon: const Icon(Icons.logout), onPressed: () => auth.logout()),
         ],
       ),
       body: KeyedSubtree(key: _refreshKey, child: IndexedStack(index: _tab, children: _tabs)),

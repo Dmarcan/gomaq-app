@@ -147,7 +147,9 @@ class _MiFurgonScreenState extends State<MiFurgonScreen> {
       ),
       body: _cargando
           ? const Center(child: CircularProgressIndicator())
-          : _items.isEmpty
+          : RefreshIndicator(
+              onRefresh: _cargar,
+              child: _items.isEmpty
               ? const Center(
                   child: Padding(
                     padding: EdgeInsets.all(32),
@@ -188,6 +190,7 @@ class _MiFurgonScreenState extends State<MiFurgonScreen> {
                     );
                   },
                 ),
+            ),
     );
   }
 }

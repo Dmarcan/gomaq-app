@@ -515,6 +515,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                   ),
                   const SizedBox(width: 4),
                   IconButton(
+                    tooltip: 'Agregar repuesto',
                     onPressed: _agregarInsumo,
                     icon: const Icon(Icons.add_circle, color: GomaqColors.primario, size: 30),
                   ),
@@ -715,23 +716,47 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
               'Marca dónde se intervino en esta visita',
               style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario),
             ),
-            for (final entrada in grupos.entries) ...[
-              const SizedBox(height: 8),
-              Text(
-                _titulosGrupo[entrada.key] ?? entrada.key,
-                style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario),
-              ),
-              for (final item in entrada.value)
-                CheckboxListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  controlAffinity: ListTileControlAffinity.leading,
-                  activeColor: GomaqColors.primario,
-                  title: Text(item['nombre'] as String, style: const TextStyle(fontSize: 14)),
-                  value: _serviciosMarcados.contains(item['id']),
-                  onChanged: soloLectura ? null : (_) => _alternarServicio(item['id'] as int),
-                ),
-            ],
+            // Los 31 ítems estaban siempre desplegados: en terreno, con guantes y sol, eso
+            // es un scroll enorme para marcar una o dos casillas. Ahora son cinco grupos
+            // plegados, y cada uno se abre solo si ya tiene algo marcado.
+            for (final entrada in grupos.entries)
+              Builder(builder: (context) {
+                final marcadosDelGrupo =
+                    entrada.value.where((i) => _serviciosMarcados.contains(i['id'])).length;
+                return Theme(
+                  data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+                  child: ExpansionTile(
+                    initiallyExpanded: marcadosDelGrupo > 0,
+                    tilePadding: EdgeInsets.zero,
+                    childrenPadding: const EdgeInsets.only(left: 8),
+                    title: Text(
+                      _titulosGrupo[entrada.key] ?? entrada.key,
+                      style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold),
+                    ),
+                    subtitle: Text(
+                      marcadosDelGrupo == 0
+                          ? '${entrada.value.length} sistemas'
+                          : '$marcadosDelGrupo marcado${marcadosDelGrupo == 1 ? '' : 's'}',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: marcadosDelGrupo > 0 ? GomaqColors.primario : GomaqColors.textoSecundario,
+                      ),
+                    ),
+                    children: [
+                      for (final item in entrada.value)
+                        CheckboxListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          controlAffinity: ListTileControlAffinity.leading,
+                          activeColor: GomaqColors.primario,
+                          title: Text(item['nombre'] as String, style: const TextStyle(fontSize: 14)),
+                          value: _serviciosMarcados.contains(item['id']),
+                          onChanged: soloLectura ? null : (_) => _alternarServicio(item['id'] as int),
+                        ),
+                    ],
+                  ),
+                );
+              }),
           ],
         ),
       ),

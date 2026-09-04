@@ -5,6 +5,7 @@ import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../widgets/ficha_tecnica_campos.dart';
+import '../utils/formato.dart';
 
 class MaquinariaPerfilScreen extends StatefulWidget {
   final int maquinariaId;
@@ -54,13 +55,6 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
     }
   }
 
-  String _clp(num? valor) {
-    if (valor == null) return '-';
-    final entero = valor.round().abs().toString();
-    final conPuntos = entero.replaceAllMapped(RegExp(r'(\d)(?=(\d{3})+$)'), (m) => '${m[1]}.');
-    return '${valor < 0 ? '-' : ''}\$$conPuntos';
-  }
-
   /// Gasto en repuestos contra lo facturado. El gasto cuenta todas las líneas, se hayan
   /// cobrado o no: es el costo real para GOMAQ (entrevista el jefe de taller, punto 1).
   Widget _bloqueCosto() {
@@ -74,11 +68,11 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
           spacing: 32,
           runSpacing: 12,
           children: [
-            _cifra('Gasto en repuestos', _clp(r['gasto']), Colors.black87),
-            _cifra('Facturado', _clp(r['ingreso']), Colors.black87),
+            _cifra('Gasto en repuestos', Formato.clp(r['gasto']), Colors.black87),
+            _cifra('Facturado', Formato.clp(r['ingreso']), Colors.black87),
             _cifra(
               perdida ? 'Pérdida' : 'Margen',
-              _clp(r['margen']),
+              Formato.clp(r['margen']),
               perdida ? const Color(0xFFB23A2E) : const Color(0xFF2F8F4E),
             ),
           ],

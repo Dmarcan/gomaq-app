@@ -156,13 +156,16 @@ class _MiCuentaScreenState extends State<MiCuentaScreen> {
       appBar: AppBar(title: const Text('Mi cuenta')),
       body: _cargando
           ? const Center(child: CircularProgressIndicator())
-          : ListView(
-              padding: const EdgeInsets.all(16),
-              children: [
-                _tarjetaPerfil(online),
-                const SizedBox(height: 8),
-                _tarjetaVehiculo(online),
-              ],
+          : RefreshIndicator(
+              onRefresh: _cargar,
+              child: ListView(
+                padding: const EdgeInsets.all(16),
+                children: [
+                  _tarjetaPerfil(online),
+                  const SizedBox(height: 8),
+                  _tarjetaVehiculo(online),
+                ],
+              ),
             ),
     );
   }

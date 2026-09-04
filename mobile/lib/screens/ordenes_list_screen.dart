@@ -143,6 +143,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
         title: const Text('Mis Ordenes de Trabajo'),
         actions: [
           IconButton(
+            tooltip: 'Cerrar sesión',
             icon: const Icon(Icons.logout),
             onPressed: () => context.read<AuthService>().logout(),
           ),

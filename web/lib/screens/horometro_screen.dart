@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../theme/gomaq_theme.dart';
+import '../utils/formato.dart';
 
 /// Horometro y mantencion preventiva (entrevista el jefe de taller/la administrativa, 20-21 julio 2026).
 ///
@@ -470,7 +471,6 @@ class _DialogoHistorialState extends State<_DialogoHistorial> {
       separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (_, i) {
         final l = lecturas[i] as Map<String, dynamic>;
-        final fecha = DateTime.tryParse(l['fecha'] ?? '')?.toLocal();
         return ListTile(
           dense: true,
           title: Text('${l['valor']} h'),
@@ -481,7 +481,7 @@ class _DialogoHistorialState extends State<_DialogoHistorial> {
             '${l['observacion'] != null ? '\n${l['observacion']}' : ''}',
           ),
           trailing: Text(
-            fecha == null ? '' : '${fecha.day}/${fecha.month}/${fecha.year}',
+            Formato.fecha(l['fecha'], siVacio: ''),
             style: const TextStyle(fontSize: 12),
           ),
         );
