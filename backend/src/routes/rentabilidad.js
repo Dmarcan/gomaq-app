@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularRentabilidad } = require('../utils/rentabilidad');
+const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 
 const router = express.Router();
 
@@ -55,9 +56,17 @@ function agruparPorMaquinaria(filas) {
 // gasto mas plata de la que dejaba el arriendo".
 router.get('/', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
     const { desde, hasta } = rangoDeFechas(req.query);
+    const { limit, offset } = parsearPaginacion(req.query);
+    const q = parsearBusqueda(req.query);
     try {
         const [equipos, lineas, facturas] = await Promise.all([
-            pool.query('SELECT id, codigo, tipo, estado FROM maquinarias ORDER BY codigo'),
+            q
+                ? pool.query(
+                    `SELECT id, codigo, tipo, estado FROM maquinarias
+                     WHERE codigo ILIKE $1 OR tipo ILIKE $1 ORDER BY codigo`,
+                    [`%${q}%`]
+                  )
+                : pool.query('SELECT id, codigo, tipo, estado FROM maquinarias ORDER BY codigo'),
             pool.query(SQL_LINEAS, [desde, hasta]),
             pool.query(SQL_FACTURAS, [desde, hasta]),
         ]);
@@ -76,10 +85,20 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo'), async (re
             // lo que sale a perdida arriba: es lo que hay que decidir
             .sort((a, b) => a.margen - b.margen);
 
+        // el margen se calcula en memoria (cruza lineas y facturas), asi que la pagina se
+        // recorta despues de ordenar: paginar en SQL daria un orden distinto al del margen
+        const pagina = limit === null ? resultado : resultado.slice(offset, offset + limit);
+
         res.json({
             desde: desde.toISOString(),
             hasta: hasta.toISOString(),
-            equipos: resultado,
+            // el resumen se calcula sobre TODA la flota, no sobre la pagina: si contara solo
+            // lo cargado, "3 equipos a perdida" cambiaria al pulsar "cargar mas" y enganaria
+            resumen: {
+                a_perdida: resultado.filter((e) => e.sale_a_perdida).length,
+                lineas_sin_precio: resultado.reduce((n, e) => n + (e.lineas_sin_precio || 0), 0),
+            },
+            ...envolver(pagina, resultado.length, { limit, offset }),
         });
     } catch (err) {
         console.error(err);

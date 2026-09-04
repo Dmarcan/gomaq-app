@@ -49,7 +49,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
 
   Future<void> _cargarDatos() async {
     try {
-      final maquinarias = await ApiClient.instance.get('/api/maquinarias');
+      final maquinarias = (await ApiClient.instance.get('/api/maquinarias'))['items'];
       final clientes = await ApiClient.instance.get('/api/clientes');
       if (mounted) {
         setState(() {

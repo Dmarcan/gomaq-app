@@ -4,6 +4,7 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularFacturableOt } = require('../utils/facturableOt');
 const { validarTransferencia } = require('../utils/stock');
 const { verificarDuenoOrden } = require('../utils/ordenes');
+const { parsearPaginacion, envolver } = require('../utils/paginacion');
 
 const router = express.Router();
 
@@ -278,19 +279,26 @@ router.post('/:id/ingreso', verifyToken, requireRole('administrativo'), async (r
 
 // GET /api/insumos/movimientos - consumos recientes, con datos de OT/insumo/usuario para auditoria
 router.get('/movimientos', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
+    // antes venia con un LIMIT 100 fijo, sin forma de ver mas alla ni de saber cuantos habia
+    const { limit, offset } = parsearPaginacion(req.query);
     try {
-        const result = await pool.query(
-            `SELECT mi.*, i.nombre AS insumo_nombre, i.unidad_medida, u.nombre AS usuario_nombre,
-                    m.codigo AS maquinaria_codigo
-             FROM movimientos_insumo mi
-             JOIN insumos i ON i.id = mi.insumo_id
-             LEFT JOIN usuarios u ON u.id = mi.usuario_id
-             LEFT JOIN ordenes_trabajo ot ON ot.id = mi.orden_trabajo_id
-             LEFT JOIN maquinarias m ON m.id = ot.maquinaria_id
-             ORDER BY mi.created_at DESC
-             LIMIT 100`
-        );
-        res.json(result.rows);
+        const base = `FROM movimientos_insumo mi
+                      LEFT JOIN insumos i ON i.id = mi.insumo_id
+                      LEFT JOIN usuarios u ON u.id = mi.usuario_id
+                      LEFT JOIN ordenes_trabajo ot ON ot.id = mi.orden_trabajo_id
+                      LEFT JOIN maquinarias m ON m.id = ot.maquinaria_id`;
+        const total = await pool.query(`SELECT COUNT(*)::int AS n ${base}`);
+
+        let sql = `SELECT mi.*, i.nombre AS insumo_nombre, i.unidad_medida, u.nombre AS usuario_nombre,
+                          m.codigo AS maquinaria_codigo
+                   ${base} ORDER BY mi.created_at DESC`;
+        const params = [];
+        if (limit !== null) {
+            params.push(limit, offset);
+            sql += ` LIMIT $1 OFFSET $2`;
+        }
+        const result = await pool.query(sql, params);
+        res.json(envolver(result.rows, total.rows[0].n, { limit, offset }));
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar movimientos de insumos' });

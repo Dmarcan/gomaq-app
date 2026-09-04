@@ -28,7 +28,7 @@ class _AsignacionScreenState extends State<AsignacionScreen> {
       _error = null;
     });
     try {
-      final data = await ApiClient.instance.get('/api/ordenes-trabajo');
+      final data = (await ApiClient.instance.get('/api/ordenes-trabajo'))['items'];
       if (!mounted) return;
       setState(() => _ordenesSinAsignar = (data as List).where((o) => o['mecanico_id'] == null).toList());
     } on ApiException catch (e) {

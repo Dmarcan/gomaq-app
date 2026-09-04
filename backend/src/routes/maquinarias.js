@@ -3,6 +3,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaImagen } = require('../middleware/upload');
 const { supabase, BUCKET_EQUIPOS } = require('../config/supabase');
+const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 
 const router = express.Router();
 
@@ -16,15 +17,60 @@ async function conFotoFirmada(fila) {
 
 // GET /api/maquinarias - listado con estado (HU-02)
 // Permisos (Tabla 6.1): Gerente=Lectura, Administrativo=Lectura/Escritura, Mecanico=Lectura, Cliente=Denegado
+// Acepta busqueda (`q`) y los mismos filtros que ofrece Flota, ademas de limit/offset. Los
+// filtros se resolvian en el panel sobre los ~500 equipos ya descargados; ahora los resuelve
+// Postgres y solo viajan los que se van a mostrar.
 router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
+    const { limit, offset } = parsearPaginacion(req.query);
+    const q = parsearBusqueda(req.query);
+    const { estado, categoria, cliente_id, disponibilidad } = req.query;
+
+    const condiciones = [];
+    const params = [];
+    if (q) {
+        params.push(`%${q}%`);
+        condiciones.push(`(m.codigo ILIKE $${params.length} OR m.tipo ILIKE $${params.length}
+                           OR m.marca ILIKE $${params.length} OR m.modelo ILIKE $${params.length})`);
+    }
+    if (estado) {
+        params.push(estado);
+        condiciones.push(`m.estado = $${params.length}::estado_maquinaria`);
+    }
+    if (categoria) {
+        params.push(categoria);
+        condiciones.push(`m.categoria_equipo = $${params.length}::categoria_equipo`);
+    }
+    if (cliente_id) {
+        params.push(cliente_id);
+        condiciones.push(`m.cliente_id = $${params.length}`);
+    }
+    // "disponible" = sin cliente asignado, que es como lo entiende el resto del sistema
+    if (disponibilidad === 'disponibles') condiciones.push('m.cliente_id IS NULL');
+    if (disponibilidad === 'arrendados') condiciones.push('m.cliente_id IS NOT NULL');
+
+    const where = condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : '';
+
     try {
-        const result = await pool.query(
-            `SELECT m.id, m.codigo, m.tipo, m.estado, m.ubicacion, m.foto_url, m.categoria_equipo, c.nombre AS cliente
-             FROM maquinarias m
-             LEFT JOIN clientes c ON c.id = m.cliente_id
-             ORDER BY m.codigo`
-        );
-        res.json(await Promise.all(result.rows.map(conFotoFirmada)));
+        const total = await pool.query(`SELECT COUNT(*)::int AS n FROM maquinarias m ${where}`, params);
+
+        let sql = `SELECT m.id, m.codigo, m.tipo, m.estado, m.ubicacion, m.foto_url, m.categoria_equipo,
+                          c.nombre AS cliente
+                   FROM maquinarias m
+                   LEFT JOIN clientes c ON c.id = m.cliente_id
+                   ${where}
+                   ORDER BY m.codigo`;
+        const paramsPagina = [...params];
+        if (limit !== null) {
+            paramsPagina.push(limit, offset);
+            sql += ` LIMIT $${paramsPagina.length - 1} OFFSET $${paramsPagina.length}`;
+        }
+        const result = await pool.query(sql, paramsPagina);
+
+        res.json(envolver(
+            await Promise.all(result.rows.map(conFotoFirmada)),
+            total.rows[0].n,
+            { limit, offset }
+        ));
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar maquinarias' });

@@ -306,7 +306,7 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> _pull() async {
-    final data = await ApiClient.instance.get('/api/ordenes-trabajo');
+    final data = (await ApiClient.instance.get('/api/ordenes-trabajo'))['items'];
     final db = await _db;
 
     // OT con tareas aun pendientes o en error no se sobreescriben con la version
@@ -371,7 +371,8 @@ class SyncService extends ChangeNotifier {
   /// Catalogo liviano de la flota, para el selector de "intervine otro equipo". Solo id,
   /// codigo y tipo: son ~500 equipos y no tiene sentido bajar la ficha completa de todos.
   Future<void> _pullMaquinarias() async {
-    final data = await ApiClient.instance.get('/api/maquinarias');
+    // sin `limit` el endpoint devuelve la flota completa, que es lo que necesita el catalogo
+    final data = (await ApiClient.instance.get('/api/maquinarias'))['items'];
     final db = await _db;
     for (final item in (data as List)) {
       await db.insert(

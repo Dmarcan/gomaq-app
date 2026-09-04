@@ -3,6 +3,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { verificarDuenoOrden, contactoCliente } = require('../utils/ordenes');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
+const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 
 const router = express.Router();
 
@@ -68,20 +69,41 @@ router.post('/en-terreno', verifyToken, requireRole('mecanico'), async (req, res
 
 // GET /api/ordenes-trabajo - listar (mecanico solo ve las suyas)
 router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
+    const { limit, offset } = parsearPaginacion(req.query);
+    const q = parsearBusqueda(req.query);
     try {
-        let query = `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre
-                      FROM ordenes_trabajo ot
-                      JOIN maquinarias m ON m.id = ot.maquinaria_id
-                      LEFT JOIN clientes c ON c.id = ot.cliente_id`;
+        const condiciones = [];
         const params = [];
         if (req.user.rol === 'mecanico') {
-            query += ' WHERE ot.mecanico_id = $1';
             params.push(req.user.id);
+            condiciones.push(`ot.mecanico_id = $${params.length}`);
         }
-        query += ' ORDER BY ot.fecha_creacion DESC';
+        if (q) {
+            params.push(`%${q}%`);
+            condiciones.push(`(m.codigo ILIKE $${params.length} OR c.nombre ILIKE $${params.length}
+                               OR ot.motivo ILIKE $${params.length})`);
+        }
+        if (req.query.estado) {
+            params.push(req.query.estado);
+            condiciones.push(`ot.estado = $${params.length}::estado_orden`);
+        }
+        const where = condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : '';
 
-        const result = await pool.query(query, params);
-        res.json(result.rows);
+        const base = `FROM ordenes_trabajo ot
+                      JOIN maquinarias m ON m.id = ot.maquinaria_id
+                      LEFT JOIN clientes c ON c.id = ot.cliente_id
+                      ${where}`;
+        const total = await pool.query(`SELECT COUNT(*)::int AS n ${base}`, params);
+
+        let sql = `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre
+                   ${base} ORDER BY ot.fecha_creacion DESC`;
+        const paramsPagina = [...params];
+        if (limit !== null) {
+            paramsPagina.push(limit, offset);
+            sql += ` LIMIT $${paramsPagina.length - 1} OFFSET $${paramsPagina.length}`;
+        }
+        const result = await pool.query(sql, paramsPagina);
+        res.json(envolver(result.rows, total.rows[0].n, { limit, offset }));
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar ordenes de trabajo' });

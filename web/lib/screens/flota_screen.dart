@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
@@ -29,6 +30,12 @@ class _FlotaScreenState extends State<FlotaScreen> {
   String? _filtroCliente;
   String _orden = 'codigo';
   bool _filtrosExpandido = false;
+  // paginacion en servidor: antes se bajaban los ~500 equipos y se filtraba en el panel
+  static const _porPagina = 50;
+  int _total = 0;
+  bool _hayMas = false;
+  bool _cargandoMas = false;
+  Timer? _debounce;
 
   @override
   void initState() {
@@ -60,6 +67,24 @@ class _FlotaScreenState extends State<FlotaScreen> {
           break;
       }
     });
+    // disponibilidad, estado y categoria los resuelve el servidor: hay que reconsultar.
+    // El de cliente se aplica sobre lo ya cargado, asi que no necesita ida al backend.
+    if (grupo != 'cliente') _cargar();
+  }
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  String _consulta({required int offset}) {
+    final p = <String>['limit=$_porPagina', 'offset=$offset'];
+    if (_busqueda.trim().isNotEmpty) p.add('q=${Uri.encodeQueryComponent(_busqueda.trim())}');
+    if (_filtroEstado != null) p.add('estado=$_filtroEstado');
+    if (_filtroCategoria != null) p.add('categoria=$_filtroCategoria');
+    if (_filtroDisponibilidad != null) p.add('disponibilidad=$_filtroDisponibilidad');
+    return '/api/maquinarias?${p.join('&')}';
   }
 
   Future<void> _cargar() async {
@@ -68,14 +93,44 @@ class _FlotaScreenState extends State<FlotaScreen> {
       _error = null;
     });
     try {
-      final data = await ApiClient.instance.get('/api/maquinarias');
+      final data = await ApiClient.instance.get(_consulta(offset: 0));
       if (!mounted) return;
-      setState(() => _maquinarias = data);
+      setState(() {
+        _maquinarias = data['items'];
+        _total = data['total'] ?? 0;
+        _hayMas = data['hay_mas'] == true;
+      });
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
+  }
+
+  Future<void> _cargarMas() async {
+    if (_cargandoMas || !_hayMas) return;
+    setState(() => _cargandoMas = true);
+    try {
+      final data = await ApiClient.instance.get(_consulta(offset: _maquinarias.length));
+      if (!mounted) return;
+      setState(() {
+        _maquinarias = [..._maquinarias, ...data['items']];
+        _total = data['total'] ?? _total;
+        _hayMas = data['hay_mas'] == true;
+      });
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    } finally {
+      if (mounted) setState(() => _cargandoMas = false);
+    }
+  }
+
+  /// La busqueda va al servidor, asi que se espera a que el usuario deje de escribir
+  /// en vez de disparar una consulta por tecla.
+  void _buscar(String texto) {
+    setState(() => _busqueda = texto);
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 350), _cargar);
   }
 
   Future<void> _abrirDialogoCrear() async {
@@ -217,21 +272,34 @@ class _FlotaScreenState extends State<FlotaScreen> {
       .toList()
     ..sort();
 
+  /// Pie de la lista: cuantos equipos se ven de cuantos hay, y el boton para traer mas.
+  Widget _pieDeLista(int mostrados) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 16),
+      child: Column(
+        children: [
+          Text(
+            'Mostrando $mostrados de $_total equipos',
+            style: const TextStyle(fontSize: 12, color: Colors.black54),
+          ),
+          if (_hayMas) ...[
+            const SizedBox(height: 8),
+            OutlinedButton(
+              onPressed: _cargandoMas ? null : _cargarMas,
+              child: Text(_cargandoMas ? 'Cargando...' : 'Cargar más'),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   List<dynamic> get _maquinariasFiltradas {
-    final q = _busqueda.trim().toLowerCase();
-    final filtradas = _maquinarias.where((m) {
-      if (q.isNotEmpty) {
-        final codigo = (m['codigo'] as String? ?? '').toLowerCase();
-        final tipo = (m['tipo'] as String? ?? '').toLowerCase();
-        if (!codigo.contains(q) && !tipo.contains(q)) return false;
-      }
-      if (_filtroDisponibilidad == 'disponibles' && m['cliente'] != null) return false;
-      if (_filtroDisponibilidad == 'arrendados' && m['cliente'] == null) return false;
-      if (_filtroEstado != null && m['estado'] != _filtroEstado) return false;
-      if (_filtroCategoria != null && m['categoria_equipo'] != _filtroCategoria) return false;
-      if (_filtroCliente != null && m['cliente'] != _filtroCliente) return false;
-      return true;
-    }).toList();
+    // busqueda y filtros los resuelve el servidor; aca solo queda el filtro por cliente
+    // (que se arma con los nombres ya cargados) y el orden elegido en pantalla
+    final filtradas = _maquinarias
+        .where((m) => _filtroCliente == null || m['cliente'] == _filtroCliente)
+        .toList();
 
     filtradas.sort((a, b) {
       switch (_orden) {
@@ -268,7 +336,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
               children: [
                 Expanded(
                   child: TextField(
-                    onChanged: (v) => setState(() => _busqueda = v),
+                    onChanged: _buscar,
                     decoration: const InputDecoration(
                       prefixIcon: Icon(Icons.search),
                       hintText: 'Buscar por código o tipo...',
@@ -360,8 +428,10 @@ class _FlotaScreenState extends State<FlotaScreen> {
                           ? const Center(child: Text('Sin resultados'))
                           : ListView.builder(
                               padding: const EdgeInsets.all(16),
-                              itemCount: maquinarias.length,
+                              // +1 por el pie: "cargar mas" o el conteo de lo que se muestra
+                              itemCount: maquinarias.length + 1,
                               itemBuilder: (context, i) {
+                                if (i == maquinarias.length) return _pieDeLista(maquinarias.length);
                                 final m = maquinarias[i];
                                 return Card(
                                   child: ListTile(

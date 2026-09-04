@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../theme/gomaq_theme.dart';
@@ -19,6 +20,56 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
   bool _cargando = true;
   String? _error;
   int _meses = 12;
+  // la tabla armaba 500 filas de una vez: ahora llegan de a tramos desde el servidor
+  static const _porPagina = 50;
+  int _total = 0;
+  bool _hayMas = false;
+  bool _cargandoMas = false;
+  String _busqueda = '';
+  Map<String, dynamic> _resumen = const {};
+  Timer? _debounce;
+
+  @override
+  void dispose() {
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  String _consulta({required int offset}) {
+    final hasta = DateTime.now();
+    final desde = DateTime(hasta.year, hasta.month - _meses, hasta.day);
+    final p = <String>[
+      'desde=${desde.toIso8601String()}',
+      'hasta=${hasta.toIso8601String()}',
+      'limit=$_porPagina',
+      'offset=$offset',
+    ];
+    if (_busqueda.trim().isNotEmpty) p.add('q=${Uri.encodeQueryComponent(_busqueda.trim())}');
+    return '/api/rentabilidad?${p.join('&')}';
+  }
+
+  void _buscar(String texto) {
+    setState(() => _busqueda = texto);
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 350), _cargar);
+  }
+
+  Future<void> _cargarMas() async {
+    if (_cargandoMas || !_hayMas) return;
+    setState(() => _cargandoMas = true);
+    try {
+      final data = await ApiClient.instance.get(_consulta(offset: _equipos.length));
+      if (!mounted) return;
+      setState(() {
+        _equipos = [..._equipos, ...data['items']];
+        _hayMas = data['hay_mas'] == true;
+      });
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    } finally {
+      if (mounted) setState(() => _cargandoMas = false);
+    }
+  }
 
   @override
   void initState() {
@@ -32,13 +83,14 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
       _error = null;
     });
     try {
-      final hasta = DateTime.now();
-      final desde = DateTime(hasta.year, hasta.month - _meses, hasta.day);
-      final data = await ApiClient.instance.get(
-        '/api/rentabilidad?desde=${desde.toIso8601String()}&hasta=${hasta.toIso8601String()}',
-      );
+      final data = await ApiClient.instance.get(_consulta(offset: 0));
       if (!mounted) return;
-      setState(() => _equipos = data['equipos'] ?? []);
+      setState(() {
+        _equipos = data['items'] ?? [];
+        _total = data['total'] ?? 0;
+        _hayMas = data['hay_mas'] == true;
+        _resumen = Map<String, dynamic>.from(data['resumen'] ?? {});
+      });
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
     } finally {
@@ -72,8 +124,9 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
       );
     }
 
-    final aPerdida = _equipos.where((e) => e['sale_a_perdida'] == true).length;
-    final sinPrecio = _equipos.fold<int>(0, (t, e) => t + ((e['lineas_sin_precio'] ?? 0) as int));
+    // del servidor y sobre toda la flota: contar solo la pagina cargada enganaria
+    final aPerdida = (_resumen['a_perdida'] ?? 0) as int;
+    final sinPrecio = (_resumen['lineas_sin_precio'] ?? 0) as int;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -82,6 +135,16 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
         Text(
           'Gasto en repuestos contra lo facturado. El gasto cuenta todas las líneas, se hayan cobrado o no.',
           style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          onChanged: _buscar,
+          decoration: const InputDecoration(
+            prefixIcon: Icon(Icons.search),
+            hintText: 'Buscar por código o tipo...',
+            border: OutlineInputBorder(),
+            isDense: true,
+          ),
         ),
         const SizedBox(height: 12),
         Row(
@@ -122,7 +185,9 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
           child: _equipos.isEmpty
               ? const Center(child: Text('Sin equipos registrados'))
               : SingleChildScrollView(
-                  child: DataTable(
+                  child: Column(
+                    children: [
+                      DataTable(
                     columns: const [
                       DataColumn(label: Text('Equipo')),
                       DataColumn(label: Text('Tipo')),
@@ -154,6 +219,24 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
                                 : '${(e['margen_porcentaje'] as num).toStringAsFixed(0)}%')),
                           ],
                         ),
+                    ],
+                      ),
+                      Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 16),
+                        child: Column(
+                          children: [
+                            Text('Mostrando ${_equipos.length} de $_total equipos',
+                                style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                            if (_hayMas) ...[
+                              const SizedBox(height: 8),
+                              OutlinedButton(
+                                onPressed: _cargandoMas ? null : _cargarMas,
+                                child: Text(_cargandoMas ? 'Cargando...' : 'Cargar más'),
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 ),

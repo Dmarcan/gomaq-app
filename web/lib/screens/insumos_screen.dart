@@ -37,7 +37,7 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
     });
     try {
       final catalogo = await ApiClient.instance.get('/api/insumos');
-      final movimientos = await ApiClient.instance.get('/api/insumos/movimientos');
+      final movimientos = (await ApiClient.instance.get('/api/insumos/movimientos'))['items'];
       if (!mounted) return;
       setState(() {
         _catalogo = catalogo;

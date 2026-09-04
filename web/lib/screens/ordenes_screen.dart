@@ -29,7 +29,7 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
       _error = null;
     });
     try {
-      final data = await ApiClient.instance.get('/api/ordenes-trabajo');
+      final data = (await ApiClient.instance.get('/api/ordenes-trabajo'))['items'];
       if (!mounted) return;
       setState(() => _ordenes = data);
     } on ApiException catch (e) {
@@ -43,7 +43,7 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
     List<dynamic> maquinarias = [];
     List<dynamic> clientes = [];
     try {
-      maquinarias = await ApiClient.instance.get('/api/maquinarias');
+      maquinarias = (await ApiClient.instance.get('/api/maquinarias'))['items'];
       clientes = await ApiClient.instance.get('/api/clientes');
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
