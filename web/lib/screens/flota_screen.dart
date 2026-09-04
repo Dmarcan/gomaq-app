@@ -45,7 +45,10 @@ class _FlotaScreenState extends State<FlotaScreen> {
     _filtroDisponibilidad = widget.filtroInicial?['disponibilidad'];
     _filtroEstado = widget.filtroInicial?['estado'];
     _filtrosExpandido = widget.filtroInicial != null;
-    WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _cargar();
+      _cargarClientes();
+    });
   }
 
   int get _filtrosActivos =>
@@ -69,9 +72,8 @@ class _FlotaScreenState extends State<FlotaScreen> {
           break;
       }
     });
-    // disponibilidad, estado y categoria los resuelve el servidor: hay que reconsultar.
-    // El de cliente se aplica sobre lo ya cargado, asi que no necesita ida al backend.
-    if (grupo != 'cliente') _cargar();
+    // todos los filtros los resuelve el servidor
+    _cargar();
   }
 
   @override
@@ -86,6 +88,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
     if (_filtroEstado != null) p.add('estado=$_filtroEstado');
     if (_filtroCategoria != null) p.add('categoria=$_filtroCategoria');
     if (_filtroDisponibilidad != null) p.add('disponibilidad=$_filtroDisponibilidad');
+    if (_filtroCliente != null) p.add('cliente_id=$_filtroCliente');
     return '/api/maquinarias?${p.join('&')}';
   }
 
@@ -267,12 +270,18 @@ class _FlotaScreenState extends State<FlotaScreen> {
     }
   }
 
-  List<String> get _clientesDisponibles => _maquinarias
-      .map((m) => m['cliente'] as String?)
-      .whereType<String>()
-      .toSet()
-      .toList()
-    ..sort();
+  /// Clientes para el filtro. Se piden aparte y NO se derivan de los equipos cargados:
+  /// desde que la lista pagina, derivarlos solo mostraria los clientes de la primera pagina.
+  List<dynamic> _clientes = [];
+
+  Future<void> _cargarClientes() async {
+    try {
+      final data = await ApiClient.instance.get('/api/clientes');
+      if (mounted) setState(() => _clientes = data);
+    } on ApiException catch (_) {
+      // el filtro por cliente queda sin opciones, pero la flota igual se ve
+    }
+  }
 
   /// Pie de la lista: cuantos equipos se ven de cuantos hay, y el boton para traer mas.
   Widget _pieDeLista(int mostrados) {
@@ -297,11 +306,8 @@ class _FlotaScreenState extends State<FlotaScreen> {
   }
 
   List<dynamic> get _maquinariasFiltradas {
-    // busqueda y filtros los resuelve el servidor; aca solo queda el filtro por cliente
-    // (que se arma con los nombres ya cargados) y el orden elegido en pantalla
-    final filtradas = _maquinarias
-        .where((m) => _filtroCliente == null || m['cliente'] == _filtroCliente)
-        .toList();
+    // busqueda y filtros los resuelve el servidor; aca solo queda el orden de pantalla
+    final filtradas = [..._maquinarias];
 
     filtradas.sort((a, b) {
       switch (_orden) {
@@ -408,11 +414,11 @@ class _FlotaScreenState extends State<FlotaScreen> {
                           selected: _filtroCategoria == c.valor,
                           onSelected: (_) => _alternarFiltro('categoria', _filtroCategoria, c.valor),
                         ),
-                      for (final cliente in _clientesDisponibles)
+                      for (final c in _clientes)
                         FilterChip(
-                          label: Text(cliente),
-                          selected: _filtroCliente == cliente,
-                          onSelected: (_) => _alternarFiltro('cliente', _filtroCliente, cliente),
+                          label: Text(c['nombre']),
+                          selected: _filtroCliente == '${c['id']}',
+                          onSelected: (_) => _alternarFiltro('cliente', _filtroCliente, '${c['id']}'),
                         ),
                     ],
                   ),

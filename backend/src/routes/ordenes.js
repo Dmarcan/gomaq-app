@@ -21,7 +21,8 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
         return res.status(400).json({ error: 'maquinaria_id es requerido' });
     }
     try {
-        // facturable nace en false: lo decide el mecanico al finalizar la orden, no aca
+        // facturable nace en false y ya no lo decide nadie a mano: se deriva de las lineas
+        // de repuesto de la OT (ver utils/facturableOt.js), como en el talonario de papel
         const result = await pool.query(
             `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, origen, motivo)
              VALUES ($1, $2, COALESCE($3::origen_orden, 'directo'), $4)

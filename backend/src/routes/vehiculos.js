@@ -142,17 +142,23 @@ router.patch('/:id', verifyToken, requireRole('administrativo', 'gerente'), asyn
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
+        // `usuario_id` NO puede ir por COALESCE: el panel ofrece "Sin asignar" y mandar null
+        // con COALESCE conservaba el valor anterior, asi que desasignar un furgon no hacia
+        // nada y no avisaba. Se distingue "no mandes el campo" (undefined) de "dejalo vacio"
+        // (null), que es justo lo que COALESCE no puede diferenciar.
+        const desasignar = usuario_id === null;
         const result = await client.query(
             `UPDATE vehiculos
              SET marca = COALESCE($1, marca), modelo = COALESCE($2, modelo),
                  anio = COALESCE($3, anio), tipo = COALESCE($4, tipo),
                  kilometraje = COALESCE($5, kilometraje),
-                 usuario_id = COALESCE($6, usuario_id),
-                 activo = COALESCE($7, activo)
-             WHERE id = $8 RETURNING *`,
+                 usuario_id = CASE WHEN $6 THEN NULL ELSE COALESCE($7, usuario_id) END,
+                 activo = COALESCE($8, activo)
+             WHERE id = $9 RETURNING *`,
             [
                 marca || null, modelo || null, anio || null, tipo || null,
                 kilometraje === undefined || kilometraje === '' ? null : kilometraje,
+                desasignar,
                 usuario_id || null,
                 activo === undefined ? null : Boolean(activo),
                 req.params.id,
