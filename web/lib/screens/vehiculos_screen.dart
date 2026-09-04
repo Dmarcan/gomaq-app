@@ -169,7 +169,8 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
         Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
-            const Text('Vehículos', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            // el titulo lo pone el marco del panel (admin_dashboard_screen)
+            const SizedBox.shrink(),
             FilledButton.icon(
               onPressed: () => _formulario(),
               icon: const Icon(Icons.add),

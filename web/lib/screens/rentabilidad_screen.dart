@@ -122,7 +122,7 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Text('Costo por equipo', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+        // el titulo lo pone el marco del panel (admin_dashboard_screen)
         Text(
           'Gasto en repuestos contra lo facturado. El gasto cuenta todas las líneas, se hayan cobrado o no.',
           style: TextStyle(fontSize: 13, color: Colors.grey[700]),

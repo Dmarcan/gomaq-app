@@ -93,10 +93,8 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
-          padding: EdgeInsets.only(bottom: 4),
-          child: Text('Horómetro y Mantención', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-        ),
+        // el titulo lo pone el marco del panel (admin_dashboard_screen): repetirlo aca
+        // dejaba dos encabezados uno encima del otro
         Text(
           'La mantención preventiva se calcula con las horas de uso desde la última mantención.',
           style: TextStyle(fontSize: 13, color: Colors.grey[700]),
