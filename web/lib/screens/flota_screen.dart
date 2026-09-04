@@ -11,7 +11,9 @@ import 'maquinaria_perfil_screen.dart';
 class FlotaScreen extends StatefulWidget {
   /// Filtro inicial recibido al llegar desde un número tocable del Dashboard,
   /// ej. {'disponibilidad': 'arrendados'} o {'estado': 'en_mantencion'}.
-  final Map<String, dynamic>? filtroInicial;
+  /// Filtros que llegan por la URL (?estado=...&disponibilidad=...), para que el estado
+  /// "Flota filtrada" sea compartible y sobreviva a un F5.
+  final Map<String, String>? filtroInicial;
   const FlotaScreen({super.key, this.filtroInicial});
 
   @override

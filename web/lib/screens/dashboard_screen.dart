@@ -4,7 +4,9 @@ import '../services/api_client.dart';
 import '../theme/gomaq_theme.dart';
 
 class DashboardScreen extends StatefulWidget {
-  final void Function(int seccion, {Map<String, dynamic>? filtro}) onNavegar;
+  /// Navega a una ruta del panel. El filtro viaja como query en la URL, asi que el
+  /// estado "Flota filtrada por arrendados" tambien se puede compartir y sobrevive a un F5.
+  final void Function(String ruta, {Map<String, String>? filtro}) onNavegar;
   const DashboardScreen({super.key, required this.onNavegar});
 
   @override
@@ -194,7 +196,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             children: [
               for (final d in datos)
                 InkWell(
-                  onTap: () => widget.onNavegar(1, filtro: {'estado': d.$1}),
+                  onTap: () => widget.onNavegar('/flota', filtro: {'estado': d.$1}),
                   borderRadius: BorderRadius.circular(6),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 4),
@@ -408,14 +410,14 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 '${flota['arrendados']}',
                 'Equipos arrendados',
                 color: GomaqColors.estadoAdvertencia,
-                onTap: () => widget.onNavegar(1, filtro: {'disponibilidad': 'arrendados'}),
+                onTap: () => widget.onNavegar('/flota', filtro: {'disponibilidad': 'arrendados'}),
               ),
               const SizedBox(width: 16),
               _tarjetaNumero(
                 '${flota['disponibles']}',
                 'Equipos disponibles',
                 color: GomaqColors.estadoPositivo,
-                onTap: () => widget.onNavegar(1, filtro: {'disponibilidad': 'disponibles'}),
+                onTap: () => widget.onNavegar('/flota', filtro: {'disponibilidad': 'disponibles'}),
               ),
             ],
           ),
@@ -446,11 +448,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 8),
           Row(
             children: [
-              _tarjetaAtajo('${atajos['pendientes_facturar']}', 'Equipos pendientes de facturar', () => widget.onNavegar(3)),
+              _tarjetaAtajo('${atajos['pendientes_facturar']}', 'Equipos pendientes de facturar', () => widget.onNavegar('/facturacion')),
               const SizedBox(width: 16),
-              _tarjetaAtajo('${atajos['solicitudes_pendientes']}', 'Asistencias pendientes', () => widget.onNavegar(7)),
+              _tarjetaAtajo('${atajos['solicitudes_pendientes']}', 'Asistencias pendientes', () => widget.onNavegar('/asistencias')),
               const SizedBox(width: 16),
-              _tarjetaAtajo('${atajos['notificaciones_error']}', 'Notificaciones en error', () => widget.onNavegar(8)),
+              _tarjetaAtajo('${atajos['notificaciones_error']}', 'Notificaciones en error', () => widget.onNavegar('/notificaciones')),
             ],
           ),
           const SizedBox(height: 24),
@@ -467,13 +469,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
           Row(
             children: [
               FilledButton.icon(
-                onPressed: () => widget.onNavegar(5),
+                onPressed: () => widget.onNavegar('/ordenes'),
                 icon: const Icon(Icons.add),
                 label: const Text('Crear Orden de Trabajo'),
               ),
               const SizedBox(width: 12),
               OutlinedButton.icon(
-                onPressed: () => widget.onNavegar(1),
+                onPressed: () => widget.onNavegar('/flota'),
                 icon: const Icon(Icons.arrow_forward),
                 label: const Text('Ver Detalle de Equipos'),
               ),

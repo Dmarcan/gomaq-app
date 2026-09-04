@@ -1,76 +1,45 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
+import '../router.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
-import 'dashboard_screen.dart';
-import 'flota_screen.dart';
-import 'guias_screen.dart';
-import 'facturacion_screen.dart';
-import 'asignacion_screen.dart';
-import 'clientes_screen.dart';
-import 'ordenes_screen.dart';
-import 'solicitudes_screen.dart';
-import 'notificaciones_screen.dart';
-import 'insumos_screen.dart';
-import 'horometro_screen.dart';
-import 'rentabilidad_screen.dart';
-import 'vehiculos_screen.dart';
 
+/// Marco del panel: barra lateral fija y el contenido de la seccion activa.
+///
+/// Antes era un StatefulWidget con `int _seccion`, asi que la URL nunca cambiaba: F5 volvia
+/// al Dashboard y no habia enlaces profundos. Ahora es el shell de go_router y la seccion la
+/// determina la ruta, con lo que el boton atras del navegador y compartir un enlace funcionan.
 class AdminDashboardScreen extends StatefulWidget {
-  const AdminDashboardScreen({super.key});
+  final String rutaActual;
+  final Widget child;
+  const AdminDashboardScreen({super.key, required this.rutaActual, required this.child});
 
   @override
   State<AdminDashboardScreen> createState() => _AdminDashboardScreenState();
 }
 
 class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
-  int _seccion = 0;
-  Map<String, dynamic>? _filtroFlota;
-
-  // cambiar esta key remonta la pantalla activa: su initState vuelve a cargar
-  // los datos - refresh universal sin depender de pull-to-refresh (inusable con mouse)
+  // cambiar esta key remonta la pantalla activa: su initState vuelve a cargar los datos,
+  // que es un refresh universal sin depender de pull-to-refresh (inusable con mouse)
   Key _refreshKey = UniqueKey();
 
-  static const _items = [
-    (icon: Icons.dashboard, label: 'Dashboard'),
-    (icon: Icons.local_shipping, label: 'Flota'),
-    (icon: Icons.description, label: 'Guías'),
-    (icon: Icons.receipt_long, label: 'Facturación'),
-    (icon: Icons.build, label: 'Asignación'),
-    (icon: Icons.assignment, label: 'Ordenes de Trabajo'),
-    (icon: Icons.people, label: 'Clientes'),
-    (icon: Icons.support_agent, label: 'Asistencias'),
-    (icon: Icons.notifications, label: 'Notificaciones'),
-    (icon: Icons.inventory_2, label: 'Insumos'),
-    (icon: Icons.timer, label: 'Horómetro'),
-    (icon: Icons.trending_up, label: 'Costo por equipo'),
-    (icon: Icons.local_shipping, label: 'Vehículos'),
-  ];
+  ItemMenu get _itemActivo => itemsMenu.firstWhere(
+        (i) => i.ruta == widget.rutaActual,
+        orElse: () => itemsMenu.first,
+      );
 
-  List<Widget> get _pantallas => [
-        DashboardScreen(
-          onNavegar: (i, {filtro}) => setState(() {
-            _seccion = i;
-            _filtroFlota = filtro;
-          }),
-        ),
-        FlotaScreen(key: ValueKey(_filtroFlota?.toString() ?? 'sin-filtro'), filtroInicial: _filtroFlota),
-        const GuiasScreen(),
-        const FacturacionScreen(),
-        const AsignacionScreen(),
-        const OrdenesScreen(),
-        const ClientesScreen(),
-        const SolicitudesScreen(),
-        const NotificacionesScreen(),
-        const InsumosScreen(),
-        const HorometroScreen(),
-        const RentabilidadScreen(),
-        const VehiculosScreen(),
-      ];
+  @override
+  void didUpdateWidget(AdminDashboardScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // al cambiar de seccion la key vuelve a ser unica, para que la nueva pantalla cargue
+    if (oldWidget.rutaActual != widget.rutaActual) _refreshKey = UniqueKey();
+  }
 
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
+
     return Scaffold(
       body: Row(
         children: [
@@ -94,18 +63,14 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         child: const Icon(Icons.business, color: Colors.white, size: 20),
                       ),
                       const SizedBox(width: 10),
-                      const Text('GOMAQ Panel', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                      const Text('GOMAQ Panel',
+                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
                     ],
                   ),
                 ),
                 const Divider(color: Colors.white24, height: 1),
                 const SizedBox(height: 12),
-                Expanded(
-                  child: ListView(
-                    padding: EdgeInsets.zero,
-                    children: [for (var i = 0; i < _items.length; i++) _itemMenu(i)],
-                  ),
-                ),
+                Expanded(child: ListView(padding: EdgeInsets.zero, children: _menuAgrupado())),
                 const Divider(color: Colors.white24, height: 1),
                 Padding(
                   padding: const EdgeInsets.all(16),
@@ -115,13 +80,15 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text(auth.nombre ?? '', style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                            Text(auth.nombre ?? '',
+                                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
                             Text(auth.rol ?? '', style: const TextStyle(color: Colors.white54, fontSize: 11)),
                           ],
                         ),
                       ),
                       IconButton(
                         icon: const Icon(Icons.logout, color: Colors.white70, size: 18),
+                        tooltip: 'Cerrar sesión',
                         onPressed: () => auth.logout(),
                       ),
                     ],
@@ -139,7 +106,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                   child: Row(
                     children: [
                       Expanded(
-                        child: Text(_items[_seccion].label, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+                        child: Text(_itemActivo.etiqueta,
+                            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
                       ),
                       IconButton(
                         icon: const Icon(Icons.refresh),
@@ -149,7 +117,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     ],
                   ),
                 ),
-                Expanded(child: KeyedSubtree(key: _refreshKey, child: _pantallas[_seccion])),
+                Expanded(child: KeyedSubtree(key: _refreshKey, child: widget.child)),
               ],
             ),
           ),
@@ -158,8 +126,29 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  Widget _itemMenu(int i) {
-    final activo = i == _seccion;
+  /// El menu con encabezado por area. Eran 13 items planos, que es mas de lo que alguien
+  /// escanea de una mirada.
+  List<Widget> _menuAgrupado() {
+    final widgets = <Widget>[];
+    String? grupoAnterior;
+    for (final item in itemsMenu) {
+      if (item.grupo != grupoAnterior) {
+        widgets.add(Padding(
+          padding: EdgeInsets.fromLTRB(24, grupoAnterior == null ? 4 : 18, 24, 6),
+          child: Text(
+            item.grupo.toUpperCase(),
+            style: const TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1),
+          ),
+        ));
+        grupoAnterior = item.grupo;
+      }
+      widgets.add(_itemMenu(item));
+    }
+    return widgets;
+  }
+
+  Widget _itemMenu(ItemMenu item) {
+    final activo = item.ruta == widget.rutaActual;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       child: Material(
@@ -167,19 +156,18 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         borderRadius: BorderRadius.circular(8),
         child: InkWell(
           borderRadius: BorderRadius.circular(8),
-          onTap: () => setState(() {
-            _seccion = i;
-            _filtroFlota = null;
-          }),
+          onTap: () => context.go(item.ruta),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             child: Row(
               children: [
-                Icon(_items[i].icon, color: activo ? GomaqColors.primario : Colors.white70, size: 20),
+                Icon(item.icono, color: activo ? GomaqColors.primario : Colors.white70, size: 20),
                 const SizedBox(width: 12),
-                Text(
-                  _items[i].label,
-                  style: TextStyle(color: activo ? Colors.white : Colors.white70, fontSize: 13),
+                Expanded(
+                  child: Text(
+                    item.etiqueta,
+                    style: TextStyle(color: activo ? Colors.white : Colors.white70, fontSize: 13),
+                  ),
                 ),
               ],
             ),

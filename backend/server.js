@@ -48,9 +48,34 @@ const app = express();
 // x-powered-by anuncia el stack a cualquiera que mire las cabeceras
 app.disable('x-powered-by');
 
-// Cabeceras de seguridad. crossOriginResourcePolicy se relaja porque el panel carga imagenes
-// firmadas de Supabase, que es otro origen.
-app.use(helmet({ crossOriginResourcePolicy: { policy: 'cross-origin' } }));
+// Cabeceras de seguridad.
+//
+// El CSP hay que declararlo a mano: el de helmet por defecto es `default-src 'self'`, que deja
+// el panel en pantalla negra porque Flutter Web carga CanvasKit y las fuentes desde gstatic.
+// Se abre lo justo para eso y para las URL firmadas de Supabase, no mas.
+app.use(helmet({
+    // el panel muestra imagenes firmadas de Supabase, que es otro origen
+    crossOriginResourcePolicy: { policy: 'cross-origin' },
+    contentSecurityPolicy: {
+        directives: {
+            defaultSrc: ["'self'"],
+            // wasm-unsafe-eval: Flutter Web compila a WebAssembly
+            scriptSrc: ["'self'", "'wasm-unsafe-eval'", 'https://www.gstatic.com'],
+            styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
+            fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
+            imgSrc: ["'self'", 'data:', 'blob:', 'https://*.supabase.co'],
+            connectSrc: ["'self'", 'https://*.supabase.co', 'https://fonts.gstatic.com', 'https://www.gstatic.com'],
+            workerSrc: ["'self'", 'blob:'],
+            objectSrc: ["'none'"],
+            frameAncestors: ["'none'"],
+            // helmet la activa por defecto, pero hoy el backend sirve HTTP plano: por el
+            // tunel de Cloudflare llega como HTTPS y no molesta, pero a alguien que abra el
+            // panel directo en http://192.168.1.29:3000 le romperia todas las llamadas.
+            // Se reactiva cuando el proyecto tenga HTTPS propio (pendiente del README).
+            upgradeInsecureRequests: null,
+        },
+    },
+}));
 
 // CORS acotado: el panel se sirve desde este mismo backend y la app movil es nativa (no aplica
 // CORS), asi que en la practica nadie necesita un origen cruzado. CORS_ORIGENES permite

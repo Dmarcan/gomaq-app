@@ -1,0 +1,128 @@
+import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
+import 'services/auth_service.dart';
+import 'screens/login_screen.dart';
+import 'screens/admin_dashboard_screen.dart';
+import 'screens/cliente_portal_screen.dart';
+import 'screens/rol_no_soportado_screen.dart';
+import 'screens/dashboard_screen.dart';
+import 'screens/flota_screen.dart';
+import 'screens/guias_screen.dart';
+import 'screens/facturacion_screen.dart';
+import 'screens/asignacion_screen.dart';
+import 'screens/clientes_screen.dart';
+import 'screens/ordenes_screen.dart';
+import 'screens/solicitudes_screen.dart';
+import 'screens/notificaciones_screen.dart';
+import 'screens/insumos_screen.dart';
+import 'screens/horometro_screen.dart';
+import 'screens/rentabilidad_screen.dart';
+import 'screens/vehiculos_screen.dart';
+
+/// Rutas del panel.
+///
+/// Antes la navegacion era un `int _seccion` dentro del dashboard: la URL nunca cambiaba, asi
+/// que F5 siempre volvia al inicio, el boton atras del navegador salia del panel y no se podia
+/// compartir el enlace de una seccion. Era el punto 10 del "Que falta" del README.
+///
+/// Las secciones del panel viven dentro de un ShellRoute para que la barra lateral no se
+/// reconstruya al cambiar de una a otra.
+
+/// Una seccion del menu lateral, agrupada por area.
+typedef ItemMenu = ({String ruta, IconData icono, String etiqueta, String grupo});
+
+/// El menu eran 13 items planos. Pasado el septimo la gente deja de escanear y empieza a
+/// buscar, asi que se agrupan por area de trabajo.
+const List<ItemMenu> itemsMenu = [
+  (ruta: '/', icono: Icons.dashboard, etiqueta: 'Dashboard', grupo: 'Operación'),
+  (ruta: '/flota', icono: Icons.local_shipping, etiqueta: 'Flota', grupo: 'Operación'),
+  (ruta: '/ordenes', icono: Icons.assignment, etiqueta: 'Órdenes de Trabajo', grupo: 'Operación'),
+  (ruta: '/asignacion', icono: Icons.build, etiqueta: 'Asignación', grupo: 'Operación'),
+  (ruta: '/asistencias', icono: Icons.support_agent, etiqueta: 'Asistencias', grupo: 'Operación'),
+
+  (ruta: '/insumos', icono: Icons.inventory_2, etiqueta: 'Insumos', grupo: 'Inventario'),
+  (ruta: '/horometro', icono: Icons.timer, etiqueta: 'Horómetro', grupo: 'Inventario'),
+  (ruta: '/vehiculos', icono: Icons.local_shipping_outlined, etiqueta: 'Vehículos', grupo: 'Inventario'),
+
+  (ruta: '/guias', icono: Icons.description, etiqueta: 'Guías', grupo: 'Comercial'),
+  (ruta: '/facturacion', icono: Icons.receipt_long, etiqueta: 'Facturación', grupo: 'Comercial'),
+  (ruta: '/costos', icono: Icons.trending_up, etiqueta: 'Costo por equipo', grupo: 'Comercial'),
+  (ruta: '/clientes', icono: Icons.people, etiqueta: 'Clientes', grupo: 'Comercial'),
+
+  (ruta: '/notificaciones', icono: Icons.notifications, etiqueta: 'Notificaciones', grupo: 'Administración'),
+];
+
+GoRouter construirRouter(AuthService auth) {
+  return GoRouter(
+    // reevalua el redirect cuando cambia la sesion (login, logout, token vencido)
+    refreshListenable: auth,
+    initialLocation: '/',
+    redirect: (context, estado) {
+      // mientras se restaura la sesion guardada no se decide nada, o se mandaria al login
+      // a alguien que si tiene sesion valida
+      if (auth.verificandoSesion) return null;
+
+      final yendoALogin = estado.matchedLocation == '/login';
+      if (!auth.autenticado) return yendoALogin ? null : '/login';
+
+      // enrutado por rol: solo los roles con interfaz web entran a sus pantallas;
+      // al mecanico se le explica en vez de mostrarle un panel que no le sirve
+      final destino = auth.esCliente
+          ? '/portal'
+          : (auth.esAdministrativo || auth.esGerente)
+              ? null // el panel completo
+              : '/rol-no-soportado';
+
+      if (destino != null && estado.matchedLocation != destino) return destino;
+      if (destino == null && (yendoALogin || estado.matchedLocation == '/portal')) return '/';
+      return null;
+    },
+    routes: [
+      GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
+      GoRoute(path: '/portal', builder: (_, _) => const ClientePortalScreen()),
+      GoRoute(path: '/rol-no-soportado', builder: (_, _) => const RolNoSoportadoScreen()),
+
+      // el shell mantiene la barra lateral montada entre secciones
+      ShellRoute(
+        builder: (context, estado, hijo) => AdminDashboardScreen(rutaActual: estado.uri.path, child: hijo),
+        routes: [
+          GoRoute(
+            path: '/',
+            builder: (context, estado) => DashboardScreen(
+              // el dashboard navega a Flota ya filtrada; el filtro viaja en la URL, asi que
+              // ese estado tambien se puede compartir y sobrevive a un F5
+              onNavegar: (ruta, {Map<String, String>? filtro}) {
+                final query = (filtro == null || filtro.isEmpty)
+                    ? ''
+                    : '?${filtro.entries.map((e) => '${e.key}=${Uri.encodeQueryComponent(e.value)}').join('&')}';
+                context.go('$ruta$query');
+              },
+            ),
+          ),
+          GoRoute(
+            path: '/flota',
+            builder: (context, estado) {
+              final p = estado.uri.queryParameters;
+              return FlotaScreen(
+                // la key fuerza recargar cuando cambia el filtro que llega por la URL
+                key: ValueKey(estado.uri.query),
+                filtroInicial: p.isEmpty ? null : {...p},
+              );
+            },
+          ),
+          GoRoute(path: '/ordenes', builder: (_, _) => const OrdenesScreen()),
+          GoRoute(path: '/asignacion', builder: (_, _) => const AsignacionScreen()),
+          GoRoute(path: '/asistencias', builder: (_, _) => const SolicitudesScreen()),
+          GoRoute(path: '/insumos', builder: (_, _) => const InsumosScreen()),
+          GoRoute(path: '/horometro', builder: (_, _) => const HorometroScreen()),
+          GoRoute(path: '/vehiculos', builder: (_, _) => const VehiculosScreen()),
+          GoRoute(path: '/guias', builder: (_, _) => const GuiasScreen()),
+          GoRoute(path: '/facturacion', builder: (_, _) => const FacturacionScreen()),
+          GoRoute(path: '/costos', builder: (_, _) => const RentabilidadScreen()),
+          GoRoute(path: '/clientes', builder: (_, _) => const ClientesScreen()),
+          GoRoute(path: '/notificaciones', builder: (_, _) => const NotificacionesScreen()),
+        ],
+      ),
+    ],
+  );
+}

@@ -1,13 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:provider/provider.dart';
+import 'router.dart';
 import 'services/auth_service.dart';
-import 'screens/login_screen.dart';
-import 'screens/admin_dashboard_screen.dart';
-import 'screens/cliente_portal_screen.dart';
-import 'screens/rol_no_soportado_screen.dart';
 import 'theme/gomaq_theme.dart';
 
 void main() {
+  // URLs limpias, sin el "#" de la estrategia por hash. El backend ya devuelve index.html
+  // para cualquier ruta que no sea /api (el fallback de SPA en server.js), que es justo lo
+  // que esta estrategia necesita para que un F5 en /flota no termine en un 404.
+  usePathUrlStrategy();
   runApp(const GomaqWebApp());
 }
 
@@ -18,31 +20,34 @@ class GomaqWebApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return ChangeNotifierProvider(
       create: (_) => AuthService()..restaurarSesion(),
-      child: MaterialApp(
-        title: 'GOMAQ - Panel de Gestion',
-        theme: construirTemaGomaq(),
-        home: const _Raiz(),
+      // el router se arma con el AuthService ya creado, para que su redirect pueda
+      // reaccionar al login y al cierre de sesion
+      child: Consumer<AuthService>(
+        builder: (context, auth, _) => _AppConRouter(auth: auth),
       ),
     );
   }
 }
 
-class _Raiz extends StatelessWidget {
-  const _Raiz();
+/// Mantiene una sola instancia del router: rearmarlo en cada notificacion de AuthService
+/// perderia la pila de navegacion en cada cambio de estado.
+class _AppConRouter extends StatefulWidget {
+  final AuthService auth;
+  const _AppConRouter({required this.auth});
+
+  @override
+  State<_AppConRouter> createState() => _AppConRouterState();
+}
+
+class _AppConRouterState extends State<_AppConRouter> {
+  late final _router = construirRouter(widget.auth);
 
   @override
   Widget build(BuildContext context) {
-    final auth = context.watch<AuthService>();
-    if (auth.verificandoSesion) {
-      return const Scaffold(body: Center(child: CircularProgressIndicator()));
-    }
-    if (!auth.autenticado) {
-      return const LoginScreen();
-    }
-    // enrutado explicito por rol: solo los roles con interfaz web entran a sus
-    // pantallas; el resto (mecanico) recibe una explicacion en vez de un panel roto
-    if (auth.esCliente) return const ClientePortalScreen();
-    if (auth.esAdministrativo || auth.esGerente) return const AdminDashboardScreen();
-    return const RolNoSoportadoScreen();
+    return MaterialApp.router(
+      title: 'GOMAQ - Panel de Gestión',
+      theme: construirTemaGomaq(),
+      routerConfig: _router,
+    );
   }
 }
