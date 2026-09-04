@@ -166,21 +166,24 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
+        // el titulo lo pone el marco del panel (admin_dashboard_screen): aca va la bajada
+        // a la izquierda y la accion a la derecha, en la misma linea
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
-            // el titulo lo pone el marco del panel (admin_dashboard_screen)
-            const SizedBox.shrink(),
+            Expanded(
+              child: Text(
+                'Cada mecánico tiene un furgón asignado y ese furgón lleva su propio stock de repuestos.',
+                style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+              ),
+            ),
+            const SizedBox(width: 16),
             FilledButton.icon(
               onPressed: () => _formulario(),
               icon: const Icon(Icons.add),
               label: const Text('Nuevo vehículo'),
             ),
           ],
-        ),
-        Text(
-          'Cada mecánico tiene un furgón asignado y ese furgón lleva su propio stock de repuestos.',
-          style: TextStyle(fontSize: 13, color: Colors.grey[700]),
         ),
         const SizedBox(height: 16),
         Expanded(
