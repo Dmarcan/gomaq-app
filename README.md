@@ -97,7 +97,7 @@ gomaq/
 | `mecanico@gomaq.test` / `mecanico2@gomaq.test` | mecanico |
 | `cliente@gomaq.test` | cliente (vinculado a la empresa "Acsa International") |
 
-Crear más usuarios: `node scripts/create-user.js <nombre> <email> <password> <rol> [cliente_id]` (el `cliente_id` solo aplica a rol `cliente`).
+Crear más usuarios: `node scripts/create-user.js <nombre> <email> <rol> [cliente_id]` (el `cliente_id` solo aplica a rol `cliente`). La contraseña **no** va como argumento: el script la pide por consola, para que no quede en el historial del shell ni visible en `ps`.
 
 ## Diseño visual
 
@@ -173,7 +173,7 @@ Esto además completa **HU-07**, que prometía avisar al cliente *"quién llega 
 6. **Dominio propio** — hoy la URL pública cambia en cada reinicio del túnel; con un dominio en Cloudflare se puede pasar a un túnel nombrado con URL fija (esto además desbloquea el punto 3).
 7. **Tarifa de arriendo por día** — Facturación muestra los días calculados de cada arriendo pero el monto se ingresa a mano (no existe una tarifa fija por equipo en ningún lado de la entrevista a la administrativa; el jefe la decide caso a caso, igual que en reparaciones).
 8. **Detección de datos desde PDF** — verificada contra los documentos reales de GOMAQ (guía de entrega, guía de retiro y factura): acierta fecha, tipo, folio, RUT, monto y horómetro, y está cubierta por tests con ese texto real como fixture. Sigue siendo heurística: si el PDF es una imagen escaneada sin capa de texto no detecta nada y el usuario llena a mano, y un facturador con otro formato requeriría ajustar las expresiones.
-9. **Routing con URLs en el panel web** — como Flutter Web corre sin rutas en la URL, presionar F5 siempre vuelve al Dashboard (la sesión sí se mantiene) y no hay deep links. Arreglarlo requiere `go_router` + estrategia de URL — trabajo mayor, baja prioridad.
+9. **HTTPS propio** — es el pendiente de seguridad que queda abierto. Mientras el backend hable HTTP plano, el token JWT viaja sin cifrar por la LAN. La app móvil ya restringe el tráfico en claro a un solo host (`network_security_config.xml`), lo que acota el daño pero no lo elimina. **Y el panel web derechamente no funciona por `http://192.168.1.132:3000`**: el navegador solo entrega Web Crypto en contexto seguro, y sin él `flutter_secure_storage` no puede guardar el token — el login responde 200 y la llamada siguiente vuelve 401. Por el túnel de Cloudflare (HTTPS) funciona bien. Se cierra junto con el punto 6.
 10. **Refresh token / renovación de sesión** — hoy el token JWT dura 12 h y al expirar la app cierra sesión limpiamente con aviso (tanto web como móvil, donde además el trabajo offline queda protegido en cola). La práctica completa de la industria es access token corto + refresh token; queda para cuando el sistema salga de la etapa de demo.
 11. Pulido menor: ver/descargar una factura ya subida directo desde la pantalla de Facturación (hoy solo permite subir).
 
@@ -181,6 +181,6 @@ Esto además completa **HU-07**, que prometía avisar al cliente *"quién llega 
 
 - **Datos de prueba en la BD** — quedaron registros de las verificaciones de desarrollo (maquinaria GH-999, guías/facturas dummy, clientes de prueba). `db/scripts/limpiar_datos_prueba.sql` los borra; correrlo a mano cuando se decida.
 
-- **No hay tests automatizados** — toda la verificación de este proyecto se hizo manualmente con `curl` contra el backend y probando la UI a mano. Si se agregan tests, sería un buen próximo paso.
+- **Tests del backend**: `cd backend && npm test` (99 casos, `node:test`, sin dependencias nuevas). Cubren las reglas de negocio puras — mantención preventiva, facturable de la OT, rentabilidad, stock, paginación, saneamiento de rutas de archivo y el parseo de los PDF reales de GOMAQ como fixture. La UI y los flujos completos se siguen verificando a mano con `curl` y recorriendo las pantallas.
 - **Las contraseñas y tokens reales** (contraseña de la BD, `JWT_SECRET`, credenciales de Supabase) están únicamente en el `.env` del servidor — nunca se subieron a este repo ni deberían aparecer en el historial de git.
 - **El GX520 es hardware de 2005** — no tiene margen para crecer mucho más de lo que hay hoy sin migrar a la nube (ver sección 6.1.1 del informe, que ya justifica por qué eventualmente hay que migrar).
