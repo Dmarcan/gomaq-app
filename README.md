@@ -181,9 +181,17 @@ Esto además completa **HU-07**, que prometía avisar al cliente *"quién llega 
 
 - **Datos de prueba en la BD** — quedaron registros de las verificaciones de desarrollo (maquinaria GH-999, guías/facturas dummy, clientes de prueba). `db/scripts/limpiar_datos_prueba.sql` los borra; correrlo a mano cuando se decida.
 
-- **Tests del backend**: `cd backend && npm test` (128 casos, `node:test`, sin dependencias nuevas), en tres niveles:
+- **Entorno local de pruebas** — el backend puede ejecutarse completo en un equipo de desarrollo, sin depender del servidor. Es la única forma de correr la batería entera hoy:
+
+  1. **PostgreSQL**: descargar los binarios en ZIP (sin instalador ni privilegios de administrador) desde `get.enterprisedb.com/postgresql/`, descomprimir y luego `initdb -D C:/dev/pgdata -U postgres --pwfile=clave.txt -E UTF8`, `pg_ctl -D C:/dev/pgdata -l servidor.log start` y `createdb -U postgres -h 127.0.0.1 gomaq`. El instalador gráfico en modo desatendido **no sirve**: devuelve código 0 sin copiar la carpeta `lib` ni crear el servicio.
+  2. **Esquema**: aplicar `db/schema.sql` y después las migraciones de `db/migrations/` en orden numérico.
+  3. **Datos**: `psql -U postgres -h 127.0.0.1 -d gomaq -f db/scripts/semilla_pruebas.sql`. Crea las cuatro cuentas, un cliente, dos equipos y una orden por cada mecánico; es idempotente.
+  4. **Variables**: crear `backend/.env` con `DATABASE_URL` apuntando a la base local, un `JWT_SECRET` cualquiera y valores ficticios para `SUPABASE_URL` y `SUPABASE_SERVICE_KEY` — el arranque los exige, pero la batería no toca el almacenamiento de archivos.
+  5. **Ejecutar**: `npm start` y, en otra consola, `GOMAQ_TEST_URL=http://localhost:3000 npm test`.
+
+- **Tests del backend**: `cd backend && npm test` (129 casos, `node:test`, sin dependencias nuevas), en tres niveles:
   - **Reglas de negocio** (99): mantención preventiva, facturable de la OT, rentabilidad, stock, paginación, saneamiento de rutas de archivo y el parseo de los PDF reales de GOMAQ como fixture.
   - **Capa de autorización** (14): `verifyToken` y `requireRole` con tokens ajenos, expirados y manipulados. Corren en cualquier máquina, sin servidor ni base de datos.
-  - **Extremo a extremo** (15): contra una instancia desplegada. Verifican el contrato de la API, el control por rol, la pertenencia del recurso y la superficie expuesta. Son de solo lectura, así que pueden correrse contra el servidor real sin ensuciarlo. Si no hay instancia disponible se **omiten con el motivo**, no fallan: un servidor apagado no es un defecto del código. Apuntan por defecto a `http://192.168.1.132:3000`; para usar otra, `GOMAQ_TEST_URL=http://localhost:3000 npm test`.
+  - **Extremo a extremo** (16): contra una instancia desplegada. Verifican el contrato de la API, el control por rol, la pertenencia del recurso y la superficie expuesta. Son de solo lectura, así que pueden correrse contra el servidor real sin ensuciarlo. Si no hay instancia disponible se **omiten con el motivo**, no fallan: un servidor apagado no es un defecto del código. Apuntan por defecto a `http://192.168.1.132:3000`; para usar otra, `GOMAQ_TEST_URL=http://localhost:3000 npm test`.
 - **Las contraseñas y tokens reales** (contraseña de la BD, `JWT_SECRET`, credenciales de Supabase) están únicamente en el `.env` del servidor — nunca se subieron a este repo ni deberían aparecer en el historial de git.
 - **El GX520 es hardware de 2005** — no tiene margen para crecer mucho más de lo que hay hoy sin migrar a la nube (ver sección 6.1.1 del informe, que ya justifica por qué eventualmente hay que migrar).

@@ -161,19 +161,30 @@ describe('control de acceso por rol', () => {
 
 describe('pertenencia del recurso', () => {
     test('un mecanico no accede a la orden de trabajo de otro', async (t) => {
-        if (!requiereServidor(t) || !tokens.mecanicoDos) return t.skip('sin segunda cuenta de mecanico');
+        if (!requiereServidor(t)) return;
 
-        const suyas = await pedir('/api/ordenes-trabajo/mias', con(tokens.mecanicoDos));
-        assert.equal(suyas.status, 200);
-        const cuerpo = await suyas.json();
+        // se identifica al mecanico que ejecuta la prueba y se busca, desde el listado
+        // completo que ve el administrativo, una orden asignada a alguien distinto
+        const perfil = await pedir('/api/usuarios/mi-perfil', con(tokens.mecanico));
+        assert.equal(perfil.status, 200);
+        const yo = (await perfil.json()).id;
+
+        const listado = await pedir('/api/ordenes-trabajo', con(tokens.administrativo));
+        assert.equal(listado.status, 200);
+        const cuerpo = await listado.json();
         const ordenes = Array.isArray(cuerpo) ? cuerpo : cuerpo.items;
-        if (!ordenes || ordenes.length === 0) {
-            return t.skip('el segundo mecanico no tiene ordenes asignadas');
-        }
+        const ajena = (ordenes || []).find((o) => o.mecanico_id && o.mecanico_id !== yo);
+        if (!ajena) return t.skip('no hay ordenes asignadas a otro mecanico');
 
-        const ajena = ordenes[0].id;
-        const r = await pedir(`/api/ordenes-trabajo/${ajena}`, con(tokens.mecanico));
+        const r = await pedir(`/api/ordenes-trabajo/${ajena.id}`, con(tokens.mecanico));
         assert.equal(r.status, 403, 'conocer el identificador no debe bastar para acceder');
+    });
+
+    test('el portal del cliente esta vedado al mecanico', async (t) => {
+        if (!requiereServidor(t)) return;
+        // /mias entrega el historial del cliente, no el del mecanico: son endpoints distintos
+        const r = await pedir('/api/ordenes-trabajo/mias', con(tokens.mecanico));
+        assert.equal(r.status, 403);
     });
 
     test('cada mecanico ve el stock de su propio furgon', async (t) => {
