@@ -181,6 +181,9 @@ Esto además completa **HU-07**, que prometía avisar al cliente *"quién llega 
 
 - **Datos de prueba en la BD** — quedaron registros de las verificaciones de desarrollo (maquinaria GH-999, guías/facturas dummy, clientes de prueba). `db/scripts/limpiar_datos_prueba.sql` los borra; correrlo a mano cuando se decida.
 
-- **Tests del backend**: `cd backend && npm test` (99 casos, `node:test`, sin dependencias nuevas). Cubren las reglas de negocio puras — mantención preventiva, facturable de la OT, rentabilidad, stock, paginación, saneamiento de rutas de archivo y el parseo de los PDF reales de GOMAQ como fixture. La UI y los flujos completos se siguen verificando a mano con `curl` y recorriendo las pantallas.
+- **Tests del backend**: `cd backend && npm test` (128 casos, `node:test`, sin dependencias nuevas), en tres niveles:
+  - **Reglas de negocio** (99): mantención preventiva, facturable de la OT, rentabilidad, stock, paginación, saneamiento de rutas de archivo y el parseo de los PDF reales de GOMAQ como fixture.
+  - **Capa de autorización** (14): `verifyToken` y `requireRole` con tokens ajenos, expirados y manipulados. Corren en cualquier máquina, sin servidor ni base de datos.
+  - **Extremo a extremo** (15): contra una instancia desplegada. Verifican el contrato de la API, el control por rol, la pertenencia del recurso y la superficie expuesta. Son de solo lectura, así que pueden correrse contra el servidor real sin ensuciarlo. Si no hay instancia disponible se **omiten con el motivo**, no fallan: un servidor apagado no es un defecto del código. Apuntan por defecto a `http://192.168.1.132:3000`; para usar otra, `GOMAQ_TEST_URL=http://localhost:3000 npm test`.
 - **Las contraseñas y tokens reales** (contraseña de la BD, `JWT_SECRET`, credenciales de Supabase) están únicamente en el `.env` del servidor — nunca se subieron a este repo ni deberían aparecer en el historial de git.
 - **El GX520 es hardware de 2005** — no tiene margen para crecer mucho más de lo que hay hoy sin migrar a la nube (ver sección 6.1.1 del informe, que ya justifica por qué eventualmente hay que migrar).
