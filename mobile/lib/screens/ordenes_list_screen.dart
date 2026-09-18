@@ -63,6 +63,30 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
     });
   }
 
+  /// Cerrar sesion estaba a un toque, junto al titulo. Con cambios sin enviar se explica que
+  /// no se pierden, pero que solo esta cuenta puede enviarlos.
+  Future<void> _confirmarCerrarSesion() async {
+    final auth = context.read<AuthService>();
+    final pendientes = await context.read<SyncService>().contarPendientes();
+    if (!mounted) return;
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('¿Cerrar sesión?'),
+        content: Text(pendientes > 0
+            ? 'Tienes $pendientes cambios sin enviar. Quedan guardados en el teléfono y se enviarán '
+                'cuando vuelvas a entrar con tu cuenta. Mientras tanto, nadie más podrá usar la app '
+                'en este teléfono.'
+            : 'Tu trabajo está sincronizado.'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Cerrar sesión')),
+        ],
+      ),
+    );
+    if (confirmado == true) await auth.logout();
+  }
+
   Future<void> _mostrarErroresDeSync() async {
     final syncService = context.read<SyncService>();
     final tareas = await syncService.tareasEnError();
@@ -145,7 +169,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
           IconButton(
             tooltip: 'Cerrar sesión',
             icon: const Icon(Icons.logout),
-            onPressed: () => context.read<AuthService>().logout(),
+            onPressed: _confirmarCerrarSesion,
           ),
         ],
       ),

@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularEstadoMantencion, requiereAviso, HORAS_AVISO_MANTENCION } = require('../utils/mantencion');
+const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 
 const router = express.Router();
 
@@ -71,6 +72,22 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
     if (valor === undefined || valor === null || valor === '' || isNaN(lectura) || lectura < 0) {
         return res.status(400).json({ error: 'valor debe ser un numero de horas mayor o igual a 0' });
     }
+    const { valido: uuidValido, uuid } = leerUuidCliente(req.body);
+    if (!uuidValido) {
+        return res.status(400).json({ error: 'uuid_cliente no es un UUID valido' });
+    }
+
+    // Reintento de una lectura ya guardada desde el movil: no se repite ni el reinicio del
+    // contador ni el aviso de mantencion, que ya ocurrieron con la primera.
+    const responderExistente = (existente) => res.status(200).json({
+        lectura: existente,
+        estado_mantencion: null,
+        contador_reiniciado: false,
+        avisos_encolados: 0,
+        ya_registrada: true,
+    });
+    const yaRegistrada = await buscarPorUuid(pool, 'lecturas_horometro', uuid);
+    if (yaRegistrada) return responderExistente(yaRegistrada);
 
     const client = await pool.connect();
     try {
@@ -104,10 +121,10 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
         const origen = req.user.rol === 'mecanico' ? 'movil' : 'panel';
         const insercion = await client.query(
             `INSERT INTO lecturas_horometro
-                (maquinaria_id, valor, origen, cliente_id, orden_trabajo_id, usuario_id, observacion)
-             VALUES ($1, $2, $3::origen_lectura_horometro, $4, $5, $6, $7)
+                (maquinaria_id, valor, origen, cliente_id, orden_trabajo_id, usuario_id, observacion, uuid_cliente)
+             VALUES ($1, $2, $3::origen_lectura_horometro, $4, $5, $6, $7, $8)
              RETURNING *`,
-            [id, lectura, origen, maquinaria.cliente_id, orden_trabajo_id || null, req.user.id, observacion || null]
+            [id, lectura, origen, maquinaria.cliente_id, orden_trabajo_id || null, req.user.id, observacion || null, uuid]
         );
 
         // el reinicio es una confirmacion explicita de quien cierra la mantencion, no algo
@@ -145,6 +162,10 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
         });
     } catch (err) {
         await client.query('ROLLBACK');
+        if (esUuidDuplicado(err)) {
+            const existente = await buscarPorUuid(pool, 'lecturas_horometro', uuid);
+            if (existente) return responderExistente(existente);
+        }
         console.error(err);
         res.status(500).json({ error: 'Error al registrar la lectura de horometro' });
     } finally {

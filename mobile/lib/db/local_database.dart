@@ -17,7 +17,7 @@ class LocalDatabase {
     final path = join(dbPath, 'gomaq_mecanico.db');
     return openDatabase(
       path,
-      version: 6,
+      version: 7,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE ordenes_locales (
@@ -63,6 +63,7 @@ class LocalDatabase {
         await _crearTablasOrdenPapel(db);
         await _crearTablasEquipos(db);
         await _crearTablasFurgon(db);
+        await _migrarV7(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -103,8 +104,58 @@ class LocalDatabase {
         if (oldVersion < 6) {
           await _crearTablasFurgon(db);
         }
+        if (oldVersion < 7) {
+          await _migrarV7(db);
+        }
       },
     );
+  }
+
+  /// v7: anulacion de lineas de repuesto y dueño de la cola.
+  ///
+  /// - `servidor_id`: id de la linea en el servidor, para poder anularla despues de sincronizada.
+  /// - `anulada`: la linea queda tachada, como en el talonario; no se borra.
+  /// - `sesion_local`: a quien pertenece el trabajo guardado en el telefono. Si otro mecanico
+  ///   inicia sesion en el mismo equipo, sus cambios pendientes no deben enviarse con su cuenta.
+  ///
+  /// Se aplica con ALTER tanto en instalaciones nuevas como en actualizaciones, para que la
+  /// tabla de lineas tenga un solo camino de creacion (el de la v4).
+  Future<void> _migrarV7(Database db) async {
+    await db.execute('ALTER TABLE insumos_locales ADD COLUMN servidor_id INTEGER');
+    await db.execute('ALTER TABLE insumos_locales ADD COLUMN anulada INTEGER NOT NULL DEFAULT 0');
+    await db.execute('''
+      CREATE TABLE IF NOT EXISTS sesion_local (
+        clave TEXT PRIMARY KEY,
+        valor TEXT
+      )
+    ''');
+  }
+
+  /// Borra todo el trabajo y la cache local. Se usa cuando otro mecanico inicia sesion en un
+  /// telefono sin cambios pendientes: no debe ver las ordenes ni el furgon del anterior.
+  Future<void> limpiarDatosDeUsuario() async {
+    final db = await database;
+    await db.transaction((txn) async {
+      for (final tabla in [
+        'ordenes_locales', 'cola_sincronizacion', 'evidencias_locales', 'insumos_locales',
+        'ot_servicios_locales', 'tramos_locales', 'furgon_stock_local', 'mi_vehiculo_local',
+        'mi_perfil_local', 'historial_ot_local', 'horometro_local',
+      ]) {
+        await txn.delete(tabla);
+      }
+    });
+  }
+
+  Future<String?> leerSesion(String clave) async {
+    final db = await database;
+    final filas = await db.query('sesion_local', where: 'clave = ?', whereArgs: [clave]);
+    return filas.isEmpty ? null : filas.first['valor'] as String?;
+  }
+
+  Future<void> guardarSesion(String clave, String valor) async {
+    final db = await database;
+    await db.insert('sesion_local', {'clave': clave, 'valor': valor},
+        conflictAlgorithm: ConflictAlgorithm.replace);
   }
 
   /// Stock del furgon y datos del vehiculo asignado, para consultarlos en terreno sin señal.

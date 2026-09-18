@@ -4,6 +4,7 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { verificarDuenoOrden, contactoCliente } = require('../utils/ordenes');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
+const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 
 const router = express.Router();
 
@@ -50,19 +51,38 @@ router.post('/en-terreno', verifyToken, requireRole('mecanico'), async (req, res
     if (!maquinaria_id) {
         return res.status(400).json({ error: 'maquinaria_id es requerido' });
     }
+    const { valido: uuidValido, uuid } = leerUuidCliente(req.body);
+    if (!uuidValido) {
+        return res.status(400).json({ error: 'uuid_cliente no es un UUID valido' });
+    }
+    // Reintento de una OT que ya se creo: devolverla, o el movil remapearia sus fotos y
+    // repuestos a una segunda OT y la primera quedaria huerfana en el servidor.
+    const devolverExistente = (existente) => {
+        if (existente.mecanico_id !== req.user.id) {
+            return res.status(409).json({ error: 'uuid_cliente ya usado por otra orden' });
+        }
+        return res.status(200).json(existente);
+    };
     try {
+        const yaCreada = await buscarPorUuid(pool, 'ordenes_trabajo', uuid);
+        if (yaCreada) return devolverExistente(yaCreada);
+
         const maquinaria = await pool.query('SELECT id, cliente_id FROM maquinarias WHERE id = $1', [maquinaria_id]);
         if (maquinaria.rows.length === 0) {
             return res.status(404).json({ error: 'Maquinaria no encontrada' });
         }
         const result = await pool.query(
-            `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, mecanico_id, origen, motivo, estado)
-             VALUES ($1, $2, $3, 'directo', $4, 'en_terreno')
+            `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, mecanico_id, origen, motivo, estado, uuid_cliente)
+             VALUES ($1, $2, $3, 'directo', $4, 'en_terreno', $5)
              RETURNING *`,
-            [maquinaria_id, maquinaria.rows[0].cliente_id, req.user.id, motivo || 'Equipo intervenido durante otra visita']
+            [maquinaria_id, maquinaria.rows[0].cliente_id, req.user.id, motivo || 'Equipo intervenido durante otra visita', uuid]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
+        if (esUuidDuplicado(err)) {
+            const existente = await buscarPorUuid(pool, 'ordenes_trabajo', uuid);
+            if (existente) return devolverExistente(existente);
+        }
         console.error(err);
         res.status(500).json({ error: 'Error al crear la orden de trabajo en terreno' });
     }
@@ -348,18 +368,43 @@ router.post('/:id/tramos', verifyToken, requireRole('mecanico'), async (req, res
     if (termino && new Date(termino) < new Date(inicio)) {
         return res.status(400).json({ error: 'El termino no puede ser anterior al inicio' });
     }
+    const { valido: uuidValido, uuid } = leerUuidCliente(req.body);
+    if (!uuidValido) {
+        return res.status(400).json({ error: 'uuid_cliente no es un UUID valido' });
+    }
     try {
         const check = await verificarDuenoOrden(req.params.id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
 
+        const yaRegistrado = await buscarPorUuid(pool, 'tramos_trabajo', uuid);
+        if (yaRegistrado) return res.status(200).json(yaRegistrado);
+
+        // Cerrar un tramo: la app envia primero el tramo abierto (solo inicio) y, al terminar,
+        // el mismo inicio con su termino. Antes eso insertaba un segundo tramo y el primero
+        // quedaba abierto para siempre, duplicando las horas de la visita. Si existe el tramo
+        // abierto con ese inicio, se cierra en vez de crear otro.
+        if (termino) {
+            const cerrado = await pool.query(
+                `UPDATE tramos_trabajo SET termino = $1
+                 WHERE orden_trabajo_id = $2 AND usuario_id = $3 AND inicio = $4 AND termino IS NULL
+                 RETURNING *`,
+                [termino, req.params.id, req.user.id, inicio]
+            );
+            if (cerrado.rows.length > 0) return res.status(200).json(cerrado.rows[0]);
+        }
+
         const result = await pool.query(
-            `INSERT INTO tramos_trabajo (orden_trabajo_id, inicio, termino, usuario_id)
-             VALUES ($1, $2, $3, $4) RETURNING *`,
-            [req.params.id, inicio, termino || null, req.user.id]
+            `INSERT INTO tramos_trabajo (orden_trabajo_id, inicio, termino, usuario_id, uuid_cliente)
+             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
+            [req.params.id, inicio, termino || null, req.user.id, uuid]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
+        if (esUuidDuplicado(err)) {
+            const existente = await buscarPorUuid(pool, 'tramos_trabajo', uuid);
+            if (existente) return res.status(200).json(existente);
+        }
         console.error(err);
         res.status(500).json({ error: 'Error al registrar el tramo de trabajo' });
     }

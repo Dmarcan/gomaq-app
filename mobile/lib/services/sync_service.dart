@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:sqflite/sqflite.dart';
 import '../db/local_database.dart';
 import '../models/orden_trabajo.dart';
+import '../utils/uuid.dart';
 import 'api_client.dart';
 
 /// Fallo que jamas va a resolverse reintentando (ej. el archivo local ya no existe):
@@ -86,10 +87,11 @@ class SyncService extends ChangeNotifier {
   ///
   /// Devuelve el id LOCAL (negativo) con el que la OT vive hasta sincronizar. Se usa un
   /// negativo derivado del reloj para que no choque nunca con un id del servidor, y para que
-  /// dos OT creadas sin señal no se pisen entre si.
+  /// dos OT creadas sin señal no se pisen entre si. En milisegundos: con segundos, dos OT
+  /// creadas en el mismo segundo chocaban en la clave primaria.
   Future<int> encolarOtEnTerreno({required int maquinariaId, required String maquinariaCodigo, String? motivo}) async {
     final db = await _db;
-    final idLocal = -DateTime.now().millisecondsSinceEpoch ~/ 1000;
+    final idLocal = -DateTime.now().millisecondsSinceEpoch;
     await db.insert('ordenes_locales', {
       'id': idLocal,
       'maquinaria_id': maquinariaId,
@@ -236,12 +238,39 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Anula (tacha) una linea de repuesto. No se borra: queda visible como anulada, igual que
+  /// una linea tachada en el talonario, y el servidor devuelve el repuesto al furgon.
+  ///
+  /// La anulacion se encola siempre DETRAS del envio de la linea, aunque la linea todavia no
+  /// se haya enviado. Sacarla de la cola parece mas simple, pero la tarea puede haber llegado
+  /// al servidor con la respuesta perdida: la linea quedaria viva alla y tachada aca. Como la
+  /// cola respeta el orden, al ejecutarse la anulacion la linea ya tiene su id del servidor.
+  ///
+  /// Devuelve un mensaje para el mecanico si no se pudo anular, o null si se anulo.
+  Future<String?> anularInsumo(Map<String, dynamic> linea) async {
+    final db = await _db;
+    final lineaLocalId = linea['id'] as int;
+    final ordenId = linea['orden_trabajo_id'] as int;
+
+    if (linea['sincronizado'] == 1 && linea['servidor_id'] == null) {
+      // lineas enviadas antes de esta version: el telefono no guardo su id en el servidor
+      return 'Esta línea se registró con una versión anterior de la app. '
+          'Pide al administrativo que la anule desde el panel.';
+    }
+
+    await _encolar(ordenId, 'anular_insumo', {'insumo_local_id': lineaLocalId});
+    await db.update('insumos_locales', {'anulada': 1}, where: 'id = ?', whereArgs: [lineaLocalId]);
+    notifyListeners();
+    return null;
+  }
+
   Future<void> _encolar(int ordenId, String tipo, Map<String, dynamic> payload) async {
     final db = await _db;
     await db.insert('cola_sincronizacion', {
       'tipo': tipo,
       'orden_trabajo_id': ordenId,
-      'payload': jsonEncode(payload),
+      // identifica la tarea ante el servidor: un reintento con el mismo uuid no se duplica
+      'payload': jsonEncode({...payload, 'uuid': generarUuid()}),
       'estado': 'pendiente',
       'intentos': 0,
       'creado_en': DateTime.now().toIso8601String(),
@@ -316,10 +345,28 @@ class SyncService extends ChangeNotifier {
     );
     final idsConPendientes = pendientesRows.map((r) => r['orden_trabajo_id'] as int).toSet();
 
+    final idsDelServidor = <int>{};
     for (final item in (data as List)) {
       final orden = OrdenTrabajo.fromApiJson(item);
+      idsDelServidor.add(orden.id);
       if (idsConPendientes.contains(orden.id)) continue;
       await db.insert('ordenes_locales', orden.toLocalMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+
+    // OT que el servidor ya no le entrega a este mecanico (reasignadas a otro tecnico o
+    // eliminadas): antes quedaban para siempre en el telefono, y trabajar sobre ellas llenaba
+    // la cola de rechazos. Se conservan las que aun tienen cambios sin enviar, para no perder
+    // trabajo, y las creadas en terreno que todavia no existen en el servidor (id negativo).
+    final locales = await db.query('ordenes_locales', columns: ['id']);
+    for (final fila in locales) {
+      final id = fila['id'] as int;
+      if (id < 0 || idsDelServidor.contains(id) || idsConPendientes.contains(id)) continue;
+      await db.transaction((txn) async {
+        for (final tabla in ['evidencias_locales', 'insumos_locales', 'ot_servicios_locales', 'tramos_locales']) {
+          await txn.delete(tabla, where: 'orden_trabajo_id = ?', whereArgs: [id]);
+        }
+        await txn.delete('ordenes_locales', where: 'id = ?', whereArgs: [id]);
+      });
     }
   }
 
@@ -544,10 +591,29 @@ class SyncService extends ChangeNotifier {
           whereArgs: [tarea['id']],
         );
       } on ApiException catch (err) {
-        if (err.statusCode == 401 || err.statusCode == 403) {
+        if (err.statusCode == 401) {
           _sesionExpirada = true;
           notifyListeners();
           return; // token invalido: pausar toda la cola sin consumir reintentos
+        }
+        if (err.statusCode == 403) {
+          // Sesion valida pero sin permiso sobre ESTA tarea, tipicamente porque la OT se
+          // reasigno a otro tecnico. Antes se trataba como sesion expirada y pausaba la cola
+          // entera para siempre: volver a iniciar sesion no lo arreglaba, porque la misma
+          // tarea volvia a dar 403. Ahora solo esa tarea pasa a error, con su motivo.
+          otsConFallo.add(otId);
+          await db.update(
+            'cola_sincronizacion',
+            {
+              'intentos': maxIntentos,
+              'ultimo_error': 'Sin permiso: ${err.message}. Si la orden se reasignó a otro técnico, '
+                  'avisa al administrativo.',
+              'estado': 'error',
+            },
+            where: 'id = ?',
+            whereArgs: [tarea['id']],
+          );
+          continue;
         }
         otsConFallo.add(otId);
         final intentos = (tarea['intentos'] as int) + 1;
@@ -583,6 +649,16 @@ class SyncService extends ChangeNotifier {
     final ordenId = tarea['orden_trabajo_id'] as int;
     final payload = jsonDecode(tarea['payload'] as String) as Map<String, dynamic>;
 
+    // Tareas encoladas por una version anterior de la app no traen uuid. Se les asigna uno y se
+    // guarda ANTES de enviarlas: asi, si esta vez se pierde la respuesta, el reintento ya viaja
+    // con el mismo uuid y el servidor no la duplica.
+    if (payload['uuid'] == null) {
+      payload['uuid'] = generarUuid();
+      final db = await _db;
+      await db.update('cola_sincronizacion', {'payload': jsonEncode(payload)},
+          where: 'id = ?', whereArgs: [tarea['id']]);
+    }
+
     switch (tipo) {
       case 'crear_ot':
         await _crearOtEnTerreno(ordenId, payload, remapeo);
@@ -594,10 +670,13 @@ class SyncService extends ChangeNotifier {
         await _finalizarConFirma(tarea, ordenId, payload);
         break;
       case 'evidencia':
-        await _subirEvidencia(ordenId, payload);
+        await _subirEvidencia(tarea, ordenId, payload);
         break;
       case 'insumo':
         await _registrarInsumo(ordenId, payload);
+        break;
+      case 'anular_insumo':
+        await _anularInsumo(ordenId, payload);
         break;
       case 'horometro':
         await _registrarHorometro(ordenId, payload);
@@ -664,35 +743,54 @@ class SyncService extends ChangeNotifier {
     });
   }
 
-  Future<void> _subirEvidencia(int ordenId, Map<String, dynamic> payload) async {
-    final rutaLocal = payload['ruta_local'] as String;
-    final archivo = File(rutaLocal);
-    if (!await archivo.exists()) {
-      throw ErrorPermanenteSync('La foto ya no esta en el telefono (fue borrada o se limpiaron los datos de la app)');
-    }
-    final nombreArchivo = rutaLocal.split(Platform.pathSeparator).last;
+  /// Sube la foto a Supabase y la registra en la OT.
+  ///
+  /// Idempotente ante reintentos, igual que la firma: el path de la foto ya subida se guarda en
+  /// la tarea antes de confirmar, asi un reintento (subida exitosa + confirmacion sin respuesta)
+  /// no vuelve a subir el archivo, y el uuid evita que la confirmacion se registre dos veces.
+  Future<void> _subirEvidencia(Map<String, dynamic> tarea, int ordenId, Map<String, dynamic> payload) async {
+    var pathSubido = payload['path_subido'] as String?;
 
-    final solicitud = await ApiClient.instance.post(
-      '/api/ordenes-trabajo/$ordenId/evidencia/solicitar-upload',
-      {'nombre_archivo': nombreArchivo},
-    );
+    if (pathSubido == null) {
+      final rutaLocal = payload['ruta_local'] as String;
+      final archivo = File(rutaLocal);
+      if (!await archivo.exists()) {
+        throw ErrorPermanenteSync('La foto ya no está en el teléfono (fue borrada o se limpiaron los datos de la app)');
+      }
+      final nombreArchivo = rutaLocal.split(Platform.pathSeparator).last;
 
-    final signedUrl = solicitud['signedUrl'] as String;
-    final resp = await http
-        .put(
-          Uri.parse(signedUrl),
-          headers: {'Content-Type': 'image/jpeg'},
-          body: await archivo.readAsBytes(),
-        )
-        .timeout(const Duration(seconds: 20));
-    if (resp.statusCode >= 300) {
-      throw Exception('Fallo la subida a Supabase Storage: ${resp.statusCode}');
+      final solicitud = await ApiClient.instance.post(
+        '/api/ordenes-trabajo/$ordenId/evidencia/solicitar-upload',
+        {'nombre_archivo': nombreArchivo},
+      );
+
+      final signedUrl = solicitud['signedUrl'] as String;
+      final resp = await http
+          .put(
+            Uri.parse(signedUrl),
+            headers: {'Content-Type': 'image/jpeg'},
+            body: await archivo.readAsBytes(),
+          )
+          .timeout(const Duration(seconds: 20));
+      if (resp.statusCode >= 300) {
+        throw Exception('Fallo la subida a Supabase Storage: ${resp.statusCode}');
+      }
+
+      pathSubido = solicitud['path'] as String;
+      payload['path_subido'] = pathSubido;
+      final db = await _db;
+      await db.update('cola_sincronizacion', {'payload': jsonEncode(payload)},
+          where: 'id = ?', whereArgs: [tarea['id']]);
     }
 
     await ApiClient.instance.post(
       '/api/ordenes-trabajo/$ordenId/evidencia/confirmar',
-      // tareas encoladas antes del rediseño no traen tipo: 'antes' (mismo default del backend)
-      {'path': solicitud['path'], 'tipo': payload['tipo'] ?? 'antes'},
+      {
+        'path': pathSubido,
+        // tareas encoladas antes del rediseño no traen tipo: 'antes' (mismo default del backend)
+        'tipo': payload['tipo'] ?? 'antes',
+        'uuid_cliente': payload['uuid'],
+      },
     );
 
     final db = await _db;
@@ -716,6 +814,7 @@ class SyncService extends ChangeNotifier {
     final creada = await ApiClient.instance.post('/api/ordenes-trabajo/en-terreno', {
       'maquinaria_id': payload['maquinaria_id'],
       if (payload['motivo'] != null) 'motivo': payload['motivo'],
+      'uuid_cliente': payload['uuid'],
     });
     final idReal = creada['id'] as int;
     if (idReal == idLocal) return;
@@ -736,6 +835,7 @@ class SyncService extends ChangeNotifier {
     await ApiClient.instance.post('/api/ordenes-trabajo/$ordenId/tramos', {
       'inicio': payload['inicio'],
       if (payload['termino'] != null) 'termino': payload['termino'],
+      'uuid_cliente': payload['uuid'],
     });
     final tramoLocalId = payload['tramo_local_id'];
     if (tramoLocalId != null) {
@@ -755,16 +855,32 @@ class SyncService extends ChangeNotifier {
       'orden_trabajo_id': ordenId,
       'reiniciar_contador': payload['reiniciar_contador'] ?? false,
       if (payload['observacion'] != null) 'observacion': payload['observacion'],
+      'uuid_cliente': payload['uuid'],
     });
   }
 
+  /// El id del servidor se busca al ejecutar, no al encolar: si la linea se anulo antes de
+  /// enviarse, recien lo tiene cuando su propia tarea (anterior en la cola) termino.
+  Future<void> _anularInsumo(int ordenId, Map<String, dynamic> payload) async {
+    final db = await _db;
+    final filas = await db.query('insumos_locales',
+        columns: ['servidor_id'], where: 'id = ?', whereArgs: [payload['insumo_local_id']]);
+    final servidorId = filas.isEmpty ? null : filas.first['servidor_id'];
+    if (servidorId == null) {
+      throw ErrorPermanenteSync(
+          'No se pudo anular el repuesto porque no llegó al servidor. Revisa si su envío tiene un error.');
+    }
+    await ApiClient.instance.post('/api/insumos/orden/$ordenId/linea/$servidorId/anular', {});
+  }
+
   Future<void> _registrarInsumo(int ordenId, Map<String, dynamic> payload) async {
-    await ApiClient.instance.post('/api/insumos/orden/$ordenId', {
+    final linea = await ApiClient.instance.post('/api/insumos/orden/$ordenId', {
       if (payload['insumo_id'] != null) 'insumo_id': payload['insumo_id'],
       'cantidad': payload['cantidad'],
       if (payload['descripcion'] != null) 'descripcion': payload['descripcion'],
       if (payload['precio_unitario'] != null) 'precio_unitario': payload['precio_unitario'],
       'facturable': payload['facturable'] ?? 'pendiente',
+      'uuid_cliente': payload['uuid'],
     });
 
     final db = await _db;
@@ -772,7 +888,8 @@ class SyncService extends ChangeNotifier {
     if (insumoLocalId != null) {
       await db.update(
         'insumos_locales',
-        {'sincronizado': 1},
+        // el id del servidor permite anular la linea despues de sincronizada
+        {'sincronizado': 1, 'servidor_id': linea is Map ? linea['id'] : null},
         where: 'id = ?',
         whereArgs: [insumoLocalId],
       );

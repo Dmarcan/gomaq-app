@@ -239,7 +239,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
           orden: orden,
           fotosAntes: _fotosDeTipo('antes').length,
           fotosDespues: _fotosDeTipo('despues').length,
-          insumos: _insumosLocales.length,
+          insumos: _insumosLocales.where((l) => l['anulada'] != 1).length,
         ),
       ),
     );
@@ -551,23 +551,74 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
             if (_insumosLocales.isEmpty)
               const Text('Sin repuestos registrados', style: TextStyle(color: GomaqColors.textoSecundario)),
             for (final insumo in _insumosLocales)
-              ListTile(
-                dense: true,
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.build_circle_outlined),
-                title: Text('${insumo['insumo_nombre']} · ${insumo['cantidad']}'),
-                subtitle: Text(
-                  _resumenLinea(insumo),
-                  style: const TextStyle(fontSize: 12, color: GomaqColors.textoSecundario),
-                ),
-                trailing: insumo['sincronizado'] == 0
-                    ? const Icon(Icons.cloud_upload, size: 16, color: GomaqColors.estadoAdvertencia)
-                    : const Icon(Icons.cloud_done, size: 16, color: GomaqColors.estadoPositivo),
-              ),
+              _lineaRepuesto(insumo, soloLectura: soloLectura),
           ],
         ),
       ),
     );
+  }
+
+  /// Una linea de repuesto. Mientras la OT esta abierta el mecanico puede anularla (queda
+  /// tachada, como en el talonario); anulada, se sigue viendo para que quede constancia.
+  Widget _lineaRepuesto(Map<String, dynamic> insumo, {required bool soloLectura}) {
+    final anulada = insumo['anulada'] == 1;
+    return ListTile(
+      dense: true,
+      contentPadding: EdgeInsets.zero,
+      leading: Icon(Icons.build_circle_outlined,
+          color: anulada ? GomaqColors.textoSecundario : null),
+      title: Text(
+        '${insumo['insumo_nombre']} · ${insumo['cantidad']}',
+        style: anulada
+            ? const TextStyle(decoration: TextDecoration.lineThrough, color: GomaqColors.textoSecundario)
+            : null,
+      ),
+      subtitle: Text(
+        anulada ? 'Anulada' : _resumenLinea(insumo),
+        style: const TextStyle(fontSize: 12, color: GomaqColors.textoSecundario),
+      ),
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          insumo['sincronizado'] == 0
+              ? const Icon(Icons.cloud_upload, size: 16, color: GomaqColors.estadoAdvertencia)
+              : const Icon(Icons.cloud_done, size: 16, color: GomaqColors.estadoPositivo),
+          if (!soloLectura && !anulada)
+            IconButton(
+              tooltip: 'Anular línea',
+              icon: const Icon(Icons.remove_circle_outline, color: GomaqColors.estadoNegativo),
+              onPressed: () => _anularLinea(insumo),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _anularLinea(Map<String, dynamic> insumo) async {
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('¿Anular esta línea?'),
+        content: Text(
+          '${insumo['insumo_nombre']} · ${insumo['cantidad']}\n\n'
+          'La línea queda tachada y el repuesto vuelve a tu furgón. No se puede deshacer: '
+          'si te equivocaste, vuelve a agregar la línea correcta.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Anular línea')),
+        ],
+      ),
+    );
+    if (confirmado != true || !mounted) return;
+    final error = await context.read<SyncService>().anularInsumo(insumo);
+    if (!mounted) return;
+    if (error != null) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(error)));
+      return;
+    }
+    await _cargar();
+    _intentarSincronizarAhora();
   }
 
   static const _etiquetaFacturable = {'si': 'Se cobra', 'no': 'No se cobra', 'pendiente': 'Por decidir'};

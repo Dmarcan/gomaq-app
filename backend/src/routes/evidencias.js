@@ -3,6 +3,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { verificarDuenoOrden } = require('../utils/ordenes');
 const { supabase, BUCKET } = require('../config/supabase');
+const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 
 const router = express.Router();
 
@@ -50,17 +51,28 @@ router.post('/:id/evidencia/confirmar', verifyToken, requireRole('mecanico'), as
     if (tipo !== undefined && !['antes', 'despues'].includes(tipo)) {
         return res.status(400).json({ error: "tipo debe ser 'antes' o 'despues'" });
     }
+    const { valido: uuidValido, uuid } = leerUuidCliente(req.body);
+    if (!uuidValido) {
+        return res.status(400).json({ error: 'uuid_cliente no es un UUID valido' });
+    }
     try {
         const check = await verificarDuenoOrden(id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
 
+        const yaRegistrada = await buscarPorUuid(pool, 'evidencias_fotograficas', uuid);
+        if (yaRegistrada) return res.status(200).json(yaRegistrada);
+
         const result = await pool.query(
-            'INSERT INTO evidencias_fotograficas (orden_trabajo_id, path, tipo) VALUES ($1, $2, $3) RETURNING *',
-            [id, path, tipo || 'antes']
+            'INSERT INTO evidencias_fotograficas (orden_trabajo_id, path, tipo, uuid_cliente) VALUES ($1, $2, $3, $4) RETURNING *',
+            [id, path, tipo || 'antes', uuid]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
+        if (esUuidDuplicado(err)) {
+            const existente = await buscarPorUuid(pool, 'evidencias_fotograficas', uuid);
+            if (existente) return res.status(200).json(existente);
+        }
         console.error(err);
         res.status(500).json({ error: 'Error al confirmar evidencia' });
     }

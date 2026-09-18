@@ -5,6 +5,7 @@ const { calcularFacturableOt } = require('../utils/facturableOt');
 const { validarTransferencia } = require('../utils/stock');
 const { verificarDuenoOrden } = require('../utils/ordenes');
 const { parsearPaginacion, envolver } = require('../utils/paginacion');
+const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 
 const router = express.Router();
 
@@ -339,8 +340,10 @@ const FACTURABLE_VALIDOS = ['si', 'no', 'pendiente'];
  * utils/facturableOt.js) y facturacion.js / dashboard.js lo siguen leyendo sin cambios.
  */
 async function recalcularFacturableOt(client, ordenId) {
+    // una linea anulada esta tachada en el papel: no cuenta para decidir si se cobra
     const lineas = await client.query(
-        `SELECT facturable FROM movimientos_insumo WHERE orden_trabajo_id = $1 AND tipo = 'salida'`,
+        `SELECT facturable FROM movimientos_insumo
+         WHERE orden_trabajo_id = $1 AND tipo = 'salida' AND anulada_at IS NULL`,
         [ordenId]
     );
     const facturable = calcularFacturableOt(lineas.rows);
@@ -364,6 +367,10 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
     if (facturable !== undefined && !FACTURABLE_VALIDOS.includes(facturable)) {
         return res.status(400).json({ error: `facturable debe ser uno de: ${FACTURABLE_VALIDOS.join(', ')}` });
     }
+    const { valido: uuidValido, uuid } = leerUuidCliente(req.body);
+    if (!uuidValido) {
+        return res.status(400).json({ error: 'uuid_cliente no es un UUID valido' });
+    }
     // un mecanico solo carga repuestos a sus propias OT: sin esto podia agregar lineas a la
     // orden de otro y, de paso, cambiarle el facturable (que se deriva de las lineas)
     if (req.user.rol === 'mecanico') {
@@ -371,6 +378,15 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
     }
+
+    /** Reintento de una linea ya registrada: se responde lo mismo sin tocar el stock otra vez. */
+    const responderExistente = async (existente) => {
+        const orden = await pool.query('SELECT facturable FROM ordenes_trabajo WHERE id = $1', [existente.orden_trabajo_id]);
+        return res.status(200).json({ ...existente, orden_facturable: orden.rows[0] ? orden.rows[0].facturable : null });
+    };
+    const yaRegistrada = await buscarPorUuid(pool, 'movimientos_insumo', uuid);
+    if (yaRegistrada) return responderExistente(yaRegistrada);
+
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -395,8 +411,9 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
         }
         const movimiento = await client.query(
             `INSERT INTO movimientos_insumo
-                (insumo_id, orden_trabajo_id, cantidad, tipo, usuario_id, descripcion, precio_unitario, facturable, ubicacion_origen_id)
-             VALUES ($1, $2, $3, 'salida', $4, $5, $6, COALESCE($7::estado_facturable_linea, 'pendiente'), $8)
+                (insumo_id, orden_trabajo_id, cantidad, tipo, usuario_id, descripcion, precio_unitario, facturable,
+                 ubicacion_origen_id, uuid_cliente)
+             VALUES ($1, $2, $3, 'salida', $4, $5, $6, COALESCE($7::estado_facturable_linea, 'pendiente'), $8, $9)
              RETURNING *`,
             [
                 insumo_id || null,
@@ -407,6 +424,7 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
                 precio_unitario === undefined || precio_unitario === null || precio_unitario === '' ? null : precio_unitario,
                 facturable || null,
                 ubicacionOrigen,
+                uuid,
             ]
         );
         const facturableOt = await recalcularFacturableOt(client, req.params.ordenId);
@@ -414,8 +432,84 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
         res.status(201).json({ ...movimiento.rows[0], orden_facturable: facturableOt });
     } catch (err) {
         await client.query('ROLLBACK');
+        if (esUuidDuplicado(err)) {
+            // otro reintento de la misma tarea gano la carrera; el ROLLBACK ya devolvio el stock
+            const existente = await buscarPorUuid(pool, 'movimientos_insumo', uuid);
+            if (existente) return responderExistente(existente);
+        }
         console.error(err);
         res.status(500).json({ error: 'Error al registrar la linea de repuesto' });
+    } finally {
+        client.release();
+    }
+});
+
+// POST /api/insumos/orden/:ordenId/linea/:lineaId/anular - tachar una linea mal ingresada.
+//
+// Como en el talonario, la linea no se borra: queda tachada, con quien la anulo y cuando. El
+// repuesto vuelve a la ubicacion de donde salio (furgon o bodega) y la linea deja de contar como
+// gasto del equipo y para el facturable de la OT.
+//
+// El mecanico anula las suyas mientras la OT sigue abierta; cerrada la OT, solo el panel.
+// Es idempotente: anular una linea ya anulada responde 200 sin volver a mover stock, que es lo
+// que necesita la cola offline ante un reintento.
+router.post('/orden/:ordenId/linea/:lineaId/anular', verifyToken, requireRole('mecanico', 'administrativo', 'gerente'), async (req, res) => {
+    const { ordenId, lineaId } = req.params;
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const orden = await client.query(
+            'SELECT id, mecanico_id, estado FROM ordenes_trabajo WHERE id = $1 FOR UPDATE',
+            [ordenId]
+        );
+        if (orden.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+        }
+        if (req.user.rol === 'mecanico') {
+            if (orden.rows[0].mecanico_id !== req.user.id) {
+                await client.query('ROLLBACK');
+                return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+            }
+            if (orden.rows[0].estado === 'finalizada') {
+                await client.query('ROLLBACK');
+                return res.status(409).json({ error: 'La orden ya esta cerrada: pide al administrativo que anule la linea' });
+            }
+        }
+
+        const lineaResult = await client.query(
+            `SELECT * FROM movimientos_insumo
+             WHERE id = $1 AND orden_trabajo_id = $2 AND tipo = 'salida' FOR UPDATE`,
+            [lineaId, ordenId]
+        );
+        const linea = lineaResult.rows[0];
+        if (!linea) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Linea no encontrada en esta orden de trabajo' });
+        }
+        if (linea.anulada_at) {
+            await client.query('ROLLBACK');
+            return res.json(linea);
+        }
+
+        if (linea.insumo_id && linea.ubicacion_origen_id) {
+            await moverStock(client, {
+                ubicacionId: linea.ubicacion_origen_id,
+                insumoId: linea.insumo_id,
+                delta: Number(linea.cantidad),
+            });
+        }
+        const anulada = await client.query(
+            `UPDATE movimientos_insumo SET anulada_at = now(), anulada_por = $1 WHERE id = $2 RETURNING *`,
+            [req.user.id, lineaId]
+        );
+        const facturableOt = await recalcularFacturableOt(client, ordenId);
+        await client.query('COMMIT');
+        res.json({ ...anulada.rows[0], orden_facturable: facturableOt });
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error(err);
+        res.status(500).json({ error: 'Error al anular la linea' });
     } finally {
         client.release();
     }
@@ -437,7 +531,7 @@ router.patch('/orden/:ordenId/linea/:lineaId', verifyToken, requireRole('adminis
              SET facturable = COALESCE($1::estado_facturable_linea, facturable),
                  precio_unitario = COALESCE($2, precio_unitario),
                  descripcion = COALESCE($3, descripcion)
-             WHERE id = $4 AND orden_trabajo_id = $5
+             WHERE id = $4 AND orden_trabajo_id = $5 AND anulada_at IS NULL
              RETURNING *`,
             [
                 facturable || null,
@@ -449,7 +543,7 @@ router.patch('/orden/:ordenId/linea/:lineaId', verifyToken, requireRole('adminis
         );
         if (result.rows.length === 0) {
             await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Linea no encontrada en esta orden de trabajo' });
+            return res.status(404).json({ error: 'Linea no encontrada en esta orden de trabajo, o ya anulada' });
         }
         const facturableOt = await recalcularFacturableOt(client, req.params.ordenId);
         await client.query('COMMIT');

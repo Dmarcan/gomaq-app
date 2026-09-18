@@ -22,12 +22,13 @@ function rangoDeFechas(query) {
 }
 
 // Gasto en repuestos por equipo. Cuenta TODAS las lineas, cobradas o no: es el costo real
-// para GOMAQ, no lo facturado al cliente (entrevista el jefe de taller, punto 1).
+// para GOMAQ, no lo facturado al cliente (entrevista el jefe de taller, punto 1). Las anuladas no: el
+// repuesto volvio al furgon, no se gasto.
 const SQL_LINEAS = `
     SELECT ot.maquinaria_id, mi.cantidad, mi.precio_unitario
     FROM movimientos_insumo mi
     JOIN ordenes_trabajo ot ON ot.id = mi.orden_trabajo_id
-    WHERE mi.tipo = 'salida'
+    WHERE mi.tipo = 'salida' AND mi.anulada_at IS NULL
       AND mi.created_at BETWEEN $1 AND $2
 `;
 
@@ -123,7 +124,7 @@ router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativ
                  FROM movimientos_insumo mi
                  JOIN ordenes_trabajo ot ON ot.id = mi.orden_trabajo_id
                  LEFT JOIN insumos i ON i.id = mi.insumo_id
-                 WHERE mi.tipo = 'salida' AND ot.maquinaria_id = $1
+                 WHERE mi.tipo = 'salida' AND mi.anulada_at IS NULL AND ot.maquinaria_id = $1
                    AND mi.created_at BETWEEN $2 AND $3
                  ORDER BY mi.created_at DESC`,
                 [id, desde, hasta]
