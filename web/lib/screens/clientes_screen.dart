@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import 'usuarios_screen.dart';
+import '../widgets/estado_vacio.dart';
 
 class ClientesScreen extends StatefulWidget {
   const ClientesScreen({super.key});
@@ -163,7 +164,14 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
             ? const Center(child: CircularProgressIndicator())
             : _error != null
                 ? Center(child: Text('Error: $_error'))
-                : ListView.builder(
+                : _clientes.isEmpty
+                    ? const EstadoVacio(
+                        icono: Icons.people_outline,
+                        titulo: 'Aún no hay clientes',
+                        mensaje: 'Agrégalos con «Nuevo cliente», o aprueba las cuentas que las empresas '
+                            'solicitan desde el portal en la pestaña «Cuentas por aprobar».',
+                      )
+                    : ListView.builder(
                     padding: const EdgeInsets.all(16),
                     itemCount: _clientes.length,
                     itemBuilder: (context, i) {
@@ -171,7 +179,7 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
                       return Card(
                         child: ListTile(
                           title: Text(c['nombre']),
-                          subtitle: Text('${c['email'] ?? 'sin email'} | ${c['telefono'] ?? 'sin teléfono'}'),
+                          subtitle: Text('${c['email'] ?? 'sin correo'} | ${c['telefono'] ?? 'sin teléfono'}'),
                         ),
                       );
                     },
