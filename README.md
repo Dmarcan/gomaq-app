@@ -1,5 +1,7 @@
 # GOMAQ
 
+[![Tests](https://github.com/Dmarcan/gomaq/actions/workflows/tests.yml/badge.svg)](https://github.com/Dmarcan/gomaq/actions/workflows/tests.yml)
+
 Sistema de Gestión y Comunicación Centralizado para una empresa de arriendo de maquinarias (contexto: seminario/proyecto de título, Ingeniería Civil en Informática). Este README describe el estado real del proyecto para que cualquier conversación nueva (con Claude o cualquier otra persona) pueda retomarlo sin contexto previo.
 
 ## Qué es esto
