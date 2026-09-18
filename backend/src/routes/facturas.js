@@ -3,6 +3,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
+const { rutaArchivo } = require('../utils/rutaArchivo');
 
 const router = express.Router();
 const URL_EXPIRACION_SEGUNDOS = 3600;
@@ -16,7 +17,7 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPd
     }
     let rutaStorage = null;
     try {
-        rutaStorage = `facturas/${id}/${Date.now()}-${req.file.originalname}`;
+        rutaStorage = rutaArchivo(['facturas', Number(id)], req.file.originalname);
         const { error: errorSubida } = await supabase.storage
             .from(BUCKET_DOCUMENTOS)
             .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });

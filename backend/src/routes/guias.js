@@ -3,6 +3,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
+const { rutaArchivo } = require('../utils/rutaArchivo');
 const { calcularInicioCobro, calcularDiasTranscurridos } = require('../utils/diasArriendo');
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
 const { detectarCliente } = require('../utils/detectarCliente');
@@ -91,7 +92,7 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
             clienteGuia = maq.rows[0].cliente_id;
         }
 
-        rutaStorage = `guias/${id}/${Date.now()}-${req.file.originalname}`;
+        rutaStorage = rutaArchivo(['guias', Number(id)], req.file.originalname);
         const { error: errorSubida } = await supabase.storage
             .from(BUCKET_DOCUMENTOS)
             .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });

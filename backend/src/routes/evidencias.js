@@ -4,6 +4,7 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { verificarDuenoOrden } = require('../utils/ordenes');
 const { supabase, BUCKET } = require('../config/supabase');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
+const { rutaArchivo, rutaPerteneceAOrden } = require('../utils/rutaArchivo');
 
 const router = express.Router();
 
@@ -27,8 +28,9 @@ router.post('/:id/evidencia/solicitar-upload', verifyToken, requireRole('mecanic
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
 
-        const base = carpeta ? `${carpeta}/ot-${id}` : `ot-${id}`;
-        const path = `${base}/${Date.now()}-${nombre_archivo}`;
+        // la ruta la arma el servidor; del nombre que manda el telefono solo queda la extension
+        const carpetas = carpeta ? [carpeta, `ot-${Number(id)}`] : [`ot-${Number(id)}`];
+        const path = rutaArchivo(carpetas, nombre_archivo);
         const { data, error } = await supabase.storage.from(BUCKET).createSignedUploadUrl(path);
         if (error) throw error;
 
@@ -46,6 +48,12 @@ router.post('/:id/evidencia/confirmar', verifyToken, requireRole('mecanico'), as
     const { path, tipo } = req.body;
     if (!path) {
         return res.status(400).json({ error: 'path es requerido' });
+    }
+    // Solo se registran fotos subidas a la carpeta de ESTA orden. Antes se aceptaba cualquier
+    // path: un mecanico podia registrar en su OT la ruta de una foto de otra orden (o una firma)
+    // y el GET le devolvia una URL firmada para verla.
+    if (!rutaPerteneceAOrden(path, `ot-${Number(id)}/`)) {
+        return res.status(400).json({ error: 'La foto no corresponde a esta orden de trabajo' });
     }
     // tipo opcional: los APK anteriores al rediseño no lo envian (default 'antes')
     if (tipo !== undefined && !['antes', 'despues'].includes(tipo)) {

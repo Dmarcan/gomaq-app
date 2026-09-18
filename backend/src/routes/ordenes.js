@@ -5,6 +5,7 @@ const { verificarDuenoOrden, contactoCliente } = require('../utils/ordenes');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
+const { rutaPerteneceAOrden } = require('../utils/rutaArchivo');
 
 const router = express.Router();
 
@@ -419,6 +420,10 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
     const tieneRecepcion = persona_recibe !== undefined || sin_persona !== undefined || firma_path !== undefined;
     if (tieneRecepcion && !sin_persona && !persona_recibe) {
         return res.status(400).json({ error: 'Debe indicar persona_recibe o marcar sin_persona' });
+    }
+    // la firma tiene que haberse subido a la carpeta de firmas de esta misma orden
+    if (firma_path && !rutaPerteneceAOrden(firma_path, `firmas/ot-${Number(req.params.id)}/`)) {
+        return res.status(400).json({ error: 'La firma no corresponde a esta orden de trabajo' });
     }
     const client = await pool.connect();
     try {

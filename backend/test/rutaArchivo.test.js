@@ -58,3 +58,41 @@ describe('rutaAdjuntoSolicitud', () => {
         assert.notStrictEqual(a, b);
     });
 });
+
+// Segunda auditoria: guias, facturas, fotos de equipos, documentos de vehiculos y evidencias
+// seguian metiendo el nombre enviado por el usuario dentro de la ruta.
+const { rutaArchivo, segmentoSeguro, rutaPerteneceAOrden } = require('../src/utils/rutaArchivo');
+
+describe('rutaArchivo', () => {
+    test('arma la ruta con las carpetas del servidor y solo la extension del original', () => {
+        assert.match(rutaArchivo(['guias', 12], 'Guia 00904.PDF'), /^guias\/12\/\d+-[a-z0-9]+\.pdf$/);
+    });
+
+    test('el nombre original nunca aporta carpetas ni ..', () => {
+        for (const malo of ['../../x.pdf', 'a/b/c.pdf', '..\\..\\x.pdf', 'ot-99/robada.jpg']) {
+            const ruta = rutaArchivo(['ot-5'], malo);
+            assert.ok(!ruta.includes('..'), malo);
+            assert.equal(ruta.split('/').length, 2, `${malo} no debe crear subcarpetas`);
+        }
+    });
+
+    test('sanea un segmento que viene de un dato, como el codigo de un equipo', () => {
+        assert.equal(segmentoSeguro('GH-204'), 'GH-204');
+        assert.equal(segmentoSeguro('../../etc'), '______etc');
+        assert.equal(segmentoSeguro('a/b'), 'a_b');
+        assert.equal(segmentoSeguro(''), 'sin-nombre');
+    });
+});
+
+describe('rutaPerteneceAOrden', () => {
+    test('acepta una foto subida a la carpeta de la propia orden', () => {
+        assert.equal(rutaPerteneceAOrden('ot-5/1726000000000-abc.jpg', 'ot-5/'), true);
+    });
+
+    test('rechaza fotos de otra orden, firmas y rutas con trucos', () => {
+        for (const ruta of ['ot-6/x.jpg', 'ot-55/x.jpg', 'firmas/ot-5/x.png', 'ot-5/../ot-6/x.jpg',
+            'ot-5//x.jpg', 'ot-5\\..\\x', null, 42]) {
+            assert.equal(rutaPerteneceAOrden(ruta, 'ot-5/'), false, String(ruta));
+        }
+    });
+});

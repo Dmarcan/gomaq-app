@@ -3,6 +3,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaImagen } = require('../middleware/upload');
 const { supabase, BUCKET_EQUIPOS } = require('../config/supabase');
+const { rutaArchivo } = require('../utils/rutaArchivo');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 
 const router = express.Router();
@@ -144,7 +145,7 @@ router.post('/', verifyToken, requireRole('administrativo'), subidaImagen.single
     let fotoPath = null;
     try {
         if (req.file) {
-            fotoPath = `equipos/${codigo}/${Date.now()}-${req.file.originalname}`;
+            fotoPath = rutaArchivo(['equipos', codigo], req.file.originalname);
             const { error: errorSubida } = await supabase.storage
                 .from(BUCKET_EQUIPOS)
                 .upload(fotoPath, req.file.buffer, { contentType: req.file.mimetype });
@@ -231,7 +232,7 @@ router.patch('/:id/foto', verifyToken, requireRole('administrativo'), subidaImag
             return res.status(404).json({ error: 'Maquinaria no encontrada' });
         }
 
-        fotoPath = `equipos/${actual.rows[0].codigo}/${Date.now()}-${req.file.originalname}`;
+        fotoPath = rutaArchivo(['equipos', actual.rows[0].codigo], req.file.originalname);
         const { error: errorSubida } = await supabase.storage
             .from(BUCKET_EQUIPOS)
             .upload(fotoPath, req.file.buffer, { contentType: req.file.mimetype });

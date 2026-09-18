@@ -48,6 +48,13 @@ const app = express();
 // x-powered-by anuncia el stack a cualquiera que mire las cabeceras
 app.disable('x-powered-by');
 
+// Detras de un proxy, la IP de la conexion es la del proxy y no la del usuario. Por defecto solo
+// se confia en loopback (cloudflared corre en el mismo equipo); en Railway u otra nube hay que
+// indicar cuantos saltos de proxy hay, por ejemplo TRUST_PROXY=1. Ver middleware/limites.js.
+const trustProxy = process.env.TRUST_PROXY;
+app.set('trust proxy', trustProxy === undefined ? 'loopback'
+    : /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy);
+
 // Cabeceras de seguridad.
 //
 // El CSP hay que declararlo a mano: el de helmet por defecto es `default-src 'self'`, que deja

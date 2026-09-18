@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
+const { rutaArchivo } = require('../utils/rutaArchivo');
 const multer = require('multer');
 
 const router = express.Router();
@@ -215,7 +216,7 @@ router.post('/:id/documentos', verifyToken, requireRole('mecanico', 'administrat
                 return res.status(403).json({ error: 'Ese vehiculo no esta asignado a usted' });
             }
 
-            rutaStorage = `vehiculos/${req.params.id}/${Date.now()}-${req.file.originalname}`;
+            rutaStorage = rutaArchivo(['vehiculos', Number(req.params.id)], req.file.originalname);
             const { error: errorSubida } = await supabase.storage
                 .from(BUCKET_DOCUMENTOS)
                 .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });

@@ -25,4 +25,38 @@ function rutaAdjuntoSolicitud(clienteId, nombreOriginal) {
     return `solicitudes/cliente-${Number(clienteId) || 0}/${sufijoUnico()}.${extensionSegura(nombreOriginal)}`;
 }
 
-module.exports = { extensionSegura, sufijoUnico, rutaAdjuntoSolicitud };
+/**
+ * Un trozo de ruta armado desde un dato (el codigo de un equipo, por ejemplo). Solo letras,
+ * numeros, guion y guion bajo: un `/` crearia carpetas y un `..` saldria de la propia.
+ */
+function segmentoSeguro(texto) {
+    const limpio = String(texto ?? '').replace(/[^A-Za-z0-9_-]/g, '_').slice(0, 60);
+    return limpio || 'sin-nombre';
+}
+
+/**
+ * Ruta de cualquier archivo subido: la carpeta la decide el servidor y del nombre original solo
+ * se conserva la extension. Es la misma regla de rutaAdjuntoSolicitud, generalizada: la segunda
+ * auditoria encontro guias, facturas, fotos de equipos, documentos de vehiculos y evidencias
+ * que todavia metian el nombre enviado por el usuario dentro de la ruta.
+ *
+ * @param {Array<string|number>} carpetas  cada una se sanea con segmentoSeguro
+ */
+function rutaArchivo(carpetas, nombreOriginal) {
+    const base = carpetas.map(segmentoSeguro).join('/');
+    return `${base}/${sufijoUnico()}.${extensionSegura(nombreOriginal)}`;
+}
+
+/**
+ * Si una ruta que devuelve el cliente (la de una foto o una firma ya subida) esta dentro de la
+ * carpeta esperada. Sin `..` ni barras dobles, que permitirian apuntar a otra carpeta aunque el
+ * prefijo coincida.
+ */
+function rutaPerteneceAOrden(ruta, prefijo) {
+    if (typeof ruta !== 'string' || !ruta.startsWith(prefijo)) return false;
+    return !ruta.includes('..') && !ruta.includes('//') && !ruta.includes('\\');
+}
+
+module.exports = {
+    extensionSegura, sufijoUnico, rutaAdjuntoSolicitud, segmentoSeguro, rutaArchivo, rutaPerteneceAOrden,
+};
