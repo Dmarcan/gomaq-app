@@ -1,0 +1,85 @@
+# Tests del backend en cada push y pull request.
+#
+# Railway despliega main automaticamente, con "Wait for CI": si este workflow falla, ese commit no
+# llega a produccion. Por eso corren los tres niveles de la bateria, no solo las funciones puras:
+#
+#   - reglas de negocio y autorizacion (sin base de datos)
+#   - escritura: reintentos de la cola offline, anulacion de lineas, ciclo de vida de la OT
+#   - extremo a extremo: contra el backend levantado aca mismo, no contra produccion
+#
+# La base es un Postgres temporal que GitHub crea y borra en cada ejecucion. Los secretos son de
+# prueba: el workflow no necesita ninguna credencial real (Supabase no se llama en estos casos).
+
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: gomaq
+          POSTGRES_PASSWORD: gomaq
+          POSTGRES_DB: gomaq
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U gomaq"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgres://gomaq:gomaq@localhost:5432/gomaq
+      JWT_SECRET: secreto-solo-para-ci
+      SUPABASE_URL: https://ci.invalid
+      SUPABASE_SERVICE_KEY: clave-solo-para-ci
+      GOMAQ_TEST_ESCRITURA: '1'
+      GOMAQ_TEST_URL: http://localhost:3000
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+
+      - run: npm ci
+
+      # el mismo script que corre Railway al arrancar: si una migracion no aplica sobre una base
+      # vacia, falla aca antes de llegar a produccion
+      - name: Aplicar esquema y migraciones
+        run: node scripts/migrar.js
+
+      - name: Cargar datos de prueba
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f ../db/scripts/semilla_pruebas.sql
+
+      - name: Levantar el backend para los tests de extremo a extremo
+        run: |
+          node server.js > servidor.log 2>&1 &
+          for i in $(seq 1 60); do
+            curl -sf http://localhost:3000/api/health && exit 0
+            sleep 1
+          done
+          cat servidor.log
+          exit 1
+
+      - name: Tests
+        run: npm test
+
+      - name: Log del backend si algo fallo
+        if: failure()
+        run: cat servidor.log || true

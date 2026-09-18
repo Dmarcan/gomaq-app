@@ -33,11 +33,13 @@ Una base creada a mano, sin registro, no se toca: el script no puede saber qué 
 
 ## Cómo desplegar un cambio
 
-**Backend y panel web**, que van juntos en el mismo servicio:
-```bash
-railway up --service gomaq-app
-```
-Sube el código de la carpeta actual y construye la imagen. Al arrancar se aplican las migraciones pendientes, y la versión anterior se reemplaza solo si `/api/health` responde. Para seguirlo: `railway logs --service gomaq-app --build`.
+**Backend y panel web**, que van juntos en el mismo servicio: **basta con `git push` a `main`.**
+
+1. GitHub Actions (`.github/workflows/tests.yml`) corre los tres niveles de tests sobre un Postgres temporal: reglas de negocio, escritura y extremo a extremo contra el backend levantado en el mismo job. Aplica las migraciones con el mismo script que Railway, así que una migración que no aplica sobre una base vacía también falla aquí.
+2. Railway está conectado al repositorio con "Wait for CI": despliega el commit solo si ese workflow pasa.
+3. Al arrancar se aplican las migraciones pendientes, y la versión anterior se reemplaza solo si `/api/health` responde.
+
+Para seguir un despliegue: `railway logs --service gomaq-app --build`. Para desplegar sin pasar por GitHub (una emergencia): `railway up --service gomaq-app` desde la raíz del repositorio.
 
 **App del Mecánico:** apunta por defecto a la URL de Railway, así que funciona con datos móviles en terreno. Para generar el APK de producción:
 ```bash
