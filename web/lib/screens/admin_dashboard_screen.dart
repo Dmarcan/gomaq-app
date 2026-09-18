@@ -82,7 +82,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                           children: [
                             Text(auth.nombre ?? '',
                                 style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-                            Text(auth.rol ?? '', style: const TextStyle(color: Colors.white54, fontSize: 11)),
+                            Text(_etiquetaRol(auth.rol), style: const TextStyle(color: Colors.white70, fontSize: 12)),
                           ],
                         ),
                       ),
@@ -137,7 +137,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           padding: EdgeInsets.fromLTRB(24, grupoAnterior == null ? 4 : 18, 24, 6),
           child: Text(
             item.grupo.toUpperCase(),
-            style: const TextStyle(color: Colors.white38, fontSize: 10, fontWeight: FontWeight.bold, letterSpacing: 1),
+            // white38 a 10 px no se leía (WCAG 1.4.3); white70 da 8,5:1 sobre la barra
+            style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1),
           ),
         ));
         grupoAnterior = item.grupo;
@@ -156,6 +157,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         borderRadius: BorderRadius.circular(8),
         child: InkWell(
           borderRadius: BorderRadius.circular(8),
+          // el foco por defecto es un sombreado oscuro, invisible sobre esta barra
+          focusColor: Colors.white24,
           onTap: () => context.go(item.ruta),
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -176,4 +179,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
       ),
     );
   }
+
+  static String _etiquetaRol(String? rol) => switch (rol) {
+        'gerente' => 'Gerente',
+        'administrativo' => 'Administrativo',
+        _ => rol ?? '',
+      };
 }

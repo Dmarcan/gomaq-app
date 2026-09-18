@@ -133,7 +133,7 @@ class _AsignarDialogState extends State<_AsignarDialog> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text('OT #${o['id']}', style: const TextStyle(fontSize: 12, color: GomaqColors.primario, fontWeight: FontWeight.bold)),
+                  Text('OT #${o['id']}', style: const TextStyle(fontSize: 12, color: GomaqColors.accion, fontWeight: FontWeight.bold)),
                   Text('${o['maquinaria_codigo'] ?? ''}', style: const TextStyle(fontWeight: FontWeight.bold)),
                   Text('Cliente: ${o['cliente_nombre'] ?? '-'} · Motivo: ${o['motivo'] ?? '-'}'),
                 ],

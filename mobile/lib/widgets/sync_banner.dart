@@ -20,7 +20,7 @@ class SesionExpiradaBanner extends StatelessWidget {
           const Flexible(
             child: Text(
               'Tu sesion expiro - vuelve a iniciar sesion para sincronizar (tu trabajo esta guardado)',
-              style: TextStyle(fontSize: 12, color: GomaqColors.textoPrimario),
+              style: TextStyle(fontSize: 13, color: GomaqColors.textoPrimario),
             ),
           ),
           TextButton(
@@ -84,7 +84,7 @@ class SyncBanner extends StatelessWidget {
             Flexible(
               child: Text(
                 texto,
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: color),
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color),
               ),
             ),
           ],

@@ -116,20 +116,21 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
         const Text('Crear cuenta de Cliente', style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
         const SizedBox(height: 4),
         const Text(
-          'Completa tus datos. Un administrador revisará tu solicitud antes de activar tu cuenta.',
+          'Completa tus datos. Un administrador revisará tu solicitud antes de activar tu cuenta. '
+          'Los campos con * son obligatorios.',
           style: TextStyle(color: Colors.black54, fontSize: 13),
         ),
         const SizedBox(height: 20),
-        TextField(controller: _nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre de contacto')),
+        TextField(controller: _nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre de contacto *')),
         const SizedBox(height: 12),
-        TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: 'Correo electrónico'), keyboardType: TextInputType.emailAddress),
+        TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: 'Correo electrónico *'), keyboardType: TextInputType.emailAddress),
         const SizedBox(height: 12),
         Row(
           children: [
             Expanded(
               child: TextField(
                 controller: _passwordCtrl,
-                decoration: const InputDecoration(labelText: 'Contraseña'),
+                decoration: const InputDecoration(labelText: 'Contraseña *', helperText: 'Mínimo 8 caracteres'),
                 obscureText: true,
               ),
             ),
@@ -137,7 +138,7 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
             Expanded(
               child: TextField(
                 controller: _confirmarCtrl,
-                decoration: const InputDecoration(labelText: 'Confirmar'),
+                decoration: const InputDecoration(labelText: 'Repetir contraseña *'),
                 obscureText: true,
               ),
             ),
@@ -146,7 +147,7 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
         const SizedBox(height: 20),
         const Text('DATOS DE LA EMPRESA QUE REPRESENTAS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
-        TextField(controller: _empresaCtrl, decoration: const InputDecoration(labelText: 'Nombre de la empresa')),
+        TextField(controller: _empresaCtrl, decoration: const InputDecoration(labelText: 'Nombre de la empresa *')),
         const SizedBox(height: 12),
         TextField(controller: _rutCtrl, decoration: const InputDecoration(labelText: 'RUT de la empresa')),
         const SizedBox(height: 12),
@@ -175,7 +176,10 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
         if (_error != null)
           Padding(
             padding: const EdgeInsets.only(bottom: 16),
-            child: Text(_error!, style: const TextStyle(color: Colors.red)),
+            child: Semantics(
+              liveRegion: true,
+              child: Text(_error!, style: const TextStyle(color: GomaqColors.estadoNegativo)),
+            ),
           ),
         SizedBox(
           width: double.infinity,

@@ -19,7 +19,7 @@ class EstadoChip extends StatelessWidget {
         GomaqColors.etiquetaEstado(estado).toUpperCase(),
         style: TextStyle(
           color: color,
-          fontSize: 11,
+          fontSize: 12,
           fontWeight: FontWeight.bold,
           letterSpacing: 0.8,
         ),

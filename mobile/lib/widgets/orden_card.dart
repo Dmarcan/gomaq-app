@@ -45,31 +45,24 @@ class OrdenCard extends StatelessWidget {
                 _fila(Icons.business_outlined, orden.clienteNombre!),
               ],
               const SizedBox(height: 14),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: onAbrir,
-                      style: OutlinedButton.styleFrom(
-                        padding: const EdgeInsets.symmetric(vertical: 10),
-                        side: const BorderSide(color: GomaqColors.bordeSutil),
-                        foregroundColor: GomaqColors.textoPrimario,
-                      ),
-                      child: const Text('Ver detalles', style: TextStyle(fontSize: 13)),
-                    ),
-                  ),
-                  if (_activa) ...[
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: FilledButton.icon(
+              // Un solo boton: antes "Ver detalles", "Continuar" y la tarjeta hacian lo mismo,
+              // tres objetivos para una sola accion. La tarjeta entera sigue siendo tocable.
+              SizedBox(
+                width: double.infinity,
+                child: _activa
+                    ? FilledButton.icon(
                         onPressed: onAbrir,
-                        style: FilledButton.styleFrom(padding: const EdgeInsets.symmetric(vertical: 10)),
-                        icon: const Icon(Icons.play_arrow, size: 18),
-                        label: const Text('Continuar', style: TextStyle(fontSize: 13)),
+                        icon: const Icon(Icons.play_arrow, size: 20),
+                        label: const Text('Continuar', style: TextStyle(fontSize: 14)),
+                      )
+                    : OutlinedButton(
+                        onPressed: onAbrir,
+                        style: OutlinedButton.styleFrom(
+                          side: const BorderSide(color: GomaqColors.bordeSutil),
+                          foregroundColor: GomaqColors.textoPrimario,
+                        ),
+                        child: const Text('Ver detalles', style: TextStyle(fontSize: 14)),
                       ),
-                    ),
-                  ],
-                ],
               ),
             ],
           ),

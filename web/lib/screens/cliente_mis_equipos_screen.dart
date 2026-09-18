@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/estado_chip.dart';
 
 class ClienteMisEquiposScreen extends StatefulWidget {
   const ClienteMisEquiposScreen({super.key});
@@ -85,11 +86,7 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
                 child: ListTile(
                   title: Text('${m['codigo']} - ${m['tipo']}'),
                   subtitle: Text(m['ubicacion'] ?? 'Sin ubicacion registrada'),
-                  trailing: Chip(
-                    label: Text(m['estado']),
-                    backgroundColor: GomaqColors.fondoChip(m['estado']),
-                    labelStyle: TextStyle(color: GomaqColors.colorEstado(m['estado'])),
-                  ),
+                  trailing: EstadoChip(estado: m['estado']),
                   onTap: () => _solicitarAsistencia(m),
                 ),
               ),
@@ -164,8 +161,8 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
       child: OutlinedButton(
         onPressed: () => setState(() => _tipo = valor),
         style: OutlinedButton.styleFrom(
-          backgroundColor: activo ? GomaqColors.primario : Colors.white,
-          foregroundColor: activo ? Colors.white : GomaqColors.primario,
+          backgroundColor: activo ? GomaqColors.accion : Colors.white,
+          foregroundColor: activo ? Colors.white : GomaqColors.accion,
         ),
         child: Text(etiqueta, textAlign: TextAlign.center),
       ),

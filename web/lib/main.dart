@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/semantics.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:provider/provider.dart';
 import 'router.dart';
@@ -10,6 +11,13 @@ void main() {
   // para cualquier ruta que no sea /api (el fallback de SPA en server.js), que es justo lo
   // que esta estrategia necesita para que un F5 en /flota no termine en un 404.
   usePathUrlStrategy();
+
+  // Flutter Web deja apagada la capa de accesibilidad hasta que alguien encuentra un botón
+  // oculto ("Enable accessibility"): un lector de pantalla no leía NADA del panel. Se enciende
+  // desde el arranque para que el contenido exista en el árbol de accesibilidad del navegador.
+  WidgetsFlutterBinding.ensureInitialized();
+  SemanticsBinding.instance.ensureSemantics();
+
   runApp(const GomaqWebApp());
 }
 

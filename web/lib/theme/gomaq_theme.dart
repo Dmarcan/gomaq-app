@@ -4,25 +4,43 @@ import 'package:flutter/material.dart';
 class GomaqColors {
   GomaqColors._();
 
+  /// Naranja de marca: logo, iconos y acentos. NO para texto ni para el fondo de un botón con
+  /// texto blanco: blanco sobre este naranja da 3,49:1 y WCAG AA pide 4,5:1.
   static const primario = Color(0xFFEA5B1F);
+
+  /// Naranja de acción: botones, enlaces y todo lo que lleve texto. 5,18:1 con blanco.
+  static const accion = Color(0xFFC2410C);
+
   static const sidebarOscuro = Color(0xFF1B1210);
   static const sidebarResaltado = Color(0xFF3D2318);
   static const fondoCalido = Color(0xFFFDF6F1);
 
-  static const estadoPositivo = Color(0xFF2F8F4E); // operativa / enviado
-  static const estadoAdvertencia = Color(0xFFC9820A); // en_mantencion / pendiente
-  static const estadoNegativo = Color(0xFFB23A2E); // fuera_de_servicio / error
+  static const estadoPositivo = Color(0xFF2F8F4E); // operativa / finalizada
+  static const estadoAdvertencia = Color(0xFFC9820A); // en curso / en mantención
+  static const estadoNegativo = Color(0xFFB23A2E); // fuera de servicio / error
+  static const estadoNeutro = Color(0xFF6B7075); // pendiente / asignada
 
+  // Texto sobre el fondo tenue de cada estado. Los colores de arriba sirven para puntos, bordes
+  // e iconos, pero como texto no llegaban al contraste mínimo (el ámbar daba 2,69:1).
+  static const _textoPositivo = Color(0xFF1F6B38); // 5,44:1
+  static const _textoAdvertencia = Color(0xFF8A5A00); // 5,07:1
+  static const _textoNegativo = Color(0xFFB23A2E); // 4,71:1
+  static const _textoNeutro = Color(0xFF4A4F54);
+
+  /// Mismo criterio que la app del mecánico, para que un estado tenga el mismo color en
+  /// las dos: gris lo que aún no empieza, ámbar lo que está en curso.
   static Color colorEstado(String estado) {
     switch (estado) {
       case 'operativa':
       case 'enviado':
       case 'finalizada':
       case 'convertida':
+      case 'aprobada':
         return estadoPositivo;
-      case 'en_mantencion':
       case 'pendiente':
       case 'asignada':
+        return estadoNeutro;
+      case 'en_mantencion':
       case 'en_terreno':
       case 'en_reparacion':
         return estadoAdvertencia;
@@ -31,13 +49,68 @@ class GomaqColors {
     }
   }
 
+  static Color textoEstado(String estado) {
+    final base = colorEstado(estado);
+    if (base == estadoPositivo) return _textoPositivo;
+    if (base == estadoAdvertencia) return _textoAdvertencia;
+    if (base == estadoNeutro) return _textoNeutro;
+    return _textoNegativo;
+  }
+
   static Color fondoChip(String estado) => colorEstado(estado).withValues(alpha: 0.15);
+
+  /// Nombre de un estado para mostrarlo. Antes el panel mostraba el valor de la base tal cual
+  /// ("en_terreno", "operativa"), que no es para personas.
+  static String etiquetaEstado(String? estado) {
+    switch (estado) {
+      case null:
+        return '-';
+      case 'operativa':
+        return 'Operativa';
+      case 'en_mantencion':
+        return 'En mantención';
+      case 'fuera_de_servicio':
+        return 'Fuera de servicio';
+      case 'pendiente':
+        return 'Pendiente';
+      case 'asignada':
+        return 'Asignada';
+      case 'en_terreno':
+        return 'En terreno';
+      case 'en_reparacion':
+        return 'En reparación';
+      case 'finalizada':
+        return 'Finalizada';
+      case 'convertida':
+        return 'Orden creada';
+      case 'enviado':
+        return 'Enviado';
+      case 'error':
+        return 'Error';
+      case 'aprobada':
+        return 'Aprobada';
+      case 'rechazada':
+        return 'Rechazada';
+      default:
+        final texto = estado.replaceAll('_', ' ');
+        return texto.isEmpty ? texto : texto[0].toUpperCase() + texto.substring(1);
+    }
+  }
 }
+
+/// Borde visible cuando el control tiene el foco del teclado. Sin esto, navegar con Tab solo
+/// mostraba un sombreado gris casi invisible (WCAG 2.4.7).
+WidgetStateProperty<BorderSide?> _bordeFoco(Color color, {BorderSide? normal}) =>
+    WidgetStateProperty.resolveWith(
+      (estados) => estados.contains(WidgetState.focused) ? BorderSide(color: color, width: 2.5) : normal,
+    );
 
 ThemeData construirTemaGomaq() {
   final colorScheme = ColorScheme.fromSeed(
     seedColor: GomaqColors.primario,
-    primary: GomaqColors.primario,
+    // el primario del esquema es el que usan los enlaces, pestañas y botones de texto: tiene
+    // que ser el naranja de acción, que sí cumple contraste sobre blanco
+    primary: GomaqColors.accion,
     brightness: Brightness.light,
   );
 
@@ -45,6 +118,7 @@ ThemeData construirTemaGomaq() {
     useMaterial3: true,
     colorScheme: colorScheme,
     scaffoldBackgroundColor: Colors.white,
+    focusColor: GomaqColors.accion.withValues(alpha: 0.18),
     appBarTheme: const AppBarTheme(
       backgroundColor: Colors.white,
       foregroundColor: Colors.black87,
@@ -61,23 +135,30 @@ ThemeData construirTemaGomaq() {
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: GomaqColors.primario,
+        backgroundColor: GomaqColors.accion,
         foregroundColor: Colors.white,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-      ),
+      ).copyWith(side: _bordeFoco(Colors.black87)),
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        foregroundColor: GomaqColors.primario,
-        side: const BorderSide(color: GomaqColors.primario),
+        foregroundColor: GomaqColors.accion,
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
-      ),
+      ).copyWith(side: _bordeFoco(Colors.black87, normal: const BorderSide(color: GomaqColors.accion))),
     ),
-    floatingActionButtonTheme: const FloatingActionButtonThemeData(
-      backgroundColor: GomaqColors.primario,
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(foregroundColor: GomaqColors.accion)
+          .copyWith(side: _bordeFoco(GomaqColors.accion)),
+    ),
+    iconButtonTheme: IconButtonThemeData(
+      style: ButtonStyle(side: _bordeFoco(GomaqColors.accion)),
+    ),
+    floatingActionButtonTheme: FloatingActionButtonThemeData(
+      backgroundColor: GomaqColors.accion,
       foregroundColor: Colors.white,
+      focusColor: Colors.black.withValues(alpha: 0.25),
     ),
     inputDecorationTheme: InputDecorationTheme(
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),

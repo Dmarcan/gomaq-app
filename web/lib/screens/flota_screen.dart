@@ -4,7 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
-import '../theme/gomaq_theme.dart';
+import '../widgets/estado_chip.dart';
 import '../widgets/ficha_tecnica_campos.dart';
 import 'maquinaria_perfil_screen.dart';
 
@@ -451,11 +451,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
                                         : const CircleAvatar(child: Icon(Icons.precision_manufacturing)),
                                     title: Text('${m['codigo']} - ${m['tipo']}'),
                                     subtitle: Text('Cliente: ${m['cliente'] ?? '-'} | ${m['ubicacion'] ?? 'Sin ubicacion'}'),
-                                    trailing: Chip(
-                                      label: Text(m['estado']),
-                                      backgroundColor: GomaqColors.fondoChip(m['estado']),
-                                      labelStyle: TextStyle(color: GomaqColors.colorEstado(m['estado'])),
-                                    ),
+                                    trailing: EstadoChip(estado: m['estado']),
                                     onTap: () => Navigator.push(
                                       context,
                                       MaterialPageRoute(builder: (_) => MaquinariaPerfilScreen(maquinariaId: m['id'])),

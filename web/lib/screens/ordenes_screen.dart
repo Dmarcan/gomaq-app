@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/estado_chip.dart';
 
 class OrdenesScreen extends StatefulWidget {
   const OrdenesScreen({super.key});
@@ -137,11 +138,7 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
                         child: ListTile(
                           title: Text('OT #${o['id']} - ${o['maquinaria_codigo'] ?? ''}'),
                           subtitle: Text('${o['motivo'] ?? ''} | Cliente: ${o['cliente_nombre'] ?? '-'}'),
-                          trailing: Chip(
-                            label: Text(o['estado']),
-                            backgroundColor: GomaqColors.fondoChip(o['estado']),
-                            labelStyle: TextStyle(color: GomaqColors.colorEstado(o['estado'])),
-                          ),
+                          trailing: EstadoChip(estado: o['estado']),
                           onTap: () => _abrirDetalle(o),
                         ),
                       );

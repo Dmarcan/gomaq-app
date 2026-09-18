@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
+import '../theme/gomaq_theme.dart';
 
 class UsuariosScreen extends StatefulWidget {
   const UsuariosScreen({super.key});
@@ -268,8 +269,8 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
                       ),
                       TextButton.icon(
                         onPressed: () => _rechazar(s['id']),
-                        icon: const Icon(Icons.close, size: 16, color: Colors.red),
-                        label: const Text('Rechazar', style: TextStyle(color: Colors.red)),
+                        icon: const Icon(Icons.close, size: 16, color: GomaqColors.estadoNegativo),
+                        label: const Text('Rechazar', style: TextStyle(color: GomaqColors.estadoNegativo)),
                       ),
                     ],
                   ),

@@ -248,7 +248,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
                     const Icon(Icons.upload_file, size: 32, color: Colors.grey),
                     const SizedBox(height: 8),
                     Text(_archivo?.name ?? 'Haz clic para buscar el PDF de la guía', textAlign: TextAlign.center),
-                    if (_archivo == null) const Text('Solo PDF · hasta 10 MB', style: TextStyle(fontSize: 12, color: Colors.grey)),
+                    if (_archivo == null) Text('Solo PDF · hasta 10 MB', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
                   ],
                 ),
               ),
@@ -369,8 +369,8 @@ class _GuiasScreenState extends State<GuiasScreen> {
     return OutlinedButton(
       onPressed: () => setState(() => _tipo = valor),
       style: OutlinedButton.styleFrom(
-        backgroundColor: activo ? GomaqColors.primario : Colors.white,
-        foregroundColor: activo ? Colors.white : GomaqColors.primario,
+        backgroundColor: activo ? GomaqColors.accion : Colors.white,
+        foregroundColor: activo ? Colors.white : GomaqColors.accion,
       ),
       child: Text(etiqueta),
     );

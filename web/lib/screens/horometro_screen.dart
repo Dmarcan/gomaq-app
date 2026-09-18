@@ -102,8 +102,8 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
         const SizedBox(height: 12),
         TabBar(
           controller: _tabController,
-          labelColor: GomaqColors.primario,
-          indicatorColor: GomaqColors.primario,
+          labelColor: GomaqColors.accion,
+          indicatorColor: GomaqColors.accion,
           tabs: [
             Tab(text: 'Por medir este mes (${_pendientes.length})'),
             Tab(text: 'Mantención (${_alertas.length})'),

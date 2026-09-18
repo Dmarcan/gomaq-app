@@ -354,7 +354,7 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Factura Electrónica', style: const TextStyle(fontWeight: FontWeight.bold, color: GomaqColors.primario)),
+            Text('Factura Electrónica', style: const TextStyle(fontWeight: FontWeight.bold, color: GomaqColors.accion)),
             const SizedBox(height: 8),
             Row(
               children: [

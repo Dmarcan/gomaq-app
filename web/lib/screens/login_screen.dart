@@ -56,7 +56,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 12),
                   const Text('GOMAQ', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-                  const Text('Panel de Gestion', style: TextStyle(fontSize: 14, color: Colors.grey)),
+                  Text('Panel de Gestión', style: TextStyle(fontSize: 14, color: Colors.grey.shade700)),
                   const SizedBox(height: 32),
                   if (context.watch<AuthService>().mensajeSesion != null)
                     Container(
@@ -91,7 +91,11 @@ class _LoginScreenState extends State<LoginScreen> {
                   if (_error != null)
                     Padding(
                       padding: const EdgeInsets.only(bottom: 16),
-                      child: Text(_error!, style: const TextStyle(color: Colors.red)),
+                      // liveRegion: el lector de pantalla anuncia el error apenas aparece
+                      child: Semantics(
+                        liveRegion: true,
+                        child: Text(_error!, style: const TextStyle(color: GomaqColors.estadoNegativo)),
+                      ),
                     ),
                   SizedBox(
                     width: double.infinity,

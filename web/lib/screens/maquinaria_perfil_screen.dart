@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/estado_chip.dart';
 import '../widgets/ficha_tecnica_campos.dart';
 import '../utils/formato.dart';
 
@@ -307,11 +308,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
                       if (categoria != null)
                         Text(etiquetasCategoria[categoria] ?? '', style: const TextStyle(color: Colors.black54, fontSize: 13)),
                       const SizedBox(height: 10),
-                      Chip(
-                        label: Text(m['estado']),
-                        backgroundColor: GomaqColors.fondoChip(m['estado']),
-                        labelStyle: TextStyle(color: GomaqColors.colorEstado(m['estado'])),
-                      ),
+                      EstadoChip(estado: m['estado']),
                       const SizedBox(height: 14),
                       if (auth.esAdministrativo)
                         Wrap(
@@ -404,11 +401,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
                             '${ot['fecha_cierre'] != null ? ' → ${(ot['fecha_cierre'] as String).split('T').first}' : ''}',
                           ),
                           isThreeLine: true,
-                          trailing: Chip(
-                            label: Text(ot['estado']),
-                            backgroundColor: GomaqColors.fondoChip(ot['estado']),
-                            labelStyle: TextStyle(color: GomaqColors.colorEstado(ot['estado'])),
-                          ),
+                          trailing: EstadoChip(estado: ot['estado']),
                         ),
                       ),
                     ],

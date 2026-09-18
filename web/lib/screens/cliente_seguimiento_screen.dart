@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/estado_chip.dart';
 
 class ClienteSeguimientoScreen extends StatefulWidget {
   const ClienteSeguimientoScreen({super.key});
@@ -53,11 +54,7 @@ class _ClienteSeguimientoScreenState extends State<ClienteSeguimientoScreen> {
             child: ListTile(
               title: Text('${s['maquinaria_codigo']} · Solicitud #SOL-${s['id']}'),
               subtitle: Text(s['descripcion']),
-              trailing: Chip(
-                label: Text(s['ot_estado'] ?? s['estado']),
-                backgroundColor: GomaqColors.fondoChip(s['ot_estado'] ?? s['estado']),
-                labelStyle: TextStyle(color: GomaqColors.colorEstado(s['ot_estado'] ?? s['estado'])),
-              ),
+              trailing: EstadoChip(estado: s['ot_estado'] ?? s['estado']),
               onTap: () => showDialog(context: context, builder: (_) => _SeguimientoDialog(solicitud: s)),
             ),
           );
@@ -122,7 +119,7 @@ class _SeguimientoDialog extends StatelessWidget {
                 decoration: BoxDecoration(color: GomaqColors.primario.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8)),
                 child: Row(
                   children: [
-                    CircleAvatar(backgroundColor: GomaqColors.primario, child: Text((mecanico as String).substring(0, 1), style: const TextStyle(color: Colors.white))),
+                    CircleAvatar(backgroundColor: GomaqColors.accion, child: Text((mecanico as String).substring(0, 1), style: const TextStyle(color: Colors.white))),
                     const SizedBox(width: 12),
                     Text(mecanico, style: const TextStyle(fontWeight: FontWeight.bold)),
                   ],

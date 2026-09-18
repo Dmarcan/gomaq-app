@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
-import '../theme/gomaq_theme.dart';
+import '../widgets/estado_chip.dart';
 
 class SolicitudesScreen extends StatefulWidget {
   const SolicitudesScreen({super.key});
@@ -102,11 +102,7 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
                                     onPressed: () => _convertir(s['id']),
                                     child: const Text('Convertir en OT'),
                                   )
-                                : Chip(
-                                    label: Text(s['estado']),
-                                    backgroundColor: GomaqColors.fondoChip(s['estado']),
-                                    labelStyle: TextStyle(color: GomaqColors.colorEstado(s['estado'])),
-                                  ),
+                                : EstadoChip(estado: s['estado']),
                           ),
                           // El cliente podía adjuntar una foto de la falla desde el portal, pero
                           // no se mostraba en ninguna pantalla: se guardaba y nadie la veía.

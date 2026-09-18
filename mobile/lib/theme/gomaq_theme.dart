@@ -5,7 +5,12 @@ import 'package:flutter/material.dart';
 class GomaqColors {
   GomaqColors._();
 
+  /// Naranja de marca: titulos, iconos y acentos sobre el fondo oscuro (4,84:1).
   static const primario = Color(0xFFEA5B1F);
+
+  /// Fondo de los botones con texto blanco. Blanco sobre el naranja de marca da 3,49:1 y
+  /// WCAG AA pide 4,5:1; sobre este da 5,18:1.
+  static const accion = Color(0xFFC2410C);
 
   // Tema oscuro industrial
   static const fondoOscuro = Color(0xFF1A1D21);
@@ -19,7 +24,8 @@ class GomaqColors {
   // saturados que en el panel web para mantener contraste sobre fondo oscuro.
   static const estadoPositivo = Color(0xFF4CAF6E); // finalizada
   static const estadoAdvertencia = Color(0xFFF59E0B); // en progreso
-  static const estadoNegativo = Color(0xFFE05B4B); // error / fuera de servicio
+  // mas claro que el del panel: sobre el fondo oscuro el rojo anterior daba 3,91:1 como texto
+  static const estadoNegativo = Color(0xFFF07A6B); // error / fuera de servicio
   static const estadoNeutro = Color(0xFF9BA1A8); // asignada / pendiente
 
   static Color colorEstado(String estado) {
@@ -97,7 +103,9 @@ ThemeData construirTemaGomaq() {
     ),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
-        backgroundColor: GomaqColors.primario,
+        backgroundColor: GomaqColors.accion,
+        // 48 dp de alto como minimo: la app se usa en terreno, muchas veces con guantes
+        minimumSize: const Size(64, 48),
         foregroundColor: Colors.white,
         disabledBackgroundColor: GomaqColors.superficieElevada,
         disabledForegroundColor: GomaqColors.textoSecundario,
@@ -109,13 +117,14 @@ ThemeData construirTemaGomaq() {
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
         foregroundColor: GomaqColors.primario,
+        minimumSize: const Size(64, 48),
         side: const BorderSide(color: GomaqColors.primario),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
       ),
     ),
     floatingActionButtonTheme: const FloatingActionButtonThemeData(
-      backgroundColor: GomaqColors.primario,
+      backgroundColor: GomaqColors.accion,
       foregroundColor: Colors.white,
     ),
     inputDecorationTheme: InputDecorationTheme(
