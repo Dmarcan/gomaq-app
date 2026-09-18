@@ -1,0 +1,11 @@
+# Solo backend/ y web/ entran a la imagen; el resto no hace falta y hace mas lento el build.
+.git
+**/node_modules
+**/.dart_tool
+**/build
+**/.env
+backend/public
+backend/uploads
+mobile
+INFORME
+docs

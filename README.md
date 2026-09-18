@@ -10,50 +10,42 @@ Un sistema con 3 aplicaciones que comparten un mismo backend:
 - **App del Mecánico** (`mobile/`) — Flutter, Android, **offline-first** (SQLite local + cola de sincronización)
 - **Panel Web** (`web/`) — Flutter Web, con vistas distintas por rol: Administrativo/Gerente (panel de gestión) y Cliente (portal de seguimiento)
 
-## Infraestructura actual (todo corre en un Dell OptiPlex GX520 viejo, no en la nube)
+## Infraestructura actual: Railway
 
-- **Servidor:** un Dell OptiPlex GX520 (2005, 3GB RAM, HDD) con Debian 13, nombre de host `debianMARCAN`, IP LAN `192.168.1.132` (por DHCP: ya cambio una vez desde `192.168.1.29`, conviene fijarle una reserva en el router porque la app movil la trae cableada), usuario `dmarcan`
-- **Por qué no está en la nube:** se decidió partir en hardware local para no gastar en cloud antes de tener el MVP funcionando; migrar a AWS/GCP quedó para más adelante (la arquitectura ya está pensada para eso, ver el informe del seminario)
-- **Backend:** corre como servicio `systemd` (`gomaq-backend`), puerto 3000, arranca solo al encender el equipo
-- **Base de datos:** PostgreSQL 17, base `gomaq`, usuario `gomaq_user` (contraseña en el `.env` del backend en el servidor, no está en este repo)
-- **Acceso externo:** Cloudflare Tunnel modo "Quick Tunnel" (`cloudflared-quick.service`) — **la URL pública cambia cada vez que se reinicia el servicio o el equipo**. Para verla:
-  ```bash
-  ssh dmarcan@192.168.1.132
-  journalctl -u cloudflared-quick --no-pager | grep -o "https://[a-zA-Z0-9.-]*trycloudflare.com" | tail -1
-  ```
-  Esa misma URL sirve tanto la API (`/api/*`) como el Panel Web (`/`), porque el build de Flutter Web se sirve como estático desde el propio backend Node — no hay un segundo túnel.
-- **Todos los archivos pesados van a Supabase Storage**, en buckets privados con URLs firmadas temporales (1h) — nunca URLs públicas permanentes:
-  - `evidencias-ot` — fotos de evidencia subidas por el mecánico desde terreno
-  - `documentos-gomaq` — PDFs de guías y facturas subidos por el administrativo desde el panel web
-- `backend/uploads/` prácticamente no se usa — quedó de una decisión anterior (guías/facturas en disco local) que se corrigió; puede tener archivos de prueba viejos ahí, no se están sirviendo
-- **Monitoreo del servidor:** `ssh dmarcan@192.168.1.132` y luego `htop` (ya instalado) para ver CPU/RAM/procesos en vivo
+Desde septiembre de 2026 el sistema corre en [Railway](https://railway.com), proyecto `gomaq`. Antes corría en un Dell OptiPlex GX520 en la oficina, detrás de un Quick Tunnel de Cloudflare cuya URL cambiaba en cada reinicio.
+
+- **URL pública (API y panel web):** https://gomaq-app-production.up.railway.app, con HTTPS. La misma URL sirve la API (`/api/*`) y el panel (`/`), porque el build de Flutter Web se sirve como estático desde el backend Node.
+- **Servicio `gomaq-app`:** se construye con el `Dockerfile` de la raíz, que compila el panel con Flutter 3.47.2 y arma el backend con Node 22. La configuración de despliegue está en `railway.json`: antes de cada despliegue corre `node scripts/migrar.js` y después Railway revisa `/api/health`.
+- **Base de datos:** el servicio `Postgres` del mismo proyecto. `DATABASE_URL` del backend es una referencia (`${{Postgres.DATABASE_URL}}`), así que las credenciales no se copian a mano.
+- **Variables del servicio:** `DATABASE_URL`, `JWT_SECRET` (generado al azar al crear el proyecto), `TRUST_PROXY=1`, `SUPABASE_URL` y `SUPABASE_SERVICE_KEY`. Se ven con `railway variable list --service gomaq-app`.
+- **Todos los archivos pesados van a Supabase Storage**, en buckets privados con URLs firmadas temporales (1 h), nunca URLs públicas permanentes:
+  - `evidencias-ot`: fotos de evidencia subidas por el mecánico desde terreno
+  - `documentos-gomaq`: PDFs de guías y facturas subidos por el administrativo desde el panel web
+- **Logs y métricas:** `railway logs --service gomaq-app` y `railway metrics --service gomaq-app`, o el panel de Railway (`railway open`).
+
+## Migraciones de la base de datos
+
+`db/schema.sql` y `db/migrations/NNN_*.sql` los aplica `backend/scripts/migrar.js` (`npm run migrar`), en orden y una sola vez cada uno. Lleva el registro en la tabla `schema_migraciones`. En Railway corre solo antes de cada despliegue; para agregar una migración basta con crear el archivo siguiente en `db/migrations/`.
+
+Cada migración corre en su propia transacción: si falla, no queda aplicada a medias y el despliegue se detiene sin reemplazar la versión anterior.
+
+Una base creada a mano, sin registro, no se toca: el script no puede saber qué migraciones ya tiene. Se marca primero con `node scripts/migrar.js --marcar-hasta 016`.
 
 ## Cómo desplegar un cambio
 
-**Backend:**
+**Backend y panel web**, que van juntos en el mismo servicio:
 ```bash
-# en tu maquina: git push (con confirmacion del usuario)
-ssh dmarcan@192.168.1.132
-cd ~/gomaq && git pull origin main
-# si hay migracion nueva en db/migrations/, aplicarla:
-#   sudo -u postgres psql -d gomaq -f db/migrations/00X_nombre.sql
-#   (copiar antes a /tmp con permisos 644, el usuario postgres no puede leer el home de dmarcan directamente)
-sudo systemctl restart gomaq-backend
+railway up --service gomaq-app
 ```
+Sube el código de la carpeta actual, construye la imagen, aplica las migraciones pendientes y reemplaza la versión anterior solo si `/api/health` responde. Para seguirlo: `railway logs --service gomaq-app --build`.
 
-Las migraciones 015 y 016 (auditoría de septiembre de 2026) tienen dos cuidados:
-- **016 crea índices únicos en `facturas`**: si ya hay dos facturas para el mismo arriendo u OT, falla. Antes de aplicarla, correr las dos consultas que trae en su encabezado y decidir qué factura conservar.
-- **Desplegar el backend antes de instalar el APK nuevo.** La app nueva manda un `uuid_cliente` por tarea para que los reintentos no dupliquen; contra un backend viejo sigue funcionando, pero sin esa protección.
-
-**Panel Web:**
+**App del Mecánico:** apunta por defecto a la URL de Railway, así que funciona con datos móviles en terreno. Para generar el APK de producción:
 ```bash
-cd web
-flutter build web --release --dart-define=GOMAQ_API_URL=   # IMPORTANTE: URL vacia = rutas relativas, mismo origen que el backend
-# copiar build/web/* a ~/gomaq/backend/public/ en el servidor (via sftp/scp)
-ssh dmarcan@192.168.1.132 "sudo systemctl restart gomaq-backend"
+cd mobile && flutter build apk --release
 ```
+Para instalarlo en un celular, conectarlo por USB o por depuración inalámbrica (`adb pair`/`adb connect`) y usar `flutter install` o `adb install`. El celular usado en pruebas es Android con MIUI: si la instalación falla con `INSTALL_FAILED_USER_RESTRICTED`, activar "Instalar vía USB" en Opciones de Desarrollador. Para desarrollar contra un backend local: `flutter run --dart-define=GOMAQ_API_URL=http://10.0.2.2:3000`.
 
-**App del Mecánico:** conectar el celular por USB o depuración inalámbrica (`adb pair`/`adb connect`), luego `flutter run -d <device>` desde `mobile/`. El celular usado en pruebas es Android con MIUI — si la instalación falla con `INSTALL_FAILED_USER_RESTRICTED`, activar "Instalar vía USB" en Opciones de Desarrollador.
+**Orden en un cambio que toca la cola offline:** desplegar primero el backend y después el APK. La app manda un `uuid_cliente` por tarea para que los reintentos no dupliquen; contra un backend anterior sigue funcionando, pero sin esa protección.
 
 ## Estructura del repo
 
@@ -180,14 +172,14 @@ El mecánico trabaja sin señal y la app reintenta al volver la conexión. Regla
 ## Qué falta (en orden de importancia)
 
 1. **Gestión de Usuarios completa desde el panel** — la pantalla "Usuarios" hoy solo cubre la aprobación de solicitudes de cuenta de clientes (auto-registro); crear/editar mecánicos y administrativos sigue siendo por SSH con `create-user.js`.
-2. **Login social (Google/Microsoft) para clientes** — el registro hoy es solo email+contraseña. Se investigó el patrón de NextAuth (otro proyecto del usuario) pero no se implementó porque requiere registrar la app ante Google/Microsoft con una URL de callback fija, y hoy la URL pública cambia en cada reinicio del túnel de Cloudflare. Queda listo para agregar cuando el proyecto tenga un dominio fijo (ej. desplegado en Railway).
+2. **Login social (Google/Microsoft) para clientes** — el registro hoy es solo email+contraseña. Se investigó el patrón de NextAuth (otro proyecto del usuario). Ya no hay bloqueo: con Railway la URL de callback es fija.
 3. **Dirección de cliente con mapa** — el campo "dirección" en el registro de cliente es texto libre; un selector tipo Google Maps requiere una API key que no se activó en esta sesión.
 4. **WhatsApp Business real** — deliberadamente pospuesto hasta el final del proyecto. El worker (`backend/src/workers/notificaciones.js`) ya tiene todo el mecanismo (reintentos, backoff, estado de error) — la función `enviarNotificacion` hoy lanza un error simulado ("Proveedor no configurado"); cuando exista la cuenta, se reemplaza esa única función por la llamada real a la Cloud API.
 5. **Envío de correo real** (SMTP/SES) — mismo caso que WhatsApp, mismo patrón Outbox ya listo (usado también por la vista previa de correo de Facturación).
-6. **Dominio propio** — hoy la URL pública cambia en cada reinicio del túnel; con un dominio en Cloudflare se puede pasar a un túnel nombrado con URL fija (esto además desbloquea el punto 3).
+6. **Dominio propio** — Railway entrega una URL fija (`*.up.railway.app`); un dominio propio (por ejemplo `app.gomaq.cl`) se agrega con `railway domain` sin cambiar nada del código.
 7. **Tarifa de arriendo por día** — Facturación muestra los días calculados de cada arriendo pero el monto se ingresa a mano (no existe una tarifa fija por equipo en ningún lado de la entrevista a la administrativa; el jefe la decide caso a caso, igual que en reparaciones).
 8. **Detección de datos desde PDF** — verificada contra los documentos reales de GOMAQ (guía de entrega, guía de retiro y factura): acierta fecha, tipo, folio, RUT, monto y horómetro, y está cubierta por tests con ese texto real como fixture. Sigue siendo heurística: si el PDF es una imagen escaneada sin capa de texto no detecta nada y el usuario llena a mano, y un facturador con otro formato requeriría ajustar las expresiones.
-9. **HTTPS propio** — es el pendiente de seguridad que queda abierto. Mientras el backend hable HTTP plano, el token JWT viaja sin cifrar por la LAN. La app móvil ya restringe el tráfico en claro a un solo host (`network_security_config.xml`), lo que acota el daño pero no lo elimina. **Y el panel web derechamente no funciona por `http://192.168.1.132:3000`**: el navegador solo entrega Web Crypto en contexto seguro, y sin él `flutter_secure_storage` no puede guardar el token — el login responde 200 y la llamada siguiente vuelve 401. Por el túnel de Cloudflare (HTTPS) funciona bien. Se cierra junto con el punto 6.
+9. **Migrar `railway.json` al formato nuevo** — Railway lo da por obsoleto y lo acepta hasta el 1 de diciembre de 2026. `railway config migrate` genera `.railway/railway.ts`, pero en su versión actual no traslada la política de reinicio ni la ruta del Dockerfile: revisar el resultado antes de aplicarlo.
 10. **Refresh token / renovación de sesión** — hoy el token JWT dura 12 h y al expirar la app cierra sesión limpiamente con aviso (tanto web como móvil, donde además el trabajo offline queda protegido en cola). La práctica completa de la industria es access token corto + refresh token; queda para cuando el sistema salga de la etapa de demo.
 11. Pulido menor: ver/descargar una factura ya subida directo desde la pantalla de Facturación (hoy solo permite subir).
 
@@ -207,8 +199,7 @@ El mecánico trabaja sin señal y la app reintenta al volver la conexión. Regla
   - **Reglas de negocio** (121): mantención preventiva, facturable de la OT, ciclo de vida de la OT, rentabilidad, stock, paginación, rutas de archivo, idempotencia, IP del límite de intentos y el parseo de los PDF reales de GOMAQ como fixture.
   - **Capa de autorización** (14): `verifyToken` y `requireRole` con tokens ajenos, expirados y manipulados. Corren en cualquier máquina, sin servidor ni base de datos.
   - **Escritura** (16): reintentos de la cola sin duplicados, anulación de líneas con devolución de stock, transiciones de la OT y la cola de valorización. Levantan las rutas en memoria contra la base de `DATABASE_URL`, crean sus propios datos y los borran al terminar; firman sus tokens con un secreto de prueba. **Solo contra una base local**: se activan con `GOMAQ_TEST_ESCRITURA=1 npm test` y sin esa variable se omiten.
-  - **Extremo a extremo** (16): contra una instancia desplegada. Verifican el contrato de la API, el control por rol, la pertenencia del recurso y la superficie expuesta. Son de solo lectura, así que pueden correrse contra el servidor real sin ensuciarlo. Si no hay instancia disponible se **omiten con el motivo**, no fallan: un servidor apagado no es un defecto del código. Apuntan por defecto a `http://192.168.1.132:3000`; para usar otra, `GOMAQ_TEST_URL=http://localhost:3000 npm test`.
-- **`TRUST_PROXY`** (opcional): cuántos saltos de proxy hay delante del backend, para que el límite de intentos de login cuente por la IP real. Sin definirla solo se confía en loopback, que es lo correcto con el túnel de Cloudflare en el mismo equipo. En Railway u otra nube: `TRUST_PROXY=1`.
+  - **Extremo a extremo** (16): contra una instancia desplegada. Verifican el contrato de la API, el control por rol, la pertenencia del recurso y la superficie expuesta. Son de solo lectura, así que pueden correrse contra el servidor real sin ensuciarlo. Si no hay instancia disponible se **omiten con el motivo**, no fallan: un servidor apagado no es un defecto del código. Apuntan por defecto al servidor de Railway; para usar otra instancia, `GOMAQ_TEST_URL=http://localhost:3000 npm test`.
+- **`TRUST_PROXY`** (opcional): cuántos saltos de proxy hay delante del backend, para que el límite de intentos de login cuente por la IP real. Sin definirla solo se confía en loopback (desarrollo local). En Railway está en `TRUST_PROXY=1`.
 
 - **Las contraseñas y tokens reales** (contraseña de la BD, `JWT_SECRET`, credenciales de Supabase) están únicamente en el `.env` del servidor — nunca se subieron a este repo ni deberían aparecer en el historial de git.
-- **El GX520 es hardware de 2005** — no tiene margen para crecer mucho más de lo que hay hoy sin migrar a la nube (ver sección 6.1.1 del informe, que ya justifica por qué eventualmente hay que migrar).

@@ -11,12 +11,27 @@ async function enviarNotificacion(notificacion) {
     throw new Error(`Proveedor de ${notificacion.canal} no configurado todavia`);
 }
 
+// Cuanto tiempo queda "tomada" una notificacion mientras se envia. Si el proceso muere a mitad
+// de camino, pasado este plazo otra instancia (o el mismo proceso al reiniciar) la retoma.
+const PLAZO_TOMA_SEGUNDOS = 120;
+
 async function procesarPendientes() {
+    // Tomar el lote y correr su proximo_intento en una sola sentencia, con SKIP LOCKED: si hay
+    // dos instancias del backend (Railway puede levantar otra durante un despliegue, o al
+    // escalar), cada una toma filas distintas y ningun aviso sale dos veces. Antes la unica
+    // proteccion era un flag en memoria, que no sirve entre procesos.
     const { rows } = await pool.query(
-        `SELECT * FROM notificaciones_pendientes
-         WHERE estado = 'pendiente' AND intentos < $1 AND proximo_intento <= now()
-         ORDER BY created_at ASC LIMIT 20`,
-        [MAX_INTENTOS]
+        `UPDATE notificaciones_pendientes
+         SET proximo_intento = now() + ($2 || ' seconds')::interval
+         WHERE id IN (
+             SELECT id FROM notificaciones_pendientes
+             WHERE estado = 'pendiente' AND intentos < $1 AND proximo_intento <= now()
+             ORDER BY created_at ASC
+             LIMIT 20
+             FOR UPDATE SKIP LOCKED
+         )
+         RETURNING *`,
+        [MAX_INTENTOS, PLAZO_TOMA_SEGUNDOS]
     );
 
     for (const notificacion of rows) {
@@ -46,8 +61,8 @@ async function procesarPendientes() {
 function iniciarWorker() {
     // guard anti-solapamiento: si un lote tarda mas que el intervalo (envios reales de red
     // cuando exista proveedor), el tick siguiente re-seleccionaria las mismas filas aun
-    // 'pendiente' y duplicaria correos/WhatsApps al cliente. Con proceso unico este flag
-    // basta; si algun dia hay multiples instancias, usar SELECT ... FOR UPDATE SKIP LOCKED.
+    // 'pendiente' y duplicaria correos/WhatsApps al cliente. Entre procesos distintos lo
+    // resuelve la toma con SKIP LOCKED de procesarPendientes; este flag cubre el mismo proceso.
     let enProceso = false;
     setInterval(async () => {
         if (enProceso) return;

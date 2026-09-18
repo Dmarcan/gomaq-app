@@ -4,7 +4,7 @@
 // de datos con las cuentas de prueba. Si no hay instancia disponible, los casos se omiten con
 // un aviso en vez de fallar: un servidor apagado no es un defecto del codigo.
 //
-//   npm test                                  usa http://192.168.1.132:3000
+//   npm test                                  usa el servidor de Railway
 //   GOMAQ_TEST_URL=http://localhost:3000 npm test    apunta a otra instancia
 //
 // Todos los casos son de solo lectura. Ninguno crea, modifica ni borra datos, de modo que la
@@ -13,7 +13,7 @@
 const { test, describe, before } = require('node:test');
 const assert = require('node:assert/strict');
 
-const BASE = process.env.GOMAQ_TEST_URL || 'http://192.168.1.132:3000';
+const BASE = process.env.GOMAQ_TEST_URL || 'https://gomaq-app-production.up.railway.app';
 const CLAVE = process.env.GOMAQ_TEST_PASSWORD || 'PruebaGomaq123';
 const CUENTAS = {
     administrativo: 'administrativo@gomaq.test',

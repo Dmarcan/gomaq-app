@@ -3,10 +3,14 @@
   "version": "0.1.0",
   "description": "Backend API - Sistema de Gestion y Comunicacion Centralizado GOMAQ",
   "main": "server.js",
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test"
+    "test": "node --test",
+    "migrar": "node scripts/migrar.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.45.0",

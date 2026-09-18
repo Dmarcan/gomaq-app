@@ -55,6 +55,9 @@ const trustProxy = process.env.TRUST_PROXY;
 app.set('trust proxy', trustProxy === undefined ? 'loopback'
     : /^\d+$/.test(trustProxy) ? Number(trustProxy) : trustProxy);
 
+// Railway define RAILWAY_ENVIRONMENT_NAME en cada despliegue, y ahi el trafico siempre es HTTPS.
+const detrasDeHttps = Boolean(process.env.RAILWAY_ENVIRONMENT_NAME) || process.env.FORZAR_HTTPS === '1';
+
 // Cabeceras de seguridad.
 //
 // El CSP hay que declararlo a mano: el de helmet por defecto es `default-src 'self'`, que deja
@@ -75,11 +78,10 @@ app.use(helmet({
             workerSrc: ["'self'", 'blob:'],
             objectSrc: ["'none'"],
             frameAncestors: ["'none'"],
-            // helmet la activa por defecto, pero hoy el backend sirve HTTP plano: por el
-            // tunel de Cloudflare llega como HTTPS y no molesta, pero a alguien que abra el
-            // panel directo en http://192.168.1.132:3000 le romperia todas las llamadas.
-            // Se reactiva cuando el proyecto tenga HTTPS propio (pendiente del README).
-            upgradeInsecureRequests: null,
+            // En Railway todo llega por HTTPS: se obliga al navegador a pedir cada recurso por
+            // HTTPS. En desarrollo local (http://localhost) se desactiva, porque rompería todas
+            // las llamadas. FORZAR_HTTPS=1 la activa detrás de otro proveedor con HTTPS.
+            upgradeInsecureRequests: detrasDeHttps ? [] : null,
         },
     },
 }));

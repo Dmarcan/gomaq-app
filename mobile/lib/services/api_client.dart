@@ -14,11 +14,12 @@ class ApiClient {
   ApiClient._();
   static final ApiClient instance = ApiClient._();
 
-  // URL base configurable: la IP LAN del GX520 por defecto.
-  // Para pruebas fuera de la red local, cambiar por la URL de Cloudflare Tunnel.
+  // Servidor de produccion en Railway, con HTTPS: funciona con datos moviles en terreno, no
+  // solo dentro de la red de la oficina como el servidor local anterior (192.168.1.132).
+  // Para desarrollo contra un backend local: --dart-define=GOMAQ_API_URL=http://10.0.2.2:3000
   static const String baseUrl = String.fromEnvironment(
     'GOMAQ_API_URL',
-    defaultValue: 'http://192.168.1.132:3000',
+    defaultValue: 'https://gomaq-app-production.up.railway.app',
   );
 
   final _storage = const FlutterSecureStorage();
