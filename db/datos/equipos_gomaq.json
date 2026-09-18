@@ -9,7 +9,7 @@
    "modelo": "1930ES",
    "capacidad_carga": null,
    "altura_trabajo": 7.8,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 5,8 m",
    "codigo": "PL-1101"
   },
@@ -21,7 +21,7 @@
    "modelo": "1930ES",
    "capacidad_carga": null,
    "altura_trabajo": 7.8,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 5,8 m",
    "codigo": "PL-602"
   },
@@ -33,7 +33,7 @@
    "modelo": "1930ES",
    "capacidad_carga": null,
    "altura_trabajo": 7.8,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 5,8 m",
    "codigo": "PL-603"
   },
@@ -45,7 +45,7 @@
    "modelo": "2630ES",
    "capacidad_carga": null,
    "altura_trabajo": 9.93,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 7,93 m",
    "codigo": "PL-704"
   },
@@ -57,7 +57,7 @@
    "modelo": "2630ES",
    "capacidad_carga": null,
    "altura_trabajo": 9.93,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 7,93 m",
    "codigo": "PL-705"
   },
@@ -69,7 +69,7 @@
    "modelo": "2630ES",
    "capacidad_carga": null,
    "altura_trabajo": 9.93,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 7,93 m",
    "codigo": "PL-506"
   },
@@ -81,7 +81,7 @@
    "modelo": "3246ES",
    "capacidad_carga": null,
    "altura_trabajo": 11.76,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 9,76 m",
    "codigo": "PL-807"
   },
@@ -93,7 +93,7 @@
    "modelo": "3246ES",
    "capacidad_carga": null,
    "altura_trabajo": 11.76,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 9,76 m",
    "codigo": "PL-1308"
   },
@@ -105,7 +105,7 @@
    "modelo": "2030ES",
    "capacidad_carga": null,
    "altura_trabajo": 8.1,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 6,1 m",
    "codigo": "PL-709"
   },
@@ -117,7 +117,7 @@
    "modelo": "4069LE",
    "capacidad_carga": null,
    "altura_trabajo": 14.2,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 12,2 m",
    "codigo": "PL-710"
   },
@@ -129,7 +129,7 @@
    "modelo": "4069LE",
    "capacidad_carga": null,
    "altura_trabajo": 14.2,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 12,2 m",
    "codigo": "PL-711"
   },
@@ -141,7 +141,7 @@
    "modelo": "4069LE",
    "capacidad_carga": null,
    "altura_trabajo": 14.2,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 12,2 m",
    "codigo": "PL-712"
   },
@@ -153,7 +153,7 @@
    "modelo": "4069LE",
    "capacidad_carga": null,
    "altura_trabajo": 14.2,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 12,2 m",
    "codigo": "PL-813"
   },
@@ -165,7 +165,7 @@
    "modelo": "4069LE",
    "capacidad_carga": null,
    "altura_trabajo": 14.2,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 12,2 m",
    "codigo": "PL-814"
   },
@@ -177,7 +177,7 @@
    "modelo": "4069LE",
    "capacidad_carga": null,
    "altura_trabajo": 14.2,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 12,2 m",
    "codigo": "PL-1116"
   },
@@ -189,7 +189,7 @@
    "modelo": "4069LE",
    "capacidad_carga": null,
    "altura_trabajo": 14.2,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 12,2 m",
    "codigo": "PL-717"
   },
@@ -201,7 +201,7 @@
    "modelo": "1930ES",
    "capacidad_carga": null,
    "altura_trabajo": 7.8,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 5,8 m",
    "codigo": "PL-1418"
   },
@@ -213,7 +213,7 @@
    "modelo": "1930ES",
    "capacidad_carga": null,
    "altura_trabajo": 7.8,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 5,8 m",
    "codigo": "PL-1619"
   },
@@ -225,7 +225,7 @@
    "modelo": "1930ES",
    "capacidad_carga": null,
    "altura_trabajo": 7.8,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 5,8 m",
    "codigo": "PL-1620"
   },
@@ -237,7 +237,7 @@
    "modelo": "2646ES",
    "capacidad_carga": null,
    "altura_trabajo": 9.92,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 7,92 m",
    "codigo": "PL-1623"
   },
@@ -249,7 +249,7 @@
    "modelo": "2646ES",
    "capacidad_carga": null,
    "altura_trabajo": 9.92,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 7,92 m",
    "codigo": "PL-1624"
   },
@@ -261,7 +261,7 @@
    "modelo": "2646ES",
    "capacidad_carga": null,
    "altura_trabajo": 9.92,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 7,92 m",
    "codigo": "PL-1625"
   },
@@ -273,7 +273,7 @@
    "modelo": "2646ES",
    "capacidad_carga": null,
    "altura_trabajo": 9.92,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 7,92 m",
    "codigo": "PL-1626"
   },
@@ -285,7 +285,7 @@
    "modelo": "Compact 8",
    "capacidad_carga": null,
    "altura_trabajo": 7.8,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 5,8 m. Equivale al modelo 1930",
    "codigo": "PL-827"
   },
@@ -297,7 +297,7 @@
    "modelo": "1930ES",
    "capacidad_carga": null,
    "altura_trabajo": 7.8,
-   "tipo_combustible": null,
+   "tipo_combustible": "electrica",
    "descripcion": "Altura del equipo: 5,8 m",
    "codigo": "PL-1128"
   },
