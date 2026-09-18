@@ -10,7 +10,9 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
         const flota = await pool.query(`
             SELECT
                 COUNT(*) FILTER (WHERE cliente_id IS NOT NULL) AS arrendados,
-                COUNT(*) FILTER (WHERE cliente_id IS NULL) AS disponibles,
+                -- disponible = se lo puede arrendar hoy: sin cliente Y operativo. Uno fuera de servicio o
+                -- en mantencion sin cliente no esta arrendado, pero tampoco esta disponible.
+                COUNT(*) FILTER (WHERE cliente_id IS NULL AND estado = 'operativa') AS disponibles,
                 COUNT(*) FILTER (WHERE estado = 'operativa') AS operativas,
                 COUNT(*) FILTER (WHERE estado = 'en_mantencion') AS en_mantencion,
                 COUNT(*) FILTER (WHERE estado = 'fuera_de_servicio') AS fuera_de_servicio,

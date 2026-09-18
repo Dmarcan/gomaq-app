@@ -113,10 +113,22 @@ describe('disponibilidad y contrato basico', () => {
         for (const campo of ['total', 'disponibles', 'arrendados', 'en_mantencion', 'fuera_de_servicio']) {
             assert.equal(typeof cuerpo[campo], 'number', campo);
         }
-        // igual que el Dashboard: cada equipo esta disponible o arrendado, nunca ambos
-        assert.equal(cuerpo.disponibles + cuerpo.arrendados, cuerpo.total);
+        // un equipo no puede estar disponible y arrendado a la vez; los que no estan operativos
+        // ni tienen cliente no son ninguno de los dos
+        assert.ok(cuerpo.disponibles + cuerpo.arrendados <= cuerpo.total);
         const enCategorias = Object.values(cuerpo.por_categoria).reduce((a, b) => a + b, 0);
         assert.ok(enCategorias <= cuerpo.total, 'las categorias no pueden sumar mas que la flota');
+    });
+
+    test('Flota: el Dashboard y el resumen cuentan igual los disponibles', async (t) => {
+        if (!requiereServidor(t)) return;
+        const flota = await (await pedir('/api/maquinarias/resumen', con(tokens.administrativo))).json();
+        const dash = await (await pedir('/api/dashboard/resumen', con(tokens.administrativo))).json();
+        assert.equal(Number(dash.flota.disponibles), flota.disponibles);
+        assert.equal(Number(dash.flota.arrendados), flota.arrendados);
+        // y el filtro de la lista devuelve exactamente esa cantidad
+        const lista = await (await pedir('/api/maquinarias?disponibilidad=disponibles&limit=1', con(tokens.administrativo))).json();
+        assert.equal(lista.total, flota.disponibles);
     });
 
     test('Flota: el resumen no lo ve el cliente', async (t) => {

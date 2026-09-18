@@ -47,8 +47,8 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
         params.push(cliente_id);
         condiciones.push(`m.cliente_id = $${params.length}`);
     }
-    // "disponible" = sin cliente asignado, que es como lo entiende el resto del sistema
-    if (disponibilidad === 'disponibles') condiciones.push('m.cliente_id IS NULL');
+    // "disponible" = se lo puede arrendar hoy: sin cliente y operativo. Igual que el Dashboard
+    if (disponibilidad === 'disponibles') condiciones.push("(m.cliente_id IS NULL AND m.estado = 'operativa')");
     if (disponibilidad === 'arrendados') condiciones.push('m.cliente_id IS NOT NULL');
 
     const where = condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : '';
@@ -102,12 +102,13 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
 
 // GET /api/maquinarias/resumen - totales de la flota para el encabezado de Flota y sus pestanas.
 // Es de toda la flota y no cambia con los filtros: son los numeros que uno mira antes de filtrar.
-// "Disponibles" y "arrendados" se cuentan igual que en el Dashboard (segun tenga cliente o no).
+// "Disponibles" y "arrendados" se cuentan igual que en el Dashboard: disponible es sin cliente y
+// operativo; arrendado es tener cliente. Un equipo en mantencion sin cliente no es ninguno de los dos.
 router.get('/resumen', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     try {
         const totales = await pool.query(
             `SELECT COUNT(*)::int AS total,
-                    COUNT(*) FILTER (WHERE cliente_id IS NULL)::int AS disponibles,
+                    COUNT(*) FILTER (WHERE cliente_id IS NULL AND estado = 'operativa')::int AS disponibles,
                     COUNT(*) FILTER (WHERE cliente_id IS NOT NULL)::int AS arrendados,
                     COUNT(*) FILTER (WHERE estado = 'en_mantencion')::int AS en_mantencion,
                     COUNT(*) FILTER (WHERE estado = 'fuera_de_servicio')::int AS fuera_de_servicio
