@@ -89,7 +89,16 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             ],
           ),
         ),
-        Expanded(child: KeyedSubtree(key: _refreshKey, child: widget.child)),
+        Expanded(
+          child: KeyedSubtree(
+            key: _refreshKey,
+            // Cada página del navegador interno del ShellRoute trae una barrera modal con
+            // BlockSemantics, que ocultaba al lector de pantalla todo lo dibujado antes en el mismo
+            // contenedor: el menú lateral y este encabezado no existían en el árbol de
+            // accesibilidad. Un contenedor propio limita la barrera al contenido de la sección.
+            child: Semantics(container: true, child: widget.child),
+          ),
+        ),
       ],
     );
   }
