@@ -116,10 +116,9 @@ GoRouter construirRouter(AuthService auth) {
           ),
           GoRoute(
             path: '/ordenes',
-            builder: (_, estado) => OrdenesScreen(
-              key: ValueKey(estado.uri.query),
-              abrirNueva: estado.uri.queryParameters['nueva'] == '1',
-            ),
+            // sin key por la consulta: OrdenesScreen limpia ?nueva=1 apenas abre el formulario,
+            // y una key nueva la volvería a montar y cerraría el formulario recién abierto
+            builder: (_, estado) => OrdenesScreen(abrirNueva: estado.uri.queryParameters['nueva'] == '1'),
           ),
           GoRoute(path: '/asignacion', builder: (_, _) => const AsignacionScreen()),
           GoRoute(path: '/asistencias', builder: (_, _) => const SolicitudesScreen()),

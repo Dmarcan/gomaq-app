@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
@@ -34,7 +35,12 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _cargar();
-      if (widget.abrirNueva) _abrirDialogoCrear();
+      if (widget.abrirNueva) {
+        // se quita ?nueva=1 de la URL: si quedara, refrescar o recargar la página volvería a
+        // abrir el formulario y un clic distraído crearía una OT duplicada
+        context.go('/ordenes');
+        _abrirDialogoCrear();
+      }
     });
   }
 

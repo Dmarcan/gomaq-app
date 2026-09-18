@@ -211,10 +211,17 @@ describe('reintentos de la cola offline', () => {
         const ot = await crearOt();
         const inicio = new Date(Date.now() - 3600 * 1000).toISOString();
         await pedir('POST', `/api/ordenes-trabajo/${ot}/tramos`, 'mecanico', { inicio, uuid_cliente: crypto.randomUUID() });
+        const termino = new Date().toISOString();
+        const uuidCierre = crypto.randomUUID();
         const cierre = await pedir('POST', `/api/ordenes-trabajo/${ot}/tramos`, 'mecanico', {
-            inicio, termino: new Date().toISOString(), uuid_cliente: crypto.randomUUID(),
+            inicio, termino, uuid_cliente: uuidCierre,
         });
         assert.equal(cierre.status, 200);
+        // reintento del mismo cierre (se perdio la respuesta): tampoco debe crear otro tramo
+        const reintento = await pedir('POST', `/api/ordenes-trabajo/${ot}/tramos`, 'mecanico', {
+            inicio, termino, uuid_cliente: uuidCierre,
+        });
+        assert.equal(reintento.status, 200);
         const tramos = await pool.query('SELECT termino FROM tramos_trabajo WHERE orden_trabajo_id = $1', [ot]);
         assert.equal(tramos.rows.length, 1, 'un solo tramo, ya cerrado');
         assert.ok(tramos.rows[0].termino);

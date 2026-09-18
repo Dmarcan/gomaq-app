@@ -424,6 +424,17 @@ router.post('/:id/tramos', verifyToken, requireRole('mecanico'), async (req, res
                 [termino, req.params.id, req.user.id, inicio]
             );
             if (cerrado.rows.length > 0) return res.status(200).json(cerrado.rows[0]);
+
+            // Reintento de ese mismo cierre: el UPDATE no guarda el uuid (la fila ya tiene el del
+            // tramo abierto), asi que se reconoce por los datos. Sin esto, el reintento insertaba
+            // un segundo tramo ya cerrado y duplicaba las horas de la visita.
+            const yaCerrado = await pool.query(
+                `SELECT * FROM tramos_trabajo
+                 WHERE orden_trabajo_id = $1 AND usuario_id = $2 AND inicio = $3 AND termino = $4
+                 LIMIT 1`,
+                [req.params.id, req.user.id, inicio, termino]
+            );
+            if (yaCerrado.rows.length > 0) return res.status(200).json(yaCerrado.rows[0]);
         }
 
         const result = await pool.query(
