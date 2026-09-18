@@ -19,7 +19,8 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
         `);
 
         const pendientesFacturar = await pool.query(
-            `SELECT COUNT(*) AS n FROM ordenes_trabajo WHERE facturable = true AND valorizacion IS NULL`
+            `SELECT COUNT(*) AS n FROM ordenes_trabajo
+             WHERE facturable = true AND valorizacion IS NULL AND estado = 'finalizada'`
         );
         const solicitudesPendientes = await pool.query(
             `SELECT COUNT(*) AS n FROM solicitudes WHERE estado = 'pendiente'`

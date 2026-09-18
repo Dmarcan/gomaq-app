@@ -11,6 +11,7 @@ class RegistroClienteScreen extends StatefulWidget {
 
 class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
   final _nombreCtrl = TextEditingController();
+  final _empresaCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _confirmarCtrl = TextEditingController();
@@ -25,8 +26,9 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
   bool _enviado = false;
 
   Future<void> _registrar() async {
-    if (_nombreCtrl.text.trim().isEmpty || _emailCtrl.text.trim().isEmpty || _passwordCtrl.text.isEmpty) {
-      setState(() => _error = 'Nombre, correo y contraseña son requeridos');
+    if (_nombreCtrl.text.trim().isEmpty || _empresaCtrl.text.trim().isEmpty ||
+        _emailCtrl.text.trim().isEmpty || _passwordCtrl.text.isEmpty) {
+      setState(() => _error = 'Completa tu nombre, el de la empresa, tu correo y una contraseña');
       return;
     }
     if (_passwordCtrl.text.length < 8) {
@@ -45,6 +47,7 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
     try {
       await ApiClient.instance.post('/api/registro-cliente', {
         'nombre_contacto': _nombreCtrl.text.trim(),
+        'nombre_empresa': _empresaCtrl.text.trim(),
         'email': _emailCtrl.text.trim(),
         'password': _passwordCtrl.text,
         'rut_empresa': _rutCtrl.text.trim().isEmpty ? null : _rutCtrl.text.trim(),
@@ -95,8 +98,8 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
         const Text('Solicitud enviada', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
         const Text(
-          'Un administrador va a revisar tu solicitud y activar tu cuenta pronto. '
-          'Te avisaremos cuando puedas ingresar.',
+          'Revisaremos tu solicitud de cuenta. Cuando esté aprobada podrás ingresar '
+          'con este correo y contraseña.',
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 24),
@@ -119,7 +122,7 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
         const SizedBox(height: 20),
         TextField(controller: _nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre de contacto')),
         const SizedBox(height: 12),
-        TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: 'Correo (gmail)'), keyboardType: TextInputType.emailAddress),
+        TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: 'Correo electrónico'), keyboardType: TextInputType.emailAddress),
         const SizedBox(height: 12),
         Row(
           children: [
@@ -143,6 +146,8 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
         const SizedBox(height: 20),
         const Text('DATOS DE LA EMPRESA QUE REPRESENTAS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
+        TextField(controller: _empresaCtrl, decoration: const InputDecoration(labelText: 'Nombre de la empresa')),
+        const SizedBox(height: 12),
         TextField(controller: _rutCtrl, decoration: const InputDecoration(labelText: 'RUT de la empresa')),
         const SizedBox(height: 12),
         TextField(controller: _whatsappCtrl, decoration: const InputDecoration(labelText: 'Teléfono de contacto (WhatsApp)')),

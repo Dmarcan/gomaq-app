@@ -1,7 +1,8 @@
 const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
-const { verificarDuenoOrden, contactoCliente } = require('../utils/ordenes');
+const { verificarDuenoOrden, contactoCliente, MENSAJE_OT_CERRADA } = require('../utils/ordenes');
+const { estadoTrasAsignar, puedeCambiarEstadoA, evaluarCierre } = require('../utils/estadosOt');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
@@ -220,16 +221,33 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
 
         await client.query('BEGIN');
 
-        const otResult = await client.query(
-            `UPDATE ordenes_trabajo SET mecanico_id = $1, estado = 'asignada' WHERE id = $2
-             RETURNING *, (SELECT codigo FROM maquinarias WHERE id = ordenes_trabajo.maquinaria_id) AS maquinaria_codigo`,
-            [mecanico_id, req.params.id]
+        const actual = await client.query(
+            'SELECT estado, mecanico_id FROM ordenes_trabajo WHERE id = $1 FOR UPDATE',
+            [req.params.id]
         );
-        if (otResult.rows.length === 0) {
+        if (actual.rows.length === 0) {
             await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         }
+        // una OT finalizada no vuelve a "asignada"; una en curso cambia de tecnico sin retroceder
+        const nuevoEstado = estadoTrasAsignar(actual.rows[0].estado);
+        if (!nuevoEstado) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'La orden ya esta finalizada y no se puede reasignar' });
+        }
+        // asignar al mismo tecnico otra vez (doble clic) no debe mandarle un segundo aviso al cliente
+        const mismoTecnico = actual.rows[0].mecanico_id === Number(mecanico_id);
+
+        const otResult = await client.query(
+            `UPDATE ordenes_trabajo SET mecanico_id = $1, estado = $2 WHERE id = $3
+             RETURNING *, (SELECT codigo FROM maquinarias WHERE id = ordenes_trabajo.maquinaria_id) AS maquinaria_codigo`,
+            [mecanico_id, nuevoEstado, req.params.id]
+        );
         const orden = otResult.rows[0];
+        if (mismoTecnico) {
+            await client.query('COMMIT');
+            return res.json(orden);
+        }
 
         const contacto = await contactoCliente(client, orden.cliente_id);
         if (contacto) {
@@ -275,13 +293,19 @@ router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (re
         const check = await verificarDuenoOrden(req.params.id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
+        if (estado && !puedeCambiarEstadoA(check.estado, estado)) {
+            return res.status(409).json({ error: `La orden no puede pasar de ${check.estado} a ${estado}` });
+        }
 
+        // la condicion sobre el estado cubre que la OT se cierre entre la verificacion y el UPDATE
         const result = await pool.query(
             `UPDATE ordenes_trabajo
              SET diagnostico = COALESCE($1, diagnostico), estado = COALESCE($2, estado)
-             WHERE id = $3 RETURNING *`,
+             WHERE id = $3 AND estado <> 'finalizada' RETURNING *`,
             [diagnostico || null, estado || null, req.params.id]
         );
+        if (result.rows.length === 0) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
         res.json(result.rows[0]);
     } catch (err) {
         console.error(err);
@@ -302,6 +326,7 @@ router.patch('/:id/datos', verifyToken, requireRole('mecanico'), async (req, res
         const check = await verificarDuenoOrden(req.params.id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
 
         const result = await pool.query(
             `UPDATE ordenes_trabajo
@@ -338,6 +363,7 @@ router.put('/:id/checklist', verifyToken, requireRole('mecanico'), async (req, r
         const check = await verificarDuenoOrden(req.params.id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
 
         await client.query('BEGIN');
         await client.query('DELETE FROM ot_servicios WHERE orden_trabajo_id = $1', [req.params.id]);
@@ -377,6 +403,7 @@ router.post('/:id/tramos', verifyToken, requireRole('mecanico'), async (req, res
         const check = await verificarDuenoOrden(req.params.id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
 
         const yaRegistrado = await buscarPorUuid(pool, 'tramos_trabajo', uuid);
         if (yaRegistrado) return res.status(200).json(yaRegistrado);
@@ -432,6 +459,18 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
 
         await client.query('BEGIN');
+        const actual = await client.query('SELECT * FROM ordenes_trabajo WHERE id = $1 FOR UPDATE', [req.params.id]);
+        const cierre = evaluarCierre(actual.rows[0].estado);
+        if (cierre.yaFinalizada) {
+            // reintento de la cola offline: la OT ya se cerro, con su firma y su aviso al
+            // cliente. Antes se volvia a cerrar, cambiando fecha_cierre y encolando otro aviso.
+            await client.query('ROLLBACK');
+            return res.json(actual.rows[0]);
+        }
+        if (!cierre.permitido) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: `Una orden en estado ${actual.rows[0].estado} no se puede cerrar` });
+        }
         const result = await client.query(
             `UPDATE ordenes_trabajo
              SET estado = 'finalizada', fecha_cierre = now()
@@ -483,21 +522,26 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
 // PATCH /api/ordenes-trabajo/:id/valorizacion - gerente aprueba monto (HU-04)
 router.patch('/:id/valorizacion', verifyToken, requireRole('gerente'), async (req, res) => {
     const { valorizacion } = req.body;
-    if (valorizacion === undefined || isNaN(valorizacion)) {
-        return res.status(400).json({ error: 'valorizacion (numerica) es requerida' });
+    if (valorizacion === undefined || valorizacion === null || valorizacion === '' || isNaN(valorizacion)
+        || Number(valorizacion) < 0) {
+        return res.status(400).json({ error: 'valorizacion debe ser un monto mayor o igual a 0' });
     }
     try {
-        // facturable NO se toca aca: esa decision es exclusiva del mecanico al finalizar
-        // (la valorizacion solo aplica sobre OTs que el ya marco facturables)
+        const actual = await pool.query('SELECT estado FROM ordenes_trabajo WHERE id = $1', [req.params.id]);
+        if (actual.rows.length === 0) {
+            return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+        }
+        // se valoriza el trabajo terminado: una OT en curso todavia puede sumar repuestos
+        if (actual.rows[0].estado !== 'finalizada') {
+            return res.status(409).json({ error: 'Solo se valoriza una orden ya finalizada' });
+        }
+        // facturable NO se toca aca: se deriva de las lineas de repuesto (utils/facturableOt.js)
         const result = await pool.query(
             `UPDATE ordenes_trabajo
              SET valorizacion = $1, valorizacion_aprobada_por = $2
              WHERE id = $3 RETURNING *`,
             [valorizacion, req.user.id, req.params.id]
         );
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        }
         res.json(result.rows[0]);
     } catch (err) {
         console.error(err);

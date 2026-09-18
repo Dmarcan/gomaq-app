@@ -3,7 +3,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularFacturableOt } = require('../utils/facturableOt');
 const { validarTransferencia } = require('../utils/stock');
-const { verificarDuenoOrden } = require('../utils/ordenes');
+const { verificarDuenoOrden, MENSAJE_OT_CERRADA } = require('../utils/ordenes');
 const { parsearPaginacion, envolver } = require('../utils/paginacion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 
@@ -377,6 +377,7 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
         const check = await verificarDuenoOrden(req.params.ordenId, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
     }
 
     /** Reintento de una linea ya registrada: se responde lo mismo sin tocar el stock otra vez. */

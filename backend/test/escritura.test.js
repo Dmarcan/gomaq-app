@@ -117,9 +117,11 @@ after(async () => {
 
 /** OT de prueba asignada al mecanico, creada directo en la base. */
 async function crearOt(estado = 'en_terreno', mecanicoId = datos.mecanicoId) {
+    // con el cliente del equipo, para que cerrar o asignar encolen el aviso como en la realidad
     const r = await pool.query(
-        `INSERT INTO ordenes_trabajo (maquinaria_id, mecanico_id, estado, motivo)
-         VALUES ($1, $2, $3, 'OT de prueba automatizada') RETURNING id`,
+        `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, mecanico_id, estado, motivo)
+         SELECT id, cliente_id, $2, $3, 'OT de prueba automatizada' FROM maquinarias WHERE id = $1
+         RETURNING id`,
         [datos.maquinariaId, mecanicoId, estado]
     );
     datos.ordenes.push(r.rows[0].id);
@@ -282,5 +284,78 @@ describe('anulacion de lineas de repuesto', () => {
         const ruta = `/api/insumos/orden/${ot}/linea/${linea.body.id}/anular`;
         assert.equal((await pedir('POST', ruta, 'mecanico')).status, 409);
         assert.equal((await pedir('POST', ruta, 'administrativo')).status, 200);
+    });
+});
+
+describe('ciclo de vida de la OT', () => {
+    const avisosDe = async (ot, tipo) => (await pool.query(
+        `SELECT id FROM notificaciones_pendientes
+         WHERE (payload->>'orden_trabajo_id')::int = $1 AND payload->>'tipo' = $2`,
+        [ot, tipo]
+    )).rows.length;
+
+    test('cerrar dos veces no cambia la fecha de cierre ni repite el aviso al cliente', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt('en_reparacion');
+        const cuerpo = { persona_recibe: 'Juan Perez' };
+        const primera = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/finalizar`, 'mecanico', cuerpo);
+        const segunda = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/finalizar`, 'mecanico', cuerpo);
+        assert.equal(primera.status, 200);
+        assert.equal(segunda.status, 200, 'el reintento responde bien');
+        assert.equal(segunda.body.fecha_cierre, primera.body.fecha_cierre);
+        const cliente = await pool.query('SELECT cliente_id FROM ordenes_trabajo WHERE id = $1', [ot]);
+        if (cliente.rows[0].cliente_id) {
+            assert.ok(await avisosDe(ot, 'ot_finalizada') <= 1, 'a lo mas un aviso de cierre');
+        }
+    });
+
+    test('una OT finalizada no se reasigna ni se reabre', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt('finalizada');
+        const asignar = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/asignar`, 'administrativo', { mecanico_id: datos.mecanicoDosId });
+        assert.equal(asignar.status, 409);
+        const reabrir = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/diagnostico`, 'mecanico', { estado: 'en_terreno' });
+        assert.equal(reabrir.status, 409);
+        const estado = await pool.query('SELECT estado, mecanico_id FROM ordenes_trabajo WHERE id = $1', [ot]);
+        assert.equal(estado.rows[0].estado, 'finalizada');
+        assert.equal(estado.rows[0].mecanico_id, datos.mecanicoId);
+    });
+
+    test('reasignar una OT en curso cambia el tecnico sin hacerla retroceder', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt('en_reparacion');
+        const r = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/asignar`, 'administrativo', { mecanico_id: datos.mecanicoDosId });
+        assert.equal(r.status, 200);
+        assert.equal(r.body.estado, 'en_reparacion');
+        assert.equal(r.body.mecanico_id, datos.mecanicoDosId);
+    });
+
+    test('el mecanico no agrega repuestos, tramos ni fotos a una OT cerrada', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt('finalizada');
+        assert.equal((await pedir('POST', `/api/insumos/orden/${ot}`, 'mecanico', { descripcion: 'Filtro', cantidad: 1 })).status, 409);
+        assert.equal((await pedir('POST', `/api/ordenes-trabajo/${ot}/tramos`, 'mecanico', { inicio: new Date().toISOString() })).status, 409);
+        assert.equal((await pedir('POST', `/api/ordenes-trabajo/${ot}/evidencia/confirmar`, 'mecanico', { path: `ot-${ot}/x.jpg` })).status, 409);
+    });
+
+    test('la evidencia de otra orden se rechaza', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt();
+        const r = await pedir('POST', `/api/ordenes-trabajo/${ot}/evidencia/confirmar`, 'mecanico', { path: `ot-${ot + 1}/ajena.jpg` });
+        assert.equal(r.status, 400);
+    });
+
+    test('solo se valoriza una OT finalizada, y no aparece antes en la cola del gerente', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt('en_reparacion');
+        await pedir('POST', `/api/insumos/orden/${ot}`, 'mecanico', { descripcion: 'Bomba', cantidad: 1, facturable: 'si' });
+        const enCurso = await pedir('GET', '/api/facturacion/pendientes', 'gerente');
+        assert.ok(!enCurso.body.reparaciones_pendientes_valorizar.some((o) => o.id === ot), 'en curso no se valoriza');
+        assert.equal((await pedir('PATCH', `/api/ordenes-trabajo/${ot}/valorizacion`, 'gerente', { valorizacion: 1000 })).status, 409);
+
+        await pool.query("UPDATE ordenes_trabajo SET estado = 'finalizada' WHERE id = $1", [ot]);
+        const cerrada = await pedir('GET', '/api/facturacion/pendientes', 'gerente');
+        assert.ok(cerrada.body.reparaciones_pendientes_valorizar.some((o) => o.id === ot));
+        assert.equal((await pedir('PATCH', `/api/ordenes-trabajo/${ot}/valorizacion`, 'gerente', { valorizacion: 0 })).status, 200);
     });
 });

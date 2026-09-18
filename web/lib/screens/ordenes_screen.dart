@@ -209,6 +209,37 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
     }
   }
 
+  /// Anula una línea mal ingresada: queda tachada y el repuesto vuelve a su ubicación.
+  /// Desde el panel se puede incluso con la OT cerrada, para corregir lo que el mecánico no alcanzó.
+  Future<void> _anularLinea(dynamic linea) async {
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('¿Anular esta línea?'),
+        content: Text(
+          '${linea['insumo_nombre'] ?? linea['descripcion'] ?? 'Repuesto'} · ${linea['cantidad']}\n\n'
+          'La línea queda tachada, el repuesto vuelve a su ubicación y deja de contar como gasto del equipo. '
+          'No se puede deshacer.',
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Anular línea')),
+        ],
+      ),
+    );
+    if (confirmado != true) return;
+    setState(() => _cargandoAccion = true);
+    try {
+      await ApiClient.instance.post('/api/insumos/orden/${widget.orden['id']}/linea/${linea['id']}/anular', {});
+      await _cargarLineas();
+      widget.onCambio();
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    } finally {
+      if (mounted) setState(() => _cargandoAccion = false);
+    }
+  }
+
   Future<void> _asignar() async {
     if (_mecanicoSeleccionado == null) return;
     setState(() => _cargandoAccion = true);
@@ -295,27 +326,49 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
       children: [
         const Text('Repuestos utilizados', style: TextStyle(fontWeight: FontWeight.bold)),
         for (final l in _lineas)
-          ListTile(
-            dense: true,
-            contentPadding: EdgeInsets.zero,
-            title: Text('${l['insumo_nombre'] ?? l['descripcion'] ?? 'Repuesto'} · ${l['cantidad']}'),
-            subtitle: Text(
-              l['precio_unitario'] == null ? 'Sin precio' : '\$${l['precio_unitario']}',
-              style: const TextStyle(fontSize: 12),
+          if (l['anulada_at'] != null)
+            // tachada, como en el talonario: queda la constancia de que se anuló
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text(
+                '${l['insumo_nombre'] ?? l['descripcion'] ?? 'Repuesto'} · ${l['cantidad']}',
+                style: const TextStyle(decoration: TextDecoration.lineThrough, color: Colors.black54),
+              ),
+              subtitle: const Text('Anulada', style: TextStyle(fontSize: 12, color: Colors.black54)),
+            )
+          else
+            ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: Text('${l['insumo_nombre'] ?? l['descripcion'] ?? 'Repuesto'} · ${l['cantidad']}'),
+              subtitle: Text(
+                l['precio_unitario'] == null ? 'Sin precio' : '\$${l['precio_unitario']}',
+                style: const TextStyle(fontSize: 12),
+              ),
+              trailing: puedeResolver
+                  ? Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        DropdownButton<String>(
+                          value: l['facturable'] as String? ?? 'pendiente',
+                          underline: const SizedBox.shrink(),
+                          items: const [
+                            DropdownMenuItem(value: 'si', child: Text('Se cobra')),
+                            DropdownMenuItem(value: 'no', child: Text('No se cobra')),
+                            DropdownMenuItem(value: 'pendiente', child: Text('Por decidir')),
+                          ],
+                          onChanged: _cargandoAccion ? null : (v) => _resolverLinea(l['id'], v!),
+                        ),
+                        IconButton(
+                          tooltip: 'Anular línea',
+                          icon: const Icon(Icons.remove_circle_outline, color: GomaqColors.estadoNegativo),
+                          onPressed: _cargandoAccion ? null : () => _anularLinea(l),
+                        ),
+                      ],
+                    )
+                  : Text(l['facturable']?.toString() ?? 'pendiente'),
             ),
-            trailing: puedeResolver
-                ? DropdownButton<String>(
-                    value: l['facturable'] as String? ?? 'pendiente',
-                    underline: const SizedBox.shrink(),
-                    items: const [
-                      DropdownMenuItem(value: 'si', child: Text('Se cobra')),
-                      DropdownMenuItem(value: 'no', child: Text('No se cobra')),
-                      DropdownMenuItem(value: 'pendiente', child: Text('Por decidir')),
-                    ],
-                    onChanged: _cargandoAccion ? null : (v) => _resolverLinea(l['id'], v!),
-                  )
-                : Text(l['facturable']?.toString() ?? 'pendiente'),
-          ),
         const Divider(height: 32),
       ],
     );

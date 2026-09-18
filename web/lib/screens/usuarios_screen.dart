@@ -240,8 +240,11 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Text(s['nombre_contacto'], style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  // las solicitudes anteriores a la migración 016 no traen el nombre de la empresa
+                  Text(s['nombre_empresa'] ?? s['nombre_contacto'],
+                      style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
                   const SizedBox(height: 8),
+                  _dato('Contacto', s['nombre_contacto']),
                   _dato('Correo', s['email']),
                   _dato('RUT empresa', s['rut_empresa']),
                   _dato('WhatsApp', s['telefono_whatsapp']),

@@ -6,6 +6,9 @@ const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 
 const router = express.Router();
+
+// un monto 0 es un monto valido: `monto || null` lo convertia en nulo
+const montoONulo = (v) => (v === undefined || v === null || v === '' ? null : v);
 const URL_EXPIRACION_SEGUNDOS = 3600;
 
 // POST /api/ordenes-trabajo/:id/factura - subir PDF de factura ya emitida en el SII (va a Supabase Storage)
@@ -27,12 +30,15 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPd
             `INSERT INTO facturas (orden_trabajo_id, folio, archivo_url, monto, fecha_emision)
              VALUES ($1, $2, $3, $4, $5)
              RETURNING *`,
-            [id, folio, rutaStorage, monto || null, fecha_emision || null]
+            [id, folio, rutaStorage, montoONulo(monto), fecha_emision || null]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
         if (rutaStorage) {
             await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+        }
+        if (err.code === '23505') {
+            return res.status(409).json({ error: 'Esta orden de trabajo ya tiene su factura' });
         }
         console.error(err);
         res.status(500).json({ error: 'Error al subir factura' });

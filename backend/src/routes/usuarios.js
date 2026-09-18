@@ -41,7 +41,7 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
 router.get('/solicitudes', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT id, nombre_contacto, email, rut_empresa, telefono_whatsapp, horario_trabajo,
+            `SELECT id, nombre_contacto, nombre_empresa, email, rut_empresa, telefono_whatsapp, horario_trabajo,
                     horario_colacion, direccion, estado, created_at
              FROM solicitudes_cliente WHERE estado = 'pendiente' ORDER BY created_at ASC`
         );
@@ -74,10 +74,12 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
 
         let clienteIdFinal = cliente_id || null;
         if (!clienteIdFinal) {
+            // el cliente es la empresa: antes se creaba con el nombre de la persona de contacto
+            // porque el formulario no pedia el de la empresa (las solicitudes antiguas no lo traen)
             const nuevoCliente = await client.query(
                 `INSERT INTO clientes (nombre, rut, email, telefono, horario_trabajo, horario_colacion, direccion)
                  VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-                [s.nombre_contacto, s.rut_empresa, s.email, s.telefono_whatsapp, s.horario_trabajo, s.horario_colacion, s.direccion]
+                [s.nombre_empresa || s.nombre_contacto, s.rut_empresa, s.email, s.telefono_whatsapp, s.horario_trabajo, s.horario_colacion, s.direccion]
             );
             clienteIdFinal = nuevoCliente.rows[0].id;
         }
@@ -91,6 +93,13 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
         await client.query(
             `UPDATE solicitudes_cliente SET estado = 'aprobada', cliente_id = $1, usuario_id = $2 WHERE id = $3`,
             [clienteIdFinal, nuevoUsuario.rows[0].id, req.params.id]
+        );
+
+        // Aviso de cuenta aprobada por el Outbox, en la misma transaccion. Sale en cuanto se
+        // configure el proveedor de correo (pendiente del README), como el resto de avisos.
+        await client.query(
+            `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ('email', $1, $2)`,
+            [s.email, JSON.stringify({ tipo: 'cuenta_aprobada', nombre_contacto: s.nombre_contacto })]
         );
 
         await client.query('COMMIT');

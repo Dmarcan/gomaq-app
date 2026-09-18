@@ -11,6 +11,9 @@ const { parsearFactura } = require('../utils/parsearDocumento');
 
 const router = express.Router();
 
+// un monto 0 es un monto valido: `monto || null` lo convertia en nulo
+const montoONulo = (v) => (v === undefined || v === null || v === '' ? null : v);
+
 // GET /api/facturacion/pendientes - todo lo que falta facturar, agrupado por estado real:
 // arriendos con ciclo despacho+recepcion cerrado, reparaciones esperando que el Gerente
 // les ponga monto, y reparaciones ya valorizadas listas para emitir factura.
@@ -48,6 +51,8 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
             JOIN maquinarias m ON m.id = ot.maquinaria_id
             LEFT JOIN clientes c ON c.id = ot.cliente_id
             WHERE ot.facturable = true AND ot.valorizacion IS NULL
+              -- solo trabajo terminado: una OT en curso todavia puede sumar o anular repuestos
+              AND ot.estado = 'finalizada'
             ORDER BY ot.fecha_creacion DESC
         `);
 
@@ -58,6 +63,7 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
             JOIN maquinarias m ON m.id = ot.maquinaria_id
             LEFT JOIN clientes c ON c.id = ot.cliente_id
             WHERE ot.facturable = true AND ot.valorizacion IS NOT NULL
+              AND ot.estado = 'finalizada'
               AND NOT EXISTS (SELECT 1 FROM facturas f WHERE f.orden_trabajo_id = ot.id)
             ORDER BY ot.fecha_creacion DESC
         `);
@@ -118,12 +124,15 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
         const result = await pool.query(
             `INSERT INTO facturas (maquinaria_id, guia_recepcion_id, folio, archivo_url, monto)
              VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [maquinariaId, guia_recepcion_id, folio, rutaStorage, monto || null]
+            [maquinariaId, guia_recepcion_id, folio, rutaStorage, montoONulo(monto)]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
         if (rutaStorage) {
             await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+        }
+        if (err.code === '23505') {
+            return res.status(409).json({ error: 'Este arriendo ya tiene su factura' });
         }
         console.error(err);
         res.status(500).json({ error: 'Error al subir factura de arriendo' });
@@ -137,7 +146,7 @@ router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (r
     try {
         const result = await pool.query(
             `UPDATE facturas SET folio = COALESCE($1, folio), monto = COALESCE($2, monto) WHERE id = $3 RETURNING *`,
-            [folio || null, monto || null, req.params.facturaId]
+            [folio || null, montoONulo(monto), req.params.facturaId]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Factura no encontrada' });

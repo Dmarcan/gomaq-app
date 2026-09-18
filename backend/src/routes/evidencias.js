@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
-const { verificarDuenoOrden } = require('../utils/ordenes');
+const { verificarDuenoOrden, MENSAJE_OT_CERRADA } = require('../utils/ordenes');
 const { supabase, BUCKET } = require('../config/supabase');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 const { rutaArchivo, rutaPerteneceAOrden } = require('../utils/rutaArchivo');
@@ -27,6 +27,7 @@ router.post('/:id/evidencia/solicitar-upload', verifyToken, requireRole('mecanic
         const check = await verificarDuenoOrden(id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
 
         // la ruta la arma el servidor; del nombre que manda el telefono solo queda la extension
         const carpetas = carpeta ? [carpeta, `ot-${Number(id)}`] : [`ot-${Number(id)}`];
@@ -67,6 +68,7 @@ router.post('/:id/evidencia/confirmar', verifyToken, requireRole('mecanico'), as
         const check = await verificarDuenoOrden(id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
 
         const yaRegistrada = await buscarPorUuid(pool, 'evidencias_fotograficas', uuid);
         if (yaRegistrada) return res.status(200).json(yaRegistrada);
