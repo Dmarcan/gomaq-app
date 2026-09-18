@@ -95,6 +95,67 @@ describe('disponibilidad y contrato basico', () => {
         assert.ok(cuerpo.items.length <= 1, 'el limite solicitado no se respeto');
     });
 
+    test('Flota: cada fila trae lo que la tabla muestra para distinguir equipos', async (t) => {
+        if (!requiereServidor(t)) return;
+        const r = await pedir('/api/maquinarias?limit=1', con(tokens.administrativo));
+        const { items } = await r.json();
+        if (items.length === 0) return t.skip('no hay equipos cargados');
+        for (const campo of ['codigo', 'tipo', 'estado', 'marca', 'modelo', 'capacidad_carga', 'altura_trabajo', 'tipo_combustible']) {
+            assert.ok(campo in items[0], `falta ${campo} en la fila del listado`);
+        }
+    });
+
+    test('Flota: el resumen cuenta la flota completa y por categoria', async (t) => {
+        if (!requiereServidor(t)) return;
+        const r = await pedir('/api/maquinarias/resumen', con(tokens.administrativo));
+        assert.equal(r.status, 200);
+        const cuerpo = await r.json();
+        for (const campo of ['total', 'disponibles', 'arrendados', 'en_mantencion', 'fuera_de_servicio']) {
+            assert.equal(typeof cuerpo[campo], 'number', campo);
+        }
+        // igual que el Dashboard: cada equipo esta disponible o arrendado, nunca ambos
+        assert.equal(cuerpo.disponibles + cuerpo.arrendados, cuerpo.total);
+        const enCategorias = Object.values(cuerpo.por_categoria).reduce((a, b) => a + b, 0);
+        assert.ok(enCategorias <= cuerpo.total, 'las categorias no pueden sumar mas que la flota');
+    });
+
+    test('Flota: el resumen no lo ve el cliente', async (t) => {
+        if (!requiereServidor(t)) return;
+        const r = await pedir('/api/maquinarias/resumen', con(tokens.cliente));
+        assert.equal(r.status, 403);
+    });
+
+    test('Flota: ordenar por altura deja los equipos sin altura al final', async (t) => {
+        if (!requiereServidor(t)) return;
+        const r = await pedir('/api/maquinarias?orden=altura&dir=desc', con(tokens.administrativo));
+        assert.equal(r.status, 200);
+        const alturas = (await r.json()).items.map((m) => (m.altura_trabajo === null ? null : Number(m.altura_trabajo)));
+        const primerVacio = alturas.indexOf(null);
+        if (primerVacio !== -1) {
+            assert.ok(alturas.slice(primerVacio).every((a) => a === null), 'un equipo con altura aparecio despues de uno sin altura');
+        }
+        const conAltura = alturas.filter((a) => a !== null);
+        assert.deepEqual(conAltura, [...conAltura].sort((a, b) => b - a));
+    });
+
+    test('Flota: un orden inventado no rompe el listado', async (t) => {
+        if (!requiereServidor(t)) return;
+        const r = await pedir('/api/maquinarias?orden=' + encodeURIComponent("x'; DROP TABLE maquinarias; --"), con(tokens.administrativo));
+        assert.equal(r.status, 200);
+    });
+
+    test('el perfil del equipo trae cuanto falta para la mantencion', async (t) => {
+        if (!requiereServidor(t)) return;
+        const lista = await (await pedir('/api/maquinarias?limit=1', con(tokens.administrativo))).json();
+        if (lista.items.length === 0) return t.skip('no hay equipos cargados');
+        const r = await pedir(`/api/maquinarias/${lista.items[0].id}`, con(tokens.administrativo));
+        assert.equal(r.status, 200);
+        const { mantencion } = await r.json();
+        for (const campo of ['ultima_lectura', 'intervalo_horas', 'horas_restantes', 'por_vencer', 'vencida']) {
+            assert.ok(campo in mantencion, `falta ${campo} en mantencion`);
+        }
+    });
+
     test('el listado de servicios reproduce la orden de trabajo en papel', async (t) => {
         if (!requiereServidor(t)) return;
         const r = await pedir('/api/checklist', con(tokens.mecanico));
