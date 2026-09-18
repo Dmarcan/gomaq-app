@@ -41,6 +41,10 @@ cd ~/gomaq && git pull origin main
 sudo systemctl restart gomaq-backend
 ```
 
+Las migraciones 015 y 016 (auditoría de septiembre de 2026) tienen dos cuidados:
+- **016 crea índices únicos en `facturas`**: si ya hay dos facturas para el mismo arriendo u OT, falla. Antes de aplicarla, correr las dos consultas que trae en su encabezado y decidir qué factura conservar.
+- **Desplegar el backend antes de instalar el APK nuevo.** La app nueva manda un `uuid_cliente` por tarea para que los reintentos no dupliquen; contra un backend viejo sigue funcionando, pero sin esa protección.
+
 **Panel Web:**
 ```bash
 cd web
@@ -163,6 +167,16 @@ Cada mecánico tiene un furgón asignado y no rotan (entrevista el jefe de talle
 
 Esto además completa **HU-07**, que prometía avisar al cliente *"quién llega a reparar su equipo y con qué vehículo"*: el aviso ahora lleva nombre, RUT y marca/modelo/patente. La app le dice al mecánico exactamente qué de su ficha sale hacia el cliente.
 
+## La cola offline de la app
+
+El mecánico trabaja sin señal y la app reintenta al volver la conexión. Reglas que la sostienen (auditoría de septiembre de 2026):
+
+- **Un reintento no duplica.** "No hubo respuesta" no significa "no se guardó": con señal inestable el servidor puede confirmar y perder solo la respuesta. Cada tarea lleva un UUID generado en el teléfono (`uuid_cliente`, migración 015); si llega de nuevo, el servidor devuelve lo que ya existe. Cubre repuestos, tramos, horómetro, evidencias y OT creadas en terreno. Cerrar una OT ya cerrada responde bien sin repetir el aviso al cliente.
+- **401 pausa la cola, 403 no.** Un 401 es sesión vencida: se pide volver a entrar y el trabajo queda guardado. Un 403 es "esta OT ya no es tuya" (reasignada): solo esa tarea pasa a error, con su motivo. Las OT que el servidor ya no entrega se quitan del teléfono si no tienen cambios pendientes.
+- **El trabajo guardado es de quien lo hizo.** Si otro mecánico inicia sesión con cambios pendientes del anterior, la app no lo deja entrar hasta que el primero sincronice.
+- **Una línea de repuesto se anula, no se borra**, como una línea tachada en el talonario: el mecánico mientras la OT está abierta, el panel en cualquier momento. El repuesto vuelve a su ubicación y deja de contar como gasto.
+- **Una OT cerrada no se modifica** desde la app, ni se reasigna. Reasignar una en curso cambia el técnico sin hacerla retroceder (`utils/estadosOt.js`).
+
 ## Qué falta (en orden de importancia)
 
 1. **Gestión de Usuarios completa desde el panel** — la pantalla "Usuarios" hoy solo cubre la aprobación de solicitudes de cuenta de clientes (auto-registro); crear/editar mecánicos y administrativos sigue siendo por SSH con `create-user.js`.
@@ -189,9 +203,12 @@ Esto además completa **HU-07**, que prometía avisar al cliente *"quién llega 
   4. **Variables**: crear `backend/.env` con `DATABASE_URL` apuntando a la base local, un `JWT_SECRET` cualquiera y valores ficticios para `SUPABASE_URL` y `SUPABASE_SERVICE_KEY` — el arranque los exige, pero la batería no toca el almacenamiento de archivos.
   5. **Ejecutar**: `npm start` y, en otra consola, `GOMAQ_TEST_URL=http://localhost:3000 npm test`.
 
-- **Tests del backend**: `cd backend && npm test` (129 casos, `node:test`, sin dependencias nuevas), en tres niveles:
-  - **Reglas de negocio** (99): mantención preventiva, facturable de la OT, rentabilidad, stock, paginación, saneamiento de rutas de archivo y el parseo de los PDF reales de GOMAQ como fixture.
+- **Tests del backend**: `cd backend && npm test` (167 casos, `node:test`, sin dependencias nuevas), en cuatro niveles:
+  - **Reglas de negocio** (121): mantención preventiva, facturable de la OT, ciclo de vida de la OT, rentabilidad, stock, paginación, rutas de archivo, idempotencia, IP del límite de intentos y el parseo de los PDF reales de GOMAQ como fixture.
   - **Capa de autorización** (14): `verifyToken` y `requireRole` con tokens ajenos, expirados y manipulados. Corren en cualquier máquina, sin servidor ni base de datos.
+  - **Escritura** (16): reintentos de la cola sin duplicados, anulación de líneas con devolución de stock, transiciones de la OT y la cola de valorización. Levantan las rutas en memoria contra la base de `DATABASE_URL`, crean sus propios datos y los borran al terminar; firman sus tokens con un secreto de prueba. **Solo contra una base local**: se activan con `GOMAQ_TEST_ESCRITURA=1 npm test` y sin esa variable se omiten.
   - **Extremo a extremo** (16): contra una instancia desplegada. Verifican el contrato de la API, el control por rol, la pertenencia del recurso y la superficie expuesta. Son de solo lectura, así que pueden correrse contra el servidor real sin ensuciarlo. Si no hay instancia disponible se **omiten con el motivo**, no fallan: un servidor apagado no es un defecto del código. Apuntan por defecto a `http://192.168.1.132:3000`; para usar otra, `GOMAQ_TEST_URL=http://localhost:3000 npm test`.
+- **`TRUST_PROXY`** (opcional): cuántos saltos de proxy hay delante del backend, para que el límite de intentos de login cuente por la IP real. Sin definirla solo se confía en loopback, que es lo correcto con el túnel de Cloudflare en el mismo equipo. En Railway u otra nube: `TRUST_PROXY=1`.
+
 - **Las contraseñas y tokens reales** (contraseña de la BD, `JWT_SECRET`, credenciales de Supabase) están únicamente en el `.env` del servidor — nunca se subieron a este repo ni deberían aparecer en el historial de git.
 - **El GX520 es hardware de 2005** — no tiene margen para crecer mucho más de lo que hay hoy sin migrar a la nube (ver sección 6.1.1 del informe, que ya justifica por qué eventualmente hay que migrar).
