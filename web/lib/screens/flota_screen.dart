@@ -259,7 +259,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
           if (numeroMotorCtrl.text.trim().isNotEmpty) 'numero_motor': numeroMotorCtrl.text.trim(),
           if (numeroChasisCtrl.text.trim().isNotEmpty) 'numero_chasis': numeroChasisCtrl.text.trim(),
           if (numeroMastilCtrl.text.trim().isNotEmpty) 'numero_mastil': numeroMastilCtrl.text.trim(),
-          'tipo_combustible': categoria == 'transpaleta' ? 'electrica' : (combustible ?? ''),
+          'tipo_combustible': (categoria == 'transpaleta' || categoria == 'apilador') ? 'electrica' : (combustible ?? ''),
         },
       );
       _cargar();

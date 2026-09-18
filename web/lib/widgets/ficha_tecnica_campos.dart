@@ -4,6 +4,7 @@ const categoriasEquipo = [
   (valor: 'grua_horquilla', etiqueta: 'Grúa Horquilla'),
   (valor: 'alzahombre', etiqueta: 'Alzahombre'),
   (valor: 'transpaleta', etiqueta: 'Transpaleta'),
+  (valor: 'apilador', etiqueta: 'Apilador'),
 ];
 
 const combustiblesEquipo = [
@@ -17,6 +18,7 @@ const etiquetasCategoria = {
   'grua_horquilla': 'Grúa Horquilla',
   'alzahombre': 'Alzahombre',
   'transpaleta': 'Transpaleta',
+  'apilador': 'Apilador',
 };
 
 const etiquetasCombustible = {
@@ -34,19 +36,21 @@ IconData iconoCategoria(String? categoria) {
       return Icons.height;
     case 'transpaleta':
       return Icons.local_shipping;
+    case 'apilador':
+      return Icons.inventory_2;
     default:
       return Icons.precision_manufacturing;
   }
 }
 
-bool mostrarCapacidad(String? categoria) => categoria == null || categoria == 'grua_horquilla' || categoria == 'transpaleta';
+bool mostrarCapacidad(String? categoria) => categoria == null || categoria == 'grua_horquilla' || categoria == 'transpaleta' || categoria == 'apilador';
 bool mostrarMastil(String? categoria) => categoria == null || categoria == 'grua_horquilla';
 bool mostrarCombustible(String? categoria) => categoria == null || categoria == 'grua_horquilla' || categoria == 'alzahombre';
 bool mostrarMotorChasis(String? categoria) => categoria == null || categoria == 'grua_horquilla' || categoria == 'alzahombre';
 bool mostrarAltura(String? categoria) => categoria == null || categoria == 'alzahombre';
 
 /// Campos de ficha tecnica que se muestran u ocultan segun la categoria elegida
-/// (grua horquilla / alzahombre / transpaleta piden datos distintos). Se usa tanto
+/// (grua horquilla / alzahombre / transpaleta / apilador piden datos distintos). Se usa tanto
 /// en el dialogo de creacion (FlotaScreen) como en el de edicion (MaquinariaPerfilScreen)
 /// para no duplicar esta logica en dos lugares.
 List<Widget> camposFichaTecnica({

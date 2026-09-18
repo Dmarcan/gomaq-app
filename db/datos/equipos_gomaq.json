@@ -976,7 +976,7 @@
   {
    "interno": 1501,
    "tipo": "Apilador eléctrico",
-   "categoria_equipo": null,
+   "categoria_equipo": "apilador",
    "marca": "BT",
    "modelo": null,
    "capacidad_carga": null,
