@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
+import '../utils/formato.dart';
+import '../widgets/estado_vacio.dart';
 
 class InsumosScreen extends StatefulWidget {
   const InsumosScreen({super.key});
@@ -134,7 +136,8 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        title: const Text('Insumos'),
+        // sin título: el marco del panel ya muestra el nombre de la sección justo arriba
+        toolbarHeight: 0,
         bottom: TabBar(
           controller: _tabController,
           tabs: const [Tab(text: 'Catalogo'), Tab(text: 'Consumos recientes')],
@@ -154,6 +157,16 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
               : TabBarView(
                   controller: _tabController,
                   children: [
+                    if (_catalogo.isEmpty)
+                      EstadoVacio(
+                        icono: Icons.inventory_2_outlined,
+                        titulo: 'Aún no hay repuestos en el catálogo',
+                        mensaje: 'Agrega los repuestos que usa el taller para que los mecánicos '
+                            'puedan elegirlos al registrar un trabajo.',
+                        textoAccion: puedeEscribir ? 'Agregar el primero' : null,
+                        onAccion: puedeEscribir ? _abrirDialogoCrear : null,
+                      )
+                    else
                     RefreshIndicator(
                       onRefresh: _cargar,
                       child: ListView.builder(
@@ -179,6 +192,14 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
                         },
                       ),
                     ),
+                    if (_movimientos.isEmpty)
+                      const EstadoVacio(
+                        icono: Icons.history,
+                        titulo: 'Sin consumos registrados',
+                        mensaje: 'Aquí aparecen los repuestos usados en las órdenes de trabajo, '
+                            'las cargas de furgón y las compras.',
+                      )
+                    else
                     RefreshIndicator(
                       onRefresh: _cargar,
                       child: ListView.builder(
@@ -188,10 +209,18 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
                           final mov = _movimientos[i];
                           return Card(
                             child: ListTile(
-                              title: Text('${mov['insumo_nombre']} · ${mov['cantidad']} ${mov['unidad_medida']}'),
+                              // una línea escrita a mano no tiene insumo del catálogo: antes decía "null"
+                              title: Text(
+                                '${mov['insumo_nombre'] ?? mov['descripcion'] ?? 'Repuesto'} · '
+                                '${mov['cantidad']} ${mov['unidad_medida'] ?? ''}',
+                                style: mov['anulada_at'] != null
+                                    ? const TextStyle(decoration: TextDecoration.lineThrough, color: Colors.black54)
+                                    : null,
+                              ),
                               subtitle: Text(
-                                '${mov['maquinaria_codigo'] != null ? 'OT maquinaria ${mov['maquinaria_codigo']} · ' : ''}'
-                                '${mov['usuario_nombre'] ?? '-'} · ${mov['created_at']}',
+                                '${mov['anulada_at'] != null ? 'Anulada · ' : ''}'
+                                '${mov['maquinaria_codigo'] != null ? 'Equipo ${mov['maquinaria_codigo']} · ' : ''}'
+                                '${mov['usuario_nombre'] ?? '-'} · ${Formato.fechaHora(mov['created_at'])}',
                               ),
                             ),
                           );

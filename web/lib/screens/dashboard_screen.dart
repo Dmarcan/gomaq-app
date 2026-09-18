@@ -158,20 +158,26 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Row(
       children: [
         Expanded(
-          child: Stack(
+          // El radio sale del espacio disponible: con radios fijos (46 + 34) la dona medía 160 px
+          // y en pantallas angostas se salía de su tarjeta.
+          child: LayoutBuilder(
+            builder: (context, restricciones) {
+              final radioTotal = (restricciones.biggest.shortestSide / 2 - 4).clamp(30.0, 80.0);
+              final hueco = radioTotal * 0.58;
+              return Stack(
             alignment: Alignment.center,
             children: [
               PieChart(
                 PieChartData(
                   sectionsSpace: 2,
-                  centerSpaceRadius: 46,
+                  centerSpaceRadius: hueco,
                   sections: [
                     for (final d in datos)
                       if (d.$3 > 0)
                         PieChartSectionData(
                           value: d.$3.toDouble(),
                           color: d.$4,
-                          radius: 34,
+                          radius: radioTotal - hueco,
                           showTitle: false,
                         ),
                   ],
@@ -181,10 +187,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Text('$total', style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                  const Text('equipos', style: TextStyle(fontSize: 11, color: Colors.black54)),
+                  const Text('equipos', style: TextStyle(fontSize: 12, color: Colors.black54)),
                 ],
               ),
             ],
+          );
+            },
           ),
         ),
         const SizedBox(width: 8),
@@ -399,7 +407,21 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: ListView(
         padding: const EdgeInsets.all(24),
         children: [
-          Text('Vista general de los ${flota['total']} equipos de GOMAQ', style: const TextStyle(color: Colors.black54)),
+          // La acción principal va arriba: antes "Crear Orden de Trabajo" quedaba al final de la
+          // página, fuera de la vista, y además solo llevaba a la lista sin abrir el formulario.
+          Row(
+            children: [
+              Expanded(
+                child: Text('Vista general de los ${flota['total']} equipos de GOMAQ',
+                    style: const TextStyle(color: Colors.black54)),
+              ),
+              FilledButton.icon(
+                onPressed: () => widget.onNavegar('/ordenes', filtro: {'nueva': '1'}),
+                icon: const Icon(Icons.add),
+                label: const Text('Nueva orden de trabajo'),
+              ),
+            ],
+          ),
           const SizedBox(height: 20),
 
           _tituloSeccion('DISPONIBILIDAD COMERCIAL'),
@@ -448,11 +470,15 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 8),
           Row(
             children: [
-              _tarjetaAtajo('${atajos['pendientes_facturar']}', 'Equipos pendientes de facturar', () => widget.onNavegar('/facturacion')),
+              // el número cuenta órdenes de reparación sin monto, no equipos
+              _tarjetaAtajo('${atajos['pendientes_facturar']}', 'Reparaciones por valorizar', () => widget.onNavegar('/facturacion')),
               const SizedBox(width: 16),
-              _tarjetaAtajo('${atajos['solicitudes_pendientes']}', 'Asistencias pendientes', () => widget.onNavegar('/asistencias')),
+              _tarjetaAtajo('${atajos['solicitudes_pendientes']}', 'Asistencias por atender', () => widget.onNavegar('/asistencias')),
               const SizedBox(width: 16),
-              _tarjetaAtajo('${atajos['notificaciones_error']}', 'Notificaciones en error', () => widget.onNavegar('/notificaciones')),
+              // la aprobación de cuentas vive en una pestaña de Clientes: sin este atajo no se veía
+              _tarjetaAtajo('${atajos['cuentas_por_aprobar'] ?? 0}', 'Cuentas por aprobar', () => widget.onNavegar('/clientes')),
+              const SizedBox(width: 16),
+              _tarjetaAtajo('${atajos['notificaciones_error']}', 'Avisos con error', () => widget.onNavegar('/notificaciones')),
             ],
           ),
           const SizedBox(height: 24),
@@ -466,20 +492,13 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const SizedBox(height: 24),
           ],
 
-          Row(
-            children: [
-              FilledButton.icon(
-                onPressed: () => widget.onNavegar('/ordenes'),
-                icon: const Icon(Icons.add),
-                label: const Text('Crear Orden de Trabajo'),
-              ),
-              const SizedBox(width: 12),
-              OutlinedButton.icon(
-                onPressed: () => widget.onNavegar('/flota'),
-                icon: const Icon(Icons.arrow_forward),
-                label: const Text('Ver Detalle de Equipos'),
-              ),
-            ],
+          Align(
+            alignment: Alignment.centerLeft,
+            child: OutlinedButton.icon(
+              onPressed: () => widget.onNavegar('/flota'),
+              icon: const Icon(Icons.arrow_forward),
+              label: const Text('Ver toda la flota'),
+            ),
           ),
         ],
       ),

@@ -119,120 +119,133 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
     final aPerdida = (_resumen['a_perdida'] ?? 0) as int;
     final sinPrecio = (_resumen['lineas_sin_precio'] ?? 0) as int;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        // el titulo lo pone el marco del panel (admin_dashboard_screen)
-        Text(
-          'Gasto en repuestos contra lo facturado. El gasto cuenta todas las líneas, se hayan cobrado o no.',
-          style: TextStyle(fontSize: 13, color: Colors.grey[700]),
-        ),
-        const SizedBox(height: 12),
-        TextField(
-          onChanged: _buscar,
-          decoration: const InputDecoration(
-            prefixIcon: Icon(Icons.search),
-            hintText: 'Buscar por código o tipo...',
-            border: OutlineInputBorder(),
-            isDense: true,
+    // margen de 24 px, igual que el título del marco: antes todo quedaba pegado a la barra lateral
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 24),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          // el titulo lo pone el marco del panel (admin_dashboard_screen)
+          Text(
+            'Gasto en repuestos contra lo facturado. El gasto cuenta todas las líneas, se hayan cobrado o no.',
+            style: TextStyle(fontSize: 13, color: Colors.grey[700]),
           ),
-        ),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            const Text('Período: ', style: TextStyle(fontSize: 13)),
-            DropdownButton<int>(
-              value: _meses,
-              items: const [
-                DropdownMenuItem(value: 3, child: Text('Últimos 3 meses')),
-                DropdownMenuItem(value: 6, child: Text('Últimos 6 meses')),
-                DropdownMenuItem(value: 12, child: Text('Últimos 12 meses')),
-                DropdownMenuItem(value: 24, child: Text('Últimos 24 meses')),
-              ],
-              onChanged: (v) {
-                if (v == null) return;
-                setState(() => _meses = v);
-                _cargar();
-              },
-            ),
-            const SizedBox(width: 24),
-            if (aPerdida > 0)
-              Text('$aPerdida equipo${aPerdida == 1 ? '' : 's'} a pérdida',
-                  style: const TextStyle(color: GomaqColors.estadoNegativo, fontWeight: FontWeight.bold)),
-          ],
-        ),
-        if (sinPrecio > 0)
-          Padding(
-            padding: const EdgeInsets.only(top: 4),
-            child: Text(
-              // sin esto, un equipo con repuestos sin precio parece barato cuando en realidad
-              // es que nadie cargó los montos
-              '$sinPrecio línea${sinPrecio == 1 ? '' : 's'} de repuesto sin precio: el gasto real es mayor al que se muestra.',
-              style: const TextStyle(fontSize: 12, color: GomaqColors.estadoAdvertencia),
+          const SizedBox(height: 12),
+          TextField(
+            onChanged: _buscar,
+            decoration: const InputDecoration(
+              prefixIcon: Icon(Icons.search),
+              hintText: 'Buscar por código o tipo...',
+              border: OutlineInputBorder(),
+              isDense: true,
             ),
           ),
-        const SizedBox(height: 12),
-        Expanded(
-          child: _equipos.isEmpty
-              ? const Center(child: Text('Sin equipos registrados'))
-              : SingleChildScrollView(
-                  child: Column(
-                    children: [
-                      DataTable(
-                    columns: const [
-                      DataColumn(label: Text('Equipo')),
-                      DataColumn(label: Text('Tipo')),
-                      DataColumn(label: Text('Gasto'), numeric: true),
-                      DataColumn(label: Text('Facturado'), numeric: true),
-                      DataColumn(label: Text('Margen'), numeric: true),
-                      DataColumn(label: Text('%'), numeric: true),
-                    ],
-                    rows: [
-                      for (final e in _equipos)
-                        DataRow(
-                          color: e['sale_a_perdida'] == true
-                              ? WidgetStatePropertyAll(GomaqColors.estadoNegativo.withValues(alpha: 0.08))
-                              : null,
-                          cells: [
-                            DataCell(Text(e['codigo'] ?? '')),
-                            DataCell(Text(e['tipo'] ?? '')),
-                            DataCell(Text(Formato.clp(e['gasto']))),
-                            DataCell(Text(Formato.clp(e['ingreso']))),
-                            DataCell(Text(
-                              Formato.clp(e['margen']),
-                              style: TextStyle(
-                                fontWeight: FontWeight.bold,
-                                color: e['sale_a_perdida'] == true ? GomaqColors.estadoNegativo : GomaqColors.estadoPositivo,
-                              ),
-                            )),
-                            DataCell(Text(e['margen_porcentaje'] == null
-                                ? '-'
-                                : '${(e['margen_porcentaje'] as num).toStringAsFixed(0)}%')),
-                          ],
-                        ),
-                    ],
-                      ),
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        child: Column(
-                          children: [
-                            Text('Mostrando ${_equipos.length} de $_total equipos',
-                                style: const TextStyle(fontSize: 12, color: Colors.black54)),
-                            if (_hayMas) ...[
-                              const SizedBox(height: 8),
-                              OutlinedButton(
-                                onPressed: _cargandoMas ? null : _cargarMas,
-                                child: Text(_cargandoMas ? 'Cargando...' : 'Cargar más'),
-                              ),
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              const Text('Período: ', style: TextStyle(fontSize: 13)),
+              DropdownButton<int>(
+                value: _meses,
+                items: const [
+                  DropdownMenuItem(value: 3, child: Text('Últimos 3 meses')),
+                  DropdownMenuItem(value: 6, child: Text('Últimos 6 meses')),
+                  DropdownMenuItem(value: 12, child: Text('Últimos 12 meses')),
+                  DropdownMenuItem(value: 24, child: Text('Últimos 24 meses')),
+                ],
+                onChanged: (v) {
+                  if (v == null) return;
+                  setState(() => _meses = v);
+                  _cargar();
+                },
+              ),
+              const SizedBox(width: 24),
+              if (aPerdida > 0)
+                Text('$aPerdida equipo${aPerdida == 1 ? '' : 's'} a pérdida',
+                    style: const TextStyle(color: GomaqColors.estadoNegativo, fontWeight: FontWeight.bold)),
+            ],
+          ),
+          if (sinPrecio > 0)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                // sin esto, un equipo con repuestos sin precio parece barato cuando en realidad
+                // es que nadie cargó los montos
+                '$sinPrecio línea${sinPrecio == 1 ? '' : 's'} de repuesto sin precio: el gasto real es mayor al que se muestra.',
+                style: TextStyle(fontSize: 12, color: GomaqColors.textoEstado('en_mantencion')),
+              ),
+            ),
+          const SizedBox(height: 12),
+          Expanded(
+            child: _equipos.isEmpty
+                ? const Center(child: Text('Sin equipos registrados'))
+                : SingleChildScrollView(
+                    child: Column(
+                      children: [
+                        DataTable(
+                      // alto flexible: con el alto fijo, un tipo largo ("Grua Horquilla Toyota")
+                      // se cortaba a media linea
+                      dataRowMinHeight: 48,
+                      dataRowMaxHeight: double.infinity,
+                      columns: const [
+                        DataColumn(label: Text('Equipo')),
+                        DataColumn(label: Text('Tipo')),
+                        DataColumn(label: Text('Gasto'), numeric: true),
+                        DataColumn(label: Text('Facturado'), numeric: true),
+                        DataColumn(label: Text('Margen'), numeric: true),
+                        DataColumn(label: Text('%'), numeric: true),
+                      ],
+                      rows: [
+                        for (final e in _equipos)
+                          DataRow(
+                            color: e['sale_a_perdida'] == true
+                                ? WidgetStatePropertyAll(GomaqColors.estadoNegativo.withValues(alpha: 0.08))
+                                : null,
+                            cells: [
+                              DataCell(Text(e['codigo'] ?? '')),
+                              DataCell(Text(e['tipo'] ?? '')),
+                              DataCell(Text(Formato.clp(e['gasto']))),
+                              DataCell(Text(Formato.clp(e['ingreso']))),
+                              DataCell(Text(
+                                Formato.clp(e['margen']),
+                                style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  // verde solo con ganancia: un margen de $0 en verde se leía como ganancia
+                                  color: e['sale_a_perdida'] == true
+                                      ? GomaqColors.estadoNegativo
+                                      : ((e['margen'] ?? 0) as num) > 0
+                                          ? GomaqColors.textoEstado('operativa')
+                                          : Colors.black54,
+                                ),
+                              )),
+                              DataCell(Text(e['margen_porcentaje'] == null
+                                  ? '-'
+                                  : '${(e['margen_porcentaje'] as num).toStringAsFixed(0)}%')),
                             ],
-                          ],
+                          ),
+                      ],
                         ),
-                      ),
-                    ],
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 16),
+                          child: Column(
+                            children: [
+                              Text('Mostrando ${_equipos.length} de $_total equipos',
+                                  style: const TextStyle(fontSize: 12, color: Colors.black54)),
+                              if (_hayMas) ...[
+                                const SizedBox(height: 8),
+                                OutlinedButton(
+                                  onPressed: _cargandoMas ? null : _cargarMas,
+                                  child: Text(_cargandoMas ? 'Cargando...' : 'Cargar más'),
+                                ),
+                              ],
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-        ),
-      ],
+          ),
+        ],
+      )
     );
   }
 }

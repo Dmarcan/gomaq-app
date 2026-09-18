@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../router.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/confirmar_cerrar_sesion.dart';
 
 /// Marco del panel: barra lateral fija y el contenido de la seccion activa.
 ///
@@ -40,84 +41,113 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
 
-    return Scaffold(
-      body: Row(
+    // Por debajo de 900 px la barra lateral fija (240 px) dejaba el contenido apretado o
+    // cortado: pasa a un menú desplegable que se abre con el botón del encabezado.
+    return LayoutBuilder(
+      builder: (context, restricciones) {
+        final compacto = restricciones.maxWidth < 900;
+        final contenido = _contenido(compacto: compacto);
+        if (compacto) {
+          return Scaffold(
+            drawer: Drawer(width: 260, child: _barraLateral(auth, enMenuDesplegable: true)),
+            body: contenido,
+          );
+        }
+        return Scaffold(
+          body: Row(children: [_barraLateral(auth), Expanded(child: contenido)]),
+        );
+      },
+    );
+  }
+
+  Widget _contenido({required bool compacto}) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
+          child: Row(
+            children: [
+              if (compacto)
+                // Builder: Scaffold.of necesita un contexto que ya esté bajo el Scaffold
+                Builder(
+                  builder: (context) => IconButton(
+                    icon: const Icon(Icons.menu),
+                    tooltip: 'Abrir menú',
+                    onPressed: () => Scaffold.of(context).openDrawer(),
+                  ),
+                ),
+              Expanded(
+                child: Text(_itemActivo.etiqueta,
+                    style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+              ),
+              IconButton(
+                icon: const Icon(Icons.refresh),
+                tooltip: 'Refrescar',
+                onPressed: () => setState(() => _refreshKey = UniqueKey()),
+              ),
+            ],
+          ),
+        ),
+        Expanded(child: KeyedSubtree(key: _refreshKey, child: widget.child)),
+      ],
+    );
+  }
+
+  Widget _barraLateral(AuthService auth, {bool enMenuDesplegable = false}) {
+    return Container(
+      width: 240,
+      color: GomaqColors.sidebarOscuro,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: 240,
-            color: GomaqColors.sidebarOscuro,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 28, 20, 20),
+            child: Row(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 28, 20, 20),
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: GomaqColors.primario,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: const Icon(Icons.business, color: Colors.white, size: 20),
-                      ),
-                      const SizedBox(width: 10),
-                      const Text('GOMAQ Panel',
-                          style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
-                    ],
+                Container(
+                  width: 36,
+                  height: 36,
+                  decoration: BoxDecoration(
+                    color: GomaqColors.primario,
+                    borderRadius: BorderRadius.circular(8),
                   ),
+                  child: const Icon(Icons.business, color: Colors.white, size: 20),
                 ),
-                const Divider(color: Colors.white24, height: 1),
-                const SizedBox(height: 12),
-                Expanded(child: ListView(padding: EdgeInsets.zero, children: _menuAgrupado())),
-                const Divider(color: Colors.white24, height: 1),
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(auth.nombre ?? '',
-                                style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-                            Text(_etiquetaRol(auth.rol), style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                          ],
-                        ),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.logout, color: Colors.white70, size: 18),
-                        tooltip: 'Cerrar sesión',
-                        onPressed: () => auth.logout(),
-                      ),
-                    ],
-                  ),
-                ),
+                const SizedBox(width: 10),
+                const Text('GOMAQ Panel',
+                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
               ],
             ),
           ),
+          const Divider(color: Colors.white24, height: 1),
+          const SizedBox(height: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
+            child: ListView(
+              padding: EdgeInsets.zero,
+              children: _menuAgrupado(cerrarAlNavegar: enMenuDesplegable),
+            ),
+          ),
+          const Divider(color: Colors.white24, height: 1),
+          Padding(
+            padding: const EdgeInsets.all(16),
+            child: Row(
               children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(24, 20, 24, 8),
-                  child: Row(
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: Text(_itemActivo.etiqueta,
-                            style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
-                      ),
-                      IconButton(
-                        icon: const Icon(Icons.refresh),
-                        tooltip: 'Refrescar',
-                        onPressed: () => setState(() => _refreshKey = UniqueKey()),
-                      ),
+                      Text(auth.nombre ?? '',
+                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                      Text(_etiquetaRol(auth.rol), style: const TextStyle(color: Colors.white70, fontSize: 12)),
                     ],
                   ),
                 ),
-                Expanded(child: KeyedSubtree(key: _refreshKey, child: widget.child)),
+                IconButton(
+                  icon: const Icon(Icons.logout, color: Colors.white70, size: 18),
+                  tooltip: 'Cerrar sesión',
+                  onPressed: () => confirmarCerrarSesion(context, auth),
+                ),
               ],
             ),
           ),
@@ -128,7 +158,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
 
   /// El menu con encabezado por area. Eran 13 items planos, que es mas de lo que alguien
   /// escanea de una mirada.
-  List<Widget> _menuAgrupado() {
+  List<Widget> _menuAgrupado({required bool cerrarAlNavegar}) {
     final widgets = <Widget>[];
     String? grupoAnterior;
     for (final item in itemsMenu) {
@@ -143,12 +173,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         ));
         grupoAnterior = item.grupo;
       }
-      widgets.add(_itemMenu(item));
+      widgets.add(_itemMenu(item, cerrarAlNavegar: cerrarAlNavegar));
     }
     return widgets;
   }
 
-  Widget _itemMenu(ItemMenu item) {
+  Widget _itemMenu(ItemMenu item, {required bool cerrarAlNavegar}) {
     final activo = item.ruta == widget.rutaActual;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
@@ -159,7 +189,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           borderRadius: BorderRadius.circular(8),
           // el foco por defecto es un sombreado oscuro, invisible sobre esta barra
           focusColor: Colors.white24,
-          onTap: () => context.go(item.ruta),
+          onTap: () {
+            // en el menú desplegable, elegir una sección también lo cierra
+            if (cerrarAlNavegar) Navigator.of(context).maybePop();
+            context.go(item.ruta);
+          },
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
             child: Row(

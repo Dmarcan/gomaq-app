@@ -1,3 +1,4 @@
+import 'dart:html' as html;
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
@@ -19,6 +20,7 @@ class GuiasScreen extends StatefulWidget {
 class _GuiasScreenState extends State<GuiasScreen> {
   List<dynamic> _maquinarias = [];
   List<dynamic> _clientes = [];
+  List<dynamic> _recientes = [];
   Map<String, dynamic>? _seleccionada;
   int? _clienteId;
   String _tipo = 'despacho';
@@ -48,7 +50,18 @@ class _GuiasScreenState extends State<GuiasScreen> {
   List<dynamic> get _maquinariasDisponibles =>
       _maquinarias.where((m) => m['estado'] != 'fuera_de_servicio').toList();
 
+  /// Últimas guías subidas, para confirmar que quedó bien la que se acaba de guardar.
+  Future<void> _cargarRecientes() async {
+    try {
+      final data = await ApiClient.instance.get('/api/maquinarias/guias/recientes');
+      if (mounted) setState(() => _recientes = data);
+    } on ApiException catch (_) {
+      // la lista es de apoyo: si falla, el formulario sigue sirviendo
+    }
+  }
+
   Future<void> _cargarDatos() async {
+    _cargarRecientes();
     try {
       final maquinarias = (await ApiClient.instance.get('/api/maquinarias'))['items'];
       final clientes = await ApiClient.instance.get('/api/clientes');
@@ -165,7 +178,8 @@ class _GuiasScreenState extends State<GuiasScreen> {
         },
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Guía guardada correctamente')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Guía guardada')));
+        _cargarRecientes();
         setState(() {
           _archivo = null;
           _fallido = false;
@@ -229,7 +243,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
                   )
                   .toList(),
               onChanged: (v) => setState(() => _seleccionada = v),
-              decoration: const InputDecoration(border: OutlineInputBorder()),
+              decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'Selecciona el equipo'),
             ),
             const SizedBox(height: 20),
             const Text('DOCUMENTO PDF', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
@@ -356,8 +370,45 @@ class _GuiasScreenState extends State<GuiasScreen> {
               onPressed: (_seleccionada != null && _archivo != null && !_subiendo && !_detectando) ? _guardar : null,
               child: _subiendo
                   ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Text('Guardar Guía'),
+                  : const Text('Guardar guía'),
             ),
+            // el botón deshabilitado no decía qué faltaba
+            if (_seleccionada == null || _archivo == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  _seleccionada == null && _archivo == null
+                      ? 'Elige el equipo y el PDF de la guía para poder guardar.'
+                      : _seleccionada == null
+                          ? 'Falta elegir el equipo.'
+                          : 'Falta elegir el PDF de la guía.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+                ),
+              ),
+            const SizedBox(height: 32),
+            const Text('GUÍAS RECIENTES', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+            const SizedBox(height: 8),
+            if (_recientes.isEmpty)
+              Text('Aún no se han subido guías.', style: TextStyle(color: Colors.grey.shade700))
+            else
+              for (final g in _recientes)
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(g['tipo'] == 'despacho' ? Icons.north_east : Icons.south_west),
+                  title: Text(
+                    '${g['tipo'] == 'despacho' ? 'Despacho' : 'Recepción'} · ${g['maquinaria_codigo']}'
+                    '${g['fallido'] == true ? ' · fallido' : ''}',
+                  ),
+                  subtitle: Text('${g['cliente_nombre'] ?? 'Sin cliente'} · ${Formato.fechaHora(g['fecha'])}'),
+                  trailing: g['url'] == null
+                      ? null
+                      : TextButton.icon(
+                          onPressed: () => html.window.open(g['url'], '_blank'),
+                          icon: const Icon(Icons.picture_as_pdf, size: 18),
+                          label: const Text('Ver PDF'),
+                        ),
+                ),
           ],
         ),
       ),

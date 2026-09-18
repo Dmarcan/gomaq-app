@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import '../services/api_client.dart';
 import '../theme/gomaq_theme.dart';
 
@@ -72,7 +73,16 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: GomaqColors.fondoCalido,
-      appBar: AppBar(backgroundColor: Colors.transparent, elevation: 0, foregroundColor: Colors.black87),
+      appBar: AppBar(
+        backgroundColor: Colors.transparent,
+        elevation: 0,
+        foregroundColor: Colors.black87,
+        leading: IconButton(
+          tooltip: 'Volver al inicio de sesión',
+          icon: const Icon(Icons.arrow_back),
+          onPressed: () => context.go('/login'),
+        ),
+      ),
       body: Center(
         child: Card(
           child: Padding(
@@ -95,7 +105,7 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
       children: [
         const Icon(Icons.check_circle, color: GomaqColors.estadoPositivo, size: 56),
         const SizedBox(height: 16),
-        const Text('Solicitud enviada', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        const Text('Solicitud de cuenta enviada', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
         const Text(
           'Revisaremos tu solicitud de cuenta. Cuando esté aprobada podrás ingresar '
@@ -103,7 +113,7 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 24),
-        FilledButton(onPressed: () => Navigator.pop(context), child: const Text('Volver al inicio de sesión')),
+        FilledButton(onPressed: () => context.go('/login'), child: const Text('Volver al inicio de sesión')),
       ],
     );
   }
@@ -187,7 +197,7 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
             onPressed: _enviando ? null : _registrar,
             child: _enviando
                 ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                : const Text('Enviar solicitud'),
+                : const Text('Solicitar cuenta'),
           ),
         ),
       ],

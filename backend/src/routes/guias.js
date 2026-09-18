@@ -48,6 +48,31 @@ router.post('/guias/detectar', verifyToken, requireRole('administrativo'), subid
     }
 });
 
+// GET /api/maquinarias/guias/recientes - las ultimas guias subidas, con su PDF.
+// La pantalla de Guias era solo un formulario: una vez subida, la guia no se podia volver a ver
+// desde ahi para confirmar que quedo bien.
+router.get('/guias/recientes', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    try {
+        const result = await pool.query(
+            `SELECT g.id, g.tipo, g.fecha, g.fallido, g.archivo_url, g.created_at,
+                    m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre
+             FROM guias g
+             JOIN maquinarias m ON m.id = g.maquinaria_id
+             LEFT JOIN clientes c ON c.id = g.cliente_id
+             ORDER BY g.created_at DESC
+             LIMIT 20`
+        );
+        const conUrl = await Promise.all(result.rows.map(async ({ archivo_url: ruta, ...fila }) => {
+            const { data, error } = await supabase.storage.from(BUCKET_DOCUMENTOS).createSignedUrl(ruta, 3600);
+            return { ...fila, url: error ? null : data.signedUrl };
+        }));
+        res.json(conUrl);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al consultar las guias recientes' });
+    }
+});
+
 // POST /api/maquinarias/:id/guias - subir guia de despacho o recepcion (PDF va a Supabase Storage)
 // Ademas, si la guia no es fallida, refleja el arriendo en la ficha del equipo: un despacho
 // lo marca arrendado al cliente indicado, una recepcion lo libera - mismo cliente_id que ya

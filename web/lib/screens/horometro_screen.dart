@@ -95,9 +95,13 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
       children: [
         // el titulo lo pone el marco del panel (admin_dashboard_screen): repetirlo aca
         // dejaba dos encabezados uno encima del otro
-        Text(
-          'La mantención preventiva se calcula con las horas de uso desde la última mantención.',
-          style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+        // mismo margen de 24 px que el título del marco: antes el texto quedaba pegado a la barra
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 24),
+          child: Text(
+            'La mantención preventiva se calcula con las horas de uso desde la última mantención.',
+            style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+          ),
         ),
         const SizedBox(height: 12),
         TabBar(

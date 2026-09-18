@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/confirmar_cerrar_sesion.dart';
 import 'cliente_mis_equipos_screen.dart';
 import 'cliente_seguimiento_screen.dart';
 import 'cliente_historial_screen.dart';
@@ -19,7 +20,7 @@ class _ClientePortalScreenState extends State<ClientePortalScreen> {
   // cambiar esta key remonta las pestanas: su initState vuelve a cargar los datos
   Key _refreshKey = UniqueKey();
 
-  static const _titulos = ['Mi Flota', 'Seguimiento', 'Historial'];
+  static const _titulos = ['Mis equipos', 'Seguimiento', 'Historial'];
 
   static const _tabs = [
     ClienteMisEquiposScreen(),
@@ -41,7 +42,11 @@ class _ClientePortalScreenState extends State<ClientePortalScreen> {
             tooltip: 'Refrescar',
             onPressed: () => setState(() => _refreshKey = UniqueKey()),
           ),
-          IconButton(tooltip: 'Cerrar sesión', icon: const Icon(Icons.logout), onPressed: () => auth.logout()),
+          IconButton(
+            tooltip: 'Cerrar sesión',
+            icon: const Icon(Icons.logout),
+            onPressed: () => confirmarCerrarSesion(context, auth),
+          ),
         ],
       ),
       body: KeyedSubtree(key: _refreshKey, child: IndexedStack(index: _tab, children: _tabs)),
@@ -49,7 +54,7 @@ class _ClientePortalScreenState extends State<ClientePortalScreen> {
         selectedIndex: _tab,
         onDestinationSelected: (i) => setState(() => _tab = i),
         destinations: const [
-          NavigationDestination(icon: Icon(Icons.local_shipping), label: 'Mis Equipos'),
+          NavigationDestination(icon: Icon(Icons.local_shipping), label: 'Mis equipos'),
           NavigationDestination(icon: Icon(Icons.timeline), label: 'Seguimiento'),
           NavigationDestination(icon: Icon(Icons.history), label: 'Historial'),
         ],

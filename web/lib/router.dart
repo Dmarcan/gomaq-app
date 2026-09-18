@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'services/auth_service.dart';
 import 'screens/login_screen.dart';
+import 'screens/registro_cliente_screen.dart';
 import 'screens/admin_dashboard_screen.dart';
 import 'screens/cliente_portal_screen.dart';
 import 'screens/rol_no_soportado_screen.dart';
@@ -62,7 +63,9 @@ GoRouter construirRouter(AuthService auth) {
       // a alguien que si tiene sesion valida
       if (auth.verificandoSesion) return null;
 
-      final yendoALogin = estado.matchedLocation == '/login';
+      // pantallas publicas: el login y el registro de clientes (antes el registro se abria con
+      // Navigator.push sobre /login, asi que recargar la pagina borraba lo escrito)
+      final yendoALogin = estado.matchedLocation == '/login' || estado.matchedLocation == '/registro';
       if (!auth.autenticado) return yendoALogin ? null : '/login';
 
       // enrutado por rol: solo los roles con interfaz web entran a sus pantallas;
@@ -79,6 +82,7 @@ GoRouter construirRouter(AuthService auth) {
     },
     routes: [
       GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
+      GoRoute(path: '/registro', builder: (_, _) => const RegistroClienteScreen()),
       GoRoute(path: '/portal', builder: (_, _) => const ClientePortalScreen()),
       GoRoute(path: '/rol-no-soportado', builder: (_, _) => const RolNoSoportadoScreen()),
 
@@ -110,7 +114,13 @@ GoRouter construirRouter(AuthService auth) {
               );
             },
           ),
-          GoRoute(path: '/ordenes', builder: (_, _) => const OrdenesScreen()),
+          GoRoute(
+            path: '/ordenes',
+            builder: (_, estado) => OrdenesScreen(
+              key: ValueKey(estado.uri.query),
+              abrirNueva: estado.uri.queryParameters['nueva'] == '1',
+            ),
+          ),
           GoRoute(path: '/asignacion', builder: (_, _) => const AsignacionScreen()),
           GoRoute(path: '/asistencias', builder: (_, _) => const SolicitudesScreen()),
           GoRoute(path: '/insumos', builder: (_, _) => const InsumosScreen()),

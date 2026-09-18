@@ -397,8 +397,9 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
                         child: ListTile(
                           title: Text('OT #${ot['id']} · ${ot['motivo'] ?? 'Sin motivo especificado'}'),
                           subtitle: Text(
-                            '${ot['diagnostico'] ?? 'Sin diagnóstico'}\n${(ot['fecha_creacion'] as String).split('T').first}'
-                            '${ot['fecha_cierre'] != null ? ' → ${(ot['fecha_cierre'] as String).split('T').first}' : ''}',
+                            // dd/mm/aaaa como en el resto del sistema (antes mostraba 2026-09-09)
+                            '${ot['diagnostico'] ?? 'Sin diagnóstico'}\n${Formato.fecha(ot['fecha_creacion'])}'
+                            '${ot['fecha_cierre'] != null ? ' → ${Formato.fecha(ot['fecha_cierre'])}' : ''}',
                           ),
                           isThreeLine: true,
                           trailing: EstadoChip(estado: ot['estado']),

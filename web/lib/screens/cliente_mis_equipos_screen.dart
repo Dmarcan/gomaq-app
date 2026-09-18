@@ -5,6 +5,7 @@ import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../widgets/estado_chip.dart';
+import '../widgets/estado_vacio.dart';
 
 class ClienteMisEquiposScreen extends StatefulWidget {
   const ClienteMisEquiposScreen({super.key});
@@ -79,15 +80,39 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
           else if (_error != null)
             Center(child: Text('Error: $_error'))
           else if (_maquinarias.isEmpty)
-            const Center(child: Padding(padding: EdgeInsets.all(32), child: Text('No tienes maquinarias registradas')))
+            const Padding(
+              padding: EdgeInsets.only(top: 32),
+              child: EstadoVacio(
+                icono: Icons.local_shipping_outlined,
+                titulo: 'Aún no tienes equipos',
+                mensaje: 'Cuando GOMAQ te entregue un equipo en arriendo, aparecerá aquí.',
+              ),
+            )
           else
             for (final m in _maquinarias)
               Card(
-                child: ListTile(
-                  title: Text('${m['codigo']} - ${m['tipo']}'),
-                  subtitle: Text(m['ubicacion'] ?? 'Sin ubicacion registrada'),
-                  trailing: EstadoChip(estado: m['estado']),
-                  onTap: () => _solicitarAsistencia(m),
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ListTile(
+                        title: Text('${m['codigo']} - ${m['tipo']}'),
+                        subtitle: Text(m['ubicacion'] ?? 'Sin ubicación registrada'),
+                        trailing: EstadoChip(estado: m['estado']),
+                      ),
+                      // Antes la única forma de pedir asistencia era tocar la tarjeta, y nada lo
+                      // indicaba: un cliente con un equipo en falla no encontraba cómo pedir ayuda.
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: OutlinedButton.icon(
+                          onPressed: () => _solicitarAsistencia(m),
+                          icon: const Icon(Icons.support_agent, size: 18),
+                          label: const Text('Solicitar asistencia'),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
         ],
@@ -145,7 +170,7 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
         final messenger = ScaffoldMessenger.of(context);
         Navigator.pop(context);
         messenger.showSnackBar(
-          const SnackBar(content: Text('Solicitud enviada. La empresa se contactará pronto.')),
+          const SnackBar(content: Text('Asistencia solicitada. Te contactaremos pronto.')),
         );
       }
     } on ApiException catch (e) {
@@ -215,7 +240,7 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
           onPressed: _enviando ? null : _enviar,
           child: _enviando
               ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Text('Enviar Solicitud'),
+              : const Text('Solicitar asistencia'),
         ),
       ],
     );

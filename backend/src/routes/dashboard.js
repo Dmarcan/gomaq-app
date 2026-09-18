@@ -28,6 +28,10 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
         const notificacionesError = await pool.query(
             `SELECT COUNT(*) AS n FROM notificaciones_pendientes WHERE estado = 'error'`
         );
+        // la aprobacion de cuentas de clientes vive en una pestaña de Clientes: el atajo la hace visible
+        const cuentasPorAprobar = await pool.query(
+            `SELECT COUNT(*) AS n FROM solicitudes_cliente WHERE estado = 'pendiente'`
+        );
 
         res.json({
             flota: flota.rows[0],
@@ -35,6 +39,7 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
                 pendientes_facturar: Number(pendientesFacturar.rows[0].n),
                 solicitudes_pendientes: Number(solicitudesPendientes.rows[0].n),
                 notificaciones_error: Number(notificacionesError.rows[0].n),
+                cuentas_por_aprobar: Number(cuentasPorAprobar.rows[0].n),
             },
         });
     } catch (err) {

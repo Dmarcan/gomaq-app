@@ -1,7 +1,11 @@
 import 'dart:html' as html;
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
+import '../utils/formato.dart';
+import '../widgets/estado_vacio.dart';
 
+/// Trabajos terminados sobre los equipos del cliente. Los que siguen en curso están en
+/// Seguimiento: antes aparecían acá también, sin estado, y no se distinguían de los cerrados.
 class ClienteHistorialScreen extends StatefulWidget {
   const ClienteHistorialScreen({super.key});
 
@@ -26,9 +30,9 @@ class _ClienteHistorialScreenState extends State<ClienteHistorialScreen> {
       _error = null;
     });
     try {
-      final data = await ApiClient.instance.get('/api/ordenes-trabajo/mias');
+      final data = await ApiClient.instance.get('/api/ordenes-trabajo/mias') as List;
       if (!mounted) return;
-      setState(() => _ordenes = data);
+      setState(() => _ordenes = data.where((o) => o['estado'] == 'finalizada').toList());
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } finally {
@@ -39,8 +43,14 @@ class _ClienteHistorialScreenState extends State<ClienteHistorialScreen> {
   @override
   Widget build(BuildContext context) {
     if (_cargando) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return Center(child: Text('Error: $_error'));
-    if (_ordenes.isEmpty) return const Center(child: Text('Aun no tienes historial de ordenes de trabajo'));
+    if (_error != null) return Center(child: Text('No se pudo cargar el historial: $_error'));
+    if (_ordenes.isEmpty) {
+      return const EstadoVacio(
+        icono: Icons.history,
+        titulo: 'Aún no hay trabajos terminados',
+        mensaje: 'Cuando GOMAQ cierre un trabajo sobre tus equipos, aparecerá aquí con su factura.',
+      );
+    }
 
     return RefreshIndicator(
       onRefresh: _cargar,
@@ -49,16 +59,18 @@ class _ClienteHistorialScreenState extends State<ClienteHistorialScreen> {
         itemCount: _ordenes.length,
         itemBuilder: (context, i) {
           final o = _ordenes[i];
-          final tieneFactura = o['factura_url'] != null;
+          final facturaUrl = o['factura_url'] as String?;
           return Card(
             child: ListTile(
               title: Text(o['motivo'] ?? o['maquinaria_tipo'] ?? 'Orden de trabajo'),
-              subtitle: Text('${o['maquinaria_codigo']} · ${_formatearFecha(o['fecha_creacion'])}'),
-              trailing: tieneFactura
+              subtitle: Text('${o['maquinaria_codigo']} · Terminado el ${Formato.fecha(o['fecha_cierre'] ?? o['fecha_creacion'])}'),
+              trailing: facturaUrl != null
                   ? TextButton.icon(
-                      onPressed: () => html.window.open('${ApiClient.baseUrl}${o['factura_url']}', '_blank'),
+                      // la API ya entrega una URL firmada completa; antes se le anteponía la
+                      // dirección del servidor y el enlace quedaba roto fuera del mismo origen
+                      onPressed: () => html.window.open(facturaUrl, '_blank'),
                       icon: const Icon(Icons.picture_as_pdf, size: 18),
-                      label: const Text('PDF'),
+                      label: const Text('Factura'),
                     )
                   : null,
             ),
@@ -66,12 +78,5 @@ class _ClienteHistorialScreenState extends State<ClienteHistorialScreen> {
         },
       ),
     );
-  }
-
-  String _formatearFecha(String? iso) {
-    if (iso == null) return '';
-    final fecha = DateTime.tryParse(iso);
-    if (fecha == null) return '';
-    return '${fecha.day.toString().padLeft(2, '0')}/${fecha.month.toString().padLeft(2, '0')}/${fecha.year}';
   }
 }

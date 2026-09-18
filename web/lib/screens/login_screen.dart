@@ -3,7 +3,7 @@ import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../services/api_client.dart';
 import '../theme/gomaq_theme.dart';
-import 'registro_cliente_screen.dart';
+import 'package:go_router/go_router.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -107,7 +107,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   TextButton(
-                    onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const RegistroClienteScreen())),
+                    onPressed: () => context.go('/registro'),
                     child: const Text('¿Eres cliente? Crea tu cuenta'),
                   ),
                 ],

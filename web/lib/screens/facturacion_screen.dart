@@ -63,7 +63,8 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        title: const Text('Facturación'),
+        // sin título: el marco del panel ya muestra el nombre de la sección justo arriba
+        toolbarHeight: 0,
         bottom: TabBar(
           controller: _tabController,
           tabs: [

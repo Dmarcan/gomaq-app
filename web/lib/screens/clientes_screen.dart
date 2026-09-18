@@ -31,7 +31,8 @@ class _ClientesScreenState extends State<ClientesScreen> with SingleTickerProvid
     return Scaffold(
       appBar: AppBar(
         automaticallyImplyLeading: false,
-        title: const Text('Clientes'),
+        // sin título: el marco del panel ya muestra el nombre de la sección justo arriba
+        toolbarHeight: 0,
         bottom: TabBar(
           controller: _tabController,
           tabs: const [Tab(text: 'Clientes'), Tab(text: 'Cuentas por aprobar')],

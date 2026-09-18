@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
@@ -5,9 +6,12 @@ import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../widgets/estado_chip.dart';
+import '../widgets/estado_vacio.dart';
 
 class OrdenesScreen extends StatefulWidget {
-  const OrdenesScreen({super.key});
+  /// Abre el formulario de nueva OT al entrar (el botón del Dashboard llega con ?nueva=1).
+  final bool abrirNueva;
+  const OrdenesScreen({super.key, this.abrirNueva = false});
 
   @override
   State<OrdenesScreen> createState() => _OrdenesScreenState();
@@ -18,10 +22,34 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
   bool _cargando = true;
   String? _error;
 
+  // Búsqueda y filtro: la API ya los soportaba, pero la pantalla no los ofrecía
+  String _busqueda = '';
+  String? _estadoFiltro;
+  Timer? _esperaBusqueda;
+
+  static const _estados = ['pendiente', 'asignada', 'en_terreno', 'en_reparacion', 'finalizada'];
+
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _cargar();
+      if (widget.abrirNueva) _abrirDialogoCrear();
+    });
+  }
+
+  @override
+  void dispose() {
+    _esperaBusqueda?.cancel();
+    super.dispose();
+  }
+
+  void _buscar(String texto) {
+    _esperaBusqueda?.cancel();
+    _esperaBusqueda = Timer(const Duration(milliseconds: 350), () {
+      _busqueda = texto.trim();
+      _cargar();
+    });
   }
 
   Future<void> _cargar() async {
@@ -30,7 +58,12 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
       _error = null;
     });
     try {
-      final data = (await ApiClient.instance.get('/api/ordenes-trabajo'))['items'];
+      final params = <String, String>{
+        if (_busqueda.isNotEmpty) 'q': _busqueda,
+        'estado': ?_estadoFiltro,
+      };
+      final query = params.isEmpty ? '' : '?${Uri(queryParameters: params).query}';
+      final data = (await ApiClient.instance.get('/api/ordenes-trabajo$query'))['items'];
       if (!mounted) return;
       setState(() => _ordenes = data);
     } on ApiException catch (e) {
@@ -123,13 +156,57 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
       floatingActionButton: puedeCrear
           ? FloatingActionButton.extended(onPressed: _abrirDialogoCrear, icon: const Icon(Icons.add), label: const Text('Nueva OT'))
           : null,
-      body: RefreshIndicator(
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    onChanged: _buscar,
+                    decoration: const InputDecoration(
+                      prefixIcon: Icon(Icons.search),
+                      hintText: 'Buscar por equipo, cliente o motivo...',
+                      isDense: true,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                DropdownButton<String?>(
+                  value: _estadoFiltro,
+                  hint: const Text('Todos los estados'),
+                  items: [
+                    const DropdownMenuItem<String?>(value: null, child: Text('Todos los estados')),
+                    for (final e in _estados)
+                      DropdownMenuItem<String?>(value: e, child: Text(GomaqColors.etiquetaEstado(e))),
+                  ],
+                  onChanged: (v) {
+                    setState(() => _estadoFiltro = v);
+                    _cargar();
+                  },
+                ),
+              ],
+            ),
+          ),
+          Expanded(
+            child: RefreshIndicator(
         onRefresh: _cargar,
         child: _cargando
             ? const Center(child: CircularProgressIndicator())
             : _error != null
                 ? Center(child: Text('Error: $_error'))
-                : ListView.builder(
+                : _ordenes.isEmpty
+                    ? EstadoVacio(
+                        icono: Icons.assignment_outlined,
+                        titulo: _busqueda.isEmpty && _estadoFiltro == null
+                            ? 'Aún no hay órdenes de trabajo'
+                            : 'Ninguna orden coincide con la búsqueda',
+                        mensaje: _busqueda.isEmpty && _estadoFiltro == null
+                            ? 'Crea la primera con «Nueva OT».'
+                            : 'Prueba con otro texto o quita el filtro de estado.',
+                      )
+                    : ListView.builder(
                     padding: const EdgeInsets.all(16),
                     itemCount: _ordenes.length,
                     itemBuilder: (context, i) {
@@ -144,6 +221,9 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
                       );
                     },
                   ),
+            ),
+          ),
+        ],
       ),
     );
   }

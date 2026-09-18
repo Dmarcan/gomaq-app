@@ -142,10 +142,14 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
         const result = await pool.query(
             `SELECT ot.id, ot.estado, ot.motivo, ot.diagnostico, ot.fecha_creacion, ot.fecha_cierre,
                     m.codigo AS maquinaria_codigo, m.tipo AS maquinaria_tipo,
-                    f.id AS factura_id, f.folio AS factura_folio, f.archivo_url AS factura_url
+                    f.id AS factura_id, f.folio AS factura_folio, f.archivo_url AS factura_url,
+                    u.nombre AS mecanico_nombre
              FROM ordenes_trabajo ot
              JOIN maquinarias m ON m.id = ot.maquinaria_id
              LEFT JOIN facturas f ON f.orden_trabajo_id = ot.id
+             -- el portal muestra quien atiende cada orden abierta, no solo las que nacieron de
+             -- una asistencia pedida por el cliente
+             LEFT JOIN usuarios u ON u.id = ot.mecanico_id
              WHERE ot.cliente_id = $1
              ORDER BY ot.fecha_creacion DESC`,
             [req.user.cliente_id]

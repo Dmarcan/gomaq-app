@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../widgets/estado_chip.dart';
+import '../widgets/estado_vacio.dart';
 
 class SolicitudesScreen extends StatefulWidget {
   const SolicitudesScreen({super.key});
@@ -40,7 +41,7 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
     try {
       await ApiClient.instance.patch('/api/solicitudes/$id/convertir', {});
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Solicitud convertida en Orden de Trabajo')));
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Asistencia convertida en orden de trabajo')));
       }
       _cargar();
     } on ApiException catch (e) {
@@ -86,7 +87,14 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
           ? const Center(child: CircularProgressIndicator())
           : _error != null
               ? Center(child: Text('Error: $_error'))
-              : ListView.builder(
+              : _solicitudes.isEmpty
+                  ? const EstadoVacio(
+                      icono: Icons.support_agent,
+                      titulo: 'No hay asistencias de clientes',
+                      mensaje: 'Cuando un cliente reporte una falla o pida una mantención desde su portal, '
+                          'aparecerá aquí para convertirla en orden de trabajo.',
+                    )
+                  : ListView.builder(
                   padding: const EdgeInsets.all(16),
                   itemCount: _solicitudes.length,
                   itemBuilder: (context, i) {
