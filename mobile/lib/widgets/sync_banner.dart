@@ -19,13 +19,13 @@ class SesionExpiradaBanner extends StatelessWidget {
           const SizedBox(width: 6),
           const Flexible(
             child: Text(
-              'Tu sesion expiro - vuelve a iniciar sesion para sincronizar (tu trabajo esta guardado)',
+              'Tu sesión expiró. Vuelve a iniciar sesión para enviar tus cambios: están guardados en el teléfono.',
               style: TextStyle(fontSize: 13, color: GomaqColors.textoPrimario),
             ),
           ),
           TextButton(
             onPressed: onIniciarSesion,
-            child: const Text('Iniciar sesion', style: TextStyle(fontSize: 12)),
+            child: const Text('Iniciar sesión', style: TextStyle(fontSize: 13)),
           ),
         ],
       ),
@@ -63,12 +63,12 @@ class SyncBanner extends StatelessWidget {
             ? Icons.cloud_done
             : Icons.cloud_off;
     final texto = sincronizando
-        ? 'Sincronizando...'
+        ? 'Enviando cambios…'
         : enError > 0
-            ? '$enError cambios no se pudieron sincronizar - toca para reintentar'
+            ? '${_cambios(enError)} no se ${enError == 1 ? 'pudo' : 'pudieron'} enviar. Toca para ver cuál y reintentar.'
             : online
-                ? (pendientes > 0 ? '$pendientes cambios pendientes de sincronizar' : 'Todo sincronizado')
-                : 'Sin conexion - los cambios se guardan localmente';
+                ? (pendientes > 0 ? '${_cambios(pendientes)} por enviar' : 'Todo enviado')
+                : 'Sin conexión. Tus cambios se guardan en el teléfono.';
 
     return InkWell(
       onTap: enError > 0 ? onTapErrores : null,
@@ -92,4 +92,6 @@ class SyncBanner extends StatelessWidget {
       ),
     );
   }
+
+  static String _cambios(int n) => n == 1 ? '1 cambio' : '$n cambios';
 }

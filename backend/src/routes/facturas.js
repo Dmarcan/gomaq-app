@@ -102,7 +102,7 @@ router.post('/:id/factura/:facturaId/autorizar-envio', verifyToken, requireRole(
         res.json({ ok: true, mensaje: 'Envio de correo encolado' });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al autorizar el envio de la factura' });
+        res.status(500).json({ error: 'Error al autorizar el envío de la factura' });
     }
 });
 

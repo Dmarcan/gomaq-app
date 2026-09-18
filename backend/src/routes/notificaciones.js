@@ -29,12 +29,12 @@ router.post('/:id/reintentar', verifyToken, requireRole('administrativo', 'geren
             [req.params.id]
         );
         if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Notificacion no encontrada o no esta en error' });
+            return res.status(404).json({ error: 'Notificación no encontrada o no está en error' });
         }
         res.json(result.rows[0]);
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al reintentar la notificacion' });
+        res.status(500).json({ error: 'Error al reintentar la notificación' });
     }
 });
 

@@ -91,8 +91,8 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     final confirmado = await showDialog<bool>(
       context: context,
       builder: (_) => AlertDialog(
-        title: const Text('Rechazar solicitud'),
-        content: const Text('¿Confirmas que quieres rechazar esta solicitud de cuenta?'),
+        title: const Text('¿Rechazar esta solicitud de cuenta?'),
+        content: const Text('La persona no podrá ingresar. Puede volver a postular más adelante con el mismo correo.'),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
           FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Rechazar')),

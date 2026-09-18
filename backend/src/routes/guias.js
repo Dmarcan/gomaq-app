@@ -69,7 +69,7 @@ router.get('/guias/recientes', verifyToken, requireRole('administrativo', 'geren
         res.json(conUrl);
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al consultar las guias recientes' });
+        res.status(500).json({ error: 'Error al consultar las guías recientes' });
     }
 });
 
@@ -89,7 +89,7 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
     }
     const esFallido = fallido === 'true' || fallido === true;
     if (tipo === 'despacho' && !esFallido && !cliente_id) {
-        return res.status(400).json({ error: 'cliente_id es requerido para una guia de despacho no fallida' });
+        return res.status(400).json({ error: 'Elige el cliente al que se despacha el equipo' });
     }
 
     const client = await pool.connect();
@@ -98,7 +98,7 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
         if (cliente_id) {
             const clienteExiste = await client.query('SELECT id FROM clientes WHERE id = $1', [cliente_id]);
             if (clienteExiste.rows.length === 0) {
-                return res.status(400).json({ error: 'El cliente indicado no existe' });
+                return res.status(400).json({ error: 'El cliente elegido no existe' });
             }
         }
 
@@ -184,7 +184,7 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
             await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
         }
         console.error(err);
-        res.status(500).json({ error: 'Error al subir guia' });
+        res.status(500).json({ error: 'Error al subir guía' });
     } finally {
         client.release();
     }

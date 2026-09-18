@@ -63,6 +63,26 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
     });
   }
 
+  /// Qué cambio falló, en palabras del mecánico. Antes mostraba el nombre interno de la
+  /// tarea y el id local ("insumo · OT #-1726...").
+  static String _describirTarea(Map<String, dynamic> tarea) {
+    const nombres = {
+      'insumo': 'Repuesto',
+      'anular_insumo': 'Anulación de repuesto',
+      'evidencia': 'Foto',
+      'finalizar': 'Cierre de la orden',
+      'diagnostico': 'Observaciones',
+      'datos_ot': 'Datos de la orden',
+      'checklist': 'Sistemas intervenidos',
+      'tramo': 'Tramo de trabajo',
+      'horometro': 'Lectura de horómetro',
+      'crear_ot': 'Orden nueva en terreno',
+    };
+    final id = tarea['orden_trabajo_id'] as int;
+    final orden = id < 0 ? 'orden creada sin señal' : 'OT-$id';
+    return '${nombres[tarea['tipo']] ?? tarea['tipo']} · $orden';
+  }
+
   /// Cerrar sesion estaba a un toque, junto al titulo. Con cambios sin enviar se explica que
   /// no se pierden, pero que solo esta cuenta puede enviarlos.
   Future<void> _confirmarCerrarSesion() async {
@@ -94,7 +114,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
     await showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Cambios que no se pudieron sincronizar'),
+        title: const Text('Cambios que no se pudieron enviar'),
         content: SizedBox(
           width: double.maxFinite,
           child: SingleChildScrollView(
@@ -107,7 +127,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
                     contentPadding: EdgeInsets.zero,
                     dense: true,
                     leading: const Icon(Icons.error_outline, color: GomaqColors.estadoNegativo),
-                    title: Text('${t['tipo']} · OT #${t['orden_trabajo_id']}'),
+                    title: Text(_describirTarea(t)),
                     subtitle: Text('${t['ultimo_error'] ?? 'Error desconocido'}', maxLines: 3, overflow: TextOverflow.ellipsis),
                   ),
               ],
@@ -164,7 +184,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Mis Ordenes de Trabajo'),
+        title: const Text('Mis órdenes de trabajo'),
         actions: [
           IconButton(
             tooltip: 'Cerrar sesión',
@@ -228,9 +248,13 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
                       children: [
                         Icon(Icons.assignment_outlined, size: 56, color: GomaqColors.textoSecundario),
                         SizedBox(height: 12),
-                        Text(
-                          'No tienes ordenes de trabajo asignadas',
-                          style: TextStyle(color: GomaqColors.textoSecundario),
+                        Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 32),
+                          child: Text(
+                            'No tienes órdenes asignadas. Cuando el administrativo te asigne una, aparecerá aquí.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(color: GomaqColors.textoSecundario),
+                          ),
                         ),
                       ],
                     ),

@@ -47,16 +47,16 @@ function totalPorInsumo(existencias) {
 function validarTransferencia({ cantidad, disponibleOrigen, origenId, destinoId }) {
     const monto = Number(cantidad);
     if (isNaN(monto) || monto <= 0) {
-        return { valida: false, error: 'La cantidad debe ser un numero mayor a 0' };
+        return { valida: false, error: 'La cantidad debe ser un número mayor a 0' };
     }
     if (!origenId || !destinoId) {
-        return { valida: false, error: 'Se requiere ubicacion de origen y de destino' };
+        return { valida: false, error: 'Se requiere ubicación de origen y de destino' };
     }
     if (origenId === destinoId) {
-        return { valida: false, error: 'El origen y el destino no pueden ser la misma ubicacion' };
+        return { valida: false, error: 'El origen y el destino no pueden ser la misma ubicación' };
     }
     if (monto > (Number(disponibleOrigen) || 0)) {
-        return { valida: false, error: 'No hay suficiente stock en el origen' };
+        return { valida: false, error: 'No hay suficiente stock en la bodega' };
     }
     return { valida: true };
 }

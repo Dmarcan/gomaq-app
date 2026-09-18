@@ -129,14 +129,14 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
         res.json(envolver(result.rows, total.rows[0].n, { limit, offset }));
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al consultar ordenes de trabajo' });
+        res.status(500).json({ error: 'Error al consultar órdenes de trabajo' });
     }
 });
 
 // GET /api/ordenes-trabajo/mias - portal cliente: su historial de OT con facturas vinculadas
 router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     if (!req.user.cliente_id) {
-        return res.status(400).json({ error: 'Su usuario no esta vinculado a ninguna empresa cliente' });
+        return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
     }
     try {
         const result = await pool.query(
@@ -168,7 +168,7 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
         res.json(conUrlFirmada);
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al consultar su historial' });
+        res.status(500).json({ error: 'Error al consultar tu historial' });
     }
 });
 
@@ -188,7 +188,7 @@ router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecani
             return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         }
         if (req.user.rol === 'mecanico' && orden.mecanico_id !== req.user.id) {
-            return res.status(403).json({ error: 'No tiene permiso para ver esta orden' });
+            return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
         }
 
         // el resto del talonario: sistemas intervenidos y tramos de trabajo
@@ -220,7 +220,7 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
     try {
         const mecanico = await client.query('SELECT id, nombre, rut FROM usuarios WHERE id = $1 AND rol = $2', [mecanico_id, 'mecanico']);
         if (mecanico.rows.length === 0) {
-            return res.status(400).json({ error: 'mecanico_id no corresponde a un usuario con rol mecanico' });
+            return res.status(400).json({ error: 'El usuario elegido no es un mecánico' });
         }
 
         await client.query('BEGIN');
@@ -237,7 +237,7 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
         const nuevoEstado = estadoTrasAsignar(actual.rows[0].estado);
         if (!nuevoEstado) {
             await client.query('ROLLBACK');
-            return res.status(409).json({ error: 'La orden ya esta finalizada y no se puede reasignar' });
+            return res.status(409).json({ error: 'La orden ya está finalizada y no se puede reasignar' });
         }
         // asignar al mismo tecnico otra vez (doble clic) no debe mandarle un segundo aviso al cliente
         const mismoTecnico = actual.rows[0].mecanico_id === Number(mecanico_id);
@@ -280,7 +280,7 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
     } catch (err) {
         await client.query('ROLLBACK');
         console.error(err);
-        res.status(500).json({ error: 'Error al asignar mecanico' });
+        res.status(500).json({ error: 'Error al asignar mecánico' });
     } finally {
         client.release();
     }
@@ -296,7 +296,7 @@ router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (re
     try {
         const check = await verificarDuenoOrden(req.params.id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
         if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
         if (estado && !puedeCambiarEstadoA(check.estado, estado)) {
             return res.status(409).json({ error: `La orden no puede pasar de ${check.estado} a ${estado}` });
@@ -313,7 +313,7 @@ router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (re
         res.json(result.rows[0]);
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al actualizar diagnostico' });
+        res.status(500).json({ error: 'Error al actualizar diagnóstico' });
     }
 });
 
@@ -329,7 +329,7 @@ router.patch('/:id/datos', verifyToken, requireRole('mecanico'), async (req, res
     try {
         const check = await verificarDuenoOrden(req.params.id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
         if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
 
         const result = await pool.query(
@@ -366,7 +366,7 @@ router.put('/:id/checklist', verifyToken, requireRole('mecanico'), async (req, r
     try {
         const check = await verificarDuenoOrden(req.params.id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
         if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
 
         await client.query('BEGIN');
@@ -406,7 +406,7 @@ router.post('/:id/tramos', verifyToken, requireRole('mecanico'), async (req, res
     try {
         const check = await verificarDuenoOrden(req.params.id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
         if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
 
         const yaRegistrado = await buscarPorUuid(pool, 'tramos_trabajo', uuid);
@@ -460,7 +460,7 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
     try {
         const check = await verificarDuenoOrden(req.params.id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
 
         await client.query('BEGIN');
         const actual = await client.query('SELECT * FROM ordenes_trabajo WHERE id = $1 FOR UPDATE', [req.params.id]);
@@ -528,7 +528,7 @@ router.patch('/:id/valorizacion', verifyToken, requireRole('gerente'), async (re
     const { valorizacion } = req.body;
     if (valorizacion === undefined || valorizacion === null || valorizacion === '' || isNaN(valorizacion)
         || Number(valorizacion) < 0) {
-        return res.status(400).json({ error: 'valorizacion debe ser un monto mayor o igual a 0' });
+        return res.status(400).json({ error: 'El monto debe ser mayor o igual a 0' });
     }
     try {
         const actual = await pool.query('SELECT estado FROM ordenes_trabajo WHERE id = $1', [req.params.id]);
@@ -549,7 +549,7 @@ router.patch('/:id/valorizacion', verifyToken, requireRole('gerente'), async (re
         res.json(result.rows[0]);
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al aprobar valorizacion' });
+        res.status(500).json({ error: 'Error al aprobar valorización' });
     }
 });
 

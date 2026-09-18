@@ -128,7 +128,7 @@ router.get('/mi-furgon', verifyToken, requireRole('mecanico'), async (req, res) 
         });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al consultar el stock de su furgon' });
+        res.status(500).json({ error: 'Error al consultar el stock de tu furgón' });
     } finally {
         client.release();
     }
@@ -155,7 +155,7 @@ router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrati
             : await furgonDe(client, req.user.id);
         if (!destino) {
             await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'No tiene un furgon asignado' });
+            return res.status(400).json({ error: 'No tienes un furgón asignado' });
         }
 
         // FOR UPDATE: dos mecanicos cargando el mismo repuesto a la vez no pueden pasarse del stock
@@ -190,7 +190,7 @@ router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrati
     } catch (err) {
         await client.query('ROLLBACK');
         console.error(err);
-        res.status(500).json({ error: 'Error al cargar el furgon' });
+        res.status(500).json({ error: 'Error al cargar el furgón' });
     } finally {
         client.release();
     }
@@ -236,7 +236,7 @@ router.get('/por-ubicacion', verifyToken, requireRole('administrativo', 'gerente
         res.json(result.rows.map((f) => ({ ...f, cantidad: num(f.cantidad) })));
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al consultar el inventario por ubicacion' });
+        res.status(500).json({ error: 'Error al consultar el inventario por ubicación' });
     }
 });
 
@@ -244,7 +244,7 @@ router.get('/por-ubicacion', verifyToken, requireRole('administrativo', 'gerente
 router.post('/:id/ingreso', verifyToken, requireRole('administrativo'), async (req, res) => {
     const { cantidad } = req.body;
     if (!cantidad || isNaN(cantidad) || Number(cantidad) <= 0) {
-        return res.status(400).json({ error: 'cantidad (numerica positiva) es requerida' });
+        return res.status(400).json({ error: 'Indica una cantidad mayor a 0' });
     }
     const client = await pool.connect();
     try {
@@ -313,7 +313,7 @@ router.get('/orden/:ordenId', verifyToken, requireRole('gerente', 'administrativ
         if (req.user.rol === 'mecanico') {
             const check = await verificarDuenoOrden(req.params.ordenId, req.user.id);
             if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-            if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+            if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
         }
         const result = await pool.query(
             // LEFT JOIN: una linea puede estar escrita a mano, sin insumo del catalogo
@@ -357,12 +357,12 @@ async function recalcularFacturableOt(client, ordenId) {
 router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrativo'), async (req, res) => {
     const { insumo_id, cantidad, descripcion, precio_unitario, facturable } = req.body;
     if (!cantidad || isNaN(cantidad) || Number(cantidad) <= 0) {
-        return res.status(400).json({ error: 'cantidad (numerica positiva) es requerida' });
+        return res.status(400).json({ error: 'Indica una cantidad mayor a 0' });
     }
     // el stock parte de cero y en el papel el repuesto se escribe a mano: se acepta una linea
     // sin catalogo mientras venga descrita
     if (!insumo_id && !(descripcion && descripcion.trim())) {
-        return res.status(400).json({ error: 'Indique un insumo del catalogo o una descripcion' });
+        return res.status(400).json({ error: 'Elige un repuesto del catálogo o escribe su descripción' });
     }
     if (facturable !== undefined && !FACTURABLE_VALIDOS.includes(facturable)) {
         return res.status(400).json({ error: `facturable debe ser uno de: ${FACTURABLE_VALIDOS.join(', ')}` });
@@ -376,7 +376,7 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
     if (req.user.rol === 'mecanico') {
         const check = await verificarDuenoOrden(req.params.ordenId, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
         if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
     }
 
@@ -439,7 +439,7 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
             if (existente) return responderExistente(existente);
         }
         console.error(err);
-        res.status(500).json({ error: 'Error al registrar la linea de repuesto' });
+        res.status(500).json({ error: 'Error al registrar la línea de repuesto' });
     } finally {
         client.release();
     }
@@ -470,11 +470,11 @@ router.post('/orden/:ordenId/linea/:lineaId/anular', verifyToken, requireRole('m
         if (req.user.rol === 'mecanico') {
             if (orden.rows[0].mecanico_id !== req.user.id) {
                 await client.query('ROLLBACK');
-                return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+                return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
             }
             if (orden.rows[0].estado === 'finalizada') {
                 await client.query('ROLLBACK');
-                return res.status(409).json({ error: 'La orden ya esta cerrada: pide al administrativo que anule la linea' });
+                return res.status(409).json({ error: 'La orden ya está cerrada: pide al administrativo que anule la línea' });
             }
         }
 
@@ -486,7 +486,7 @@ router.post('/orden/:ordenId/linea/:lineaId/anular', verifyToken, requireRole('m
         const linea = lineaResult.rows[0];
         if (!linea) {
             await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Linea no encontrada en esta orden de trabajo' });
+            return res.status(404).json({ error: 'Línea no encontrada en esta orden de trabajo' });
         }
         if (linea.anulada_at) {
             await client.query('ROLLBACK');
@@ -510,7 +510,7 @@ router.post('/orden/:ordenId/linea/:lineaId/anular', verifyToken, requireRole('m
     } catch (err) {
         await client.query('ROLLBACK');
         console.error(err);
-        res.status(500).json({ error: 'Error al anular la linea' });
+        res.status(500).json({ error: 'Error al anular la línea' });
     } finally {
         client.release();
     }
@@ -544,7 +544,7 @@ router.patch('/orden/:ordenId/linea/:lineaId', verifyToken, requireRole('adminis
         );
         if (result.rows.length === 0) {
             await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Linea no encontrada en esta orden de trabajo, o ya anulada' });
+            return res.status(404).json({ error: 'Línea no encontrada en esta orden de trabajo, o ya anulada' });
         }
         const facturableOt = await recalcularFacturableOt(client, req.params.ordenId);
         await client.query('COMMIT');
@@ -552,7 +552,7 @@ router.patch('/orden/:ordenId/linea/:lineaId', verifyToken, requireRole('adminis
     } catch (err) {
         await client.query('ROLLBACK');
         console.error(err);
-        res.status(500).json({ error: 'Error al actualizar la linea' });
+        res.status(500).json({ error: 'Error al actualizar la línea' });
     } finally {
         client.release();
     }

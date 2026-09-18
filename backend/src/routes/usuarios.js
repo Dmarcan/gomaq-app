@@ -68,7 +68,7 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
         );
         if (solicitudResult.rows.length === 0) {
             await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Solicitud no encontrada o ya procesada' });
+            return res.status(404).json({ error: 'Solicitud de cuenta no encontrada o ya procesada' });
         }
         const s = solicitudResult.rows[0];
 
@@ -121,7 +121,7 @@ router.post('/solicitudes/:id/rechazar', verifyToken, requireRole('administrativ
             [req.params.id]
         );
         if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Solicitud no encontrada o ya procesada' });
+            return res.status(404).json({ error: 'Solicitud de cuenta no encontrada o ya procesada' });
         }
         res.json({ ok: true });
     } catch (err) {
@@ -145,7 +145,7 @@ router.get('/mi-perfil', verifyToken, async (req, res) => {
         res.json(result.rows[0]);
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al consultar su perfil' });
+        res.status(500).json({ error: 'Error al consultar tu perfil' });
     }
 });
 
@@ -171,7 +171,7 @@ router.patch('/mi-perfil', verifyToken, async (req, res) => {
         res.json(result.rows[0]);
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al actualizar su perfil' });
+        res.status(500).json({ error: 'Error al actualizar tu perfil' });
     }
 });
 

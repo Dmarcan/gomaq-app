@@ -450,7 +450,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
                                           )
                                         : const CircleAvatar(child: Icon(Icons.precision_manufacturing)),
                                     title: Text('${m['codigo']} - ${m['tipo']}'),
-                                    subtitle: Text('Cliente: ${m['cliente'] ?? '-'} | ${m['ubicacion'] ?? 'Sin ubicacion'}'),
+                                    subtitle: Text('Cliente: ${m['cliente'] ?? '-'} | ${m['ubicacion'] ?? 'Sin ubicación'}'),
                                     trailing: EstadoChip(estado: m['estado']),
                                     onTap: () => Navigator.push(
                                       context,

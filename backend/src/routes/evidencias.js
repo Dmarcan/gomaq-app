@@ -26,7 +26,7 @@ router.post('/:id/evidencia/solicitar-upload', verifyToken, requireRole('mecanic
     try {
         const check = await verificarDuenoOrden(id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
         if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
 
         // la ruta la arma el servidor; del nombre que manda el telefono solo queda la extension
@@ -67,7 +67,7 @@ router.post('/:id/evidencia/confirmar', verifyToken, requireRole('mecanico'), as
     try {
         const check = await verificarDuenoOrden(id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
         if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
 
         const yaRegistrada = await buscarPorUuid(pool, 'evidencias_fotograficas', uuid);
@@ -98,7 +98,7 @@ router.get('/:id/evidencia', verifyToken, requireRole('gerente', 'administrativo
         if (req.user.rol === 'mecanico') {
             const check = await verificarDuenoOrden(id, req.user.id);
             if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-            if (!check.esDueno) return res.status(403).json({ error: 'Esta orden no esta asignada a usted' });
+            if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
         }
         const result = await pool.query(
             'SELECT * FROM evidencias_fotograficas WHERE orden_trabajo_id = $1 ORDER BY created_at DESC',

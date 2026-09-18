@@ -31,7 +31,7 @@ class _LoginScreenState extends State<LoginScreen> {
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } catch (e) {
-      setState(() => _error = 'No se pudo conectar al servidor. Revisa tu conexion.');
+      setState(() => _error = 'No se pudo conectar al servidor. Revisa tu conexión.');
     } finally {
       if (mounted) setState(() => _cargando = false);
     }

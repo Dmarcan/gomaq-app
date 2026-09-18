@@ -23,7 +23,7 @@ class GomaqMecanicoApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => SyncService()),
       ],
       child: MaterialApp(
-        title: 'GOMAQ Mecanico',
+        title: 'GOMAQ Mecánico',
         theme: construirTemaGomaq(),
         home: const _Raiz(),
       ),

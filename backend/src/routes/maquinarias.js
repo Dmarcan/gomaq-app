@@ -81,7 +81,7 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
 // GET /api/maquinarias/mias - portal cliente: solo su propia flota
 router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     if (!req.user.cliente_id) {
-        return res.status(400).json({ error: 'Su usuario no esta vinculado a ninguna empresa cliente' });
+        return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
     }
     try {
         const result = await pool.query(
@@ -91,7 +91,7 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
         res.json(await Promise.all(result.rows.map(conFotoFirmada)));
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al consultar su flota' });
+        res.status(500).json({ error: 'Error al consultar tu flota' });
     }
 });
 
@@ -256,7 +256,7 @@ router.patch('/:id/estado', verifyToken, requireRole('mecanico', 'administrativo
     const { estado } = req.body;
     const validos = ['operativa', 'en_mantencion', 'fuera_de_servicio'];
     if (!validos.includes(estado)) {
-        return res.status(400).json({ error: 'Estado invalido' });
+        return res.status(400).json({ error: 'Estado inválido' });
     }
     try {
         const result = await pool.query(

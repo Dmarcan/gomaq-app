@@ -29,7 +29,7 @@ router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archi
     }
     const tipoFinal = tipo && TIPOS_VALIDOS.includes(tipo) ? tipo : 'falla';
     if (!req.user.cliente_id) {
-        return res.status(400).json({ error: 'Su usuario no esta vinculado a ninguna empresa cliente' });
+        return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
     }
     try {
         const maquinaria = await pool.query(
@@ -37,7 +37,7 @@ router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archi
             [maquinaria_id, req.user.cliente_id]
         );
         if (maquinaria.rows.length === 0) {
-            return res.status(403).json({ error: 'Esa maquinaria no pertenece a su empresa' });
+            return res.status(403).json({ error: 'Ese equipo no pertenece a tu empresa' });
         }
         let evidenciaUrl = null;
         if (req.file) {
@@ -72,7 +72,7 @@ router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archi
 // GET /api/solicitudes/mias - el cliente ve sus propias solicitudes con el estado de la OT vinculada
 router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     if (!req.user.cliente_id) {
-        return res.status(400).json({ error: 'Su usuario no esta vinculado a ninguna empresa cliente' });
+        return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
     }
     try {
         const result = await pool.query(
@@ -90,7 +90,7 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
         res.json(await conUrlFirmada(result.rows));
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al consultar sus solicitudes' });
+        res.status(500).json({ error: 'Error al consultar tus solicitudes' });
     }
 });
 
@@ -120,11 +120,11 @@ router.patch('/:id/convertir', verifyToken, requireRole('administrativo', 'geren
         const solicitud = solicitudResult.rows[0];
         if (!solicitud) {
             await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Solicitud no encontrada' });
+            return res.status(404).json({ error: 'Asistencia no encontrada' });
         }
         if (solicitud.estado !== 'pendiente') {
             await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'Esta solicitud ya fue procesada' });
+            return res.status(400).json({ error: 'Esta asistencia ya fue procesada' });
         }
 
         const otResult = await client.query(

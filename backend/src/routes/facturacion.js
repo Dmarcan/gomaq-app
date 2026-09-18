@@ -75,7 +75,7 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
         });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al consultar pendientes de facturacion' });
+        res.status(500).json({ error: 'Error al consultar pendientes de facturación' });
     }
 });
 
@@ -111,7 +111,7 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
     try {
         const guia = await pool.query('SELECT maquinaria_id FROM guias WHERE id = $1', [guia_recepcion_id]);
         if (guia.rows.length === 0) {
-            return res.status(404).json({ error: 'Guia de recepcion no encontrada' });
+            return res.status(404).json({ error: 'Guía de recepción no encontrada' });
         }
         const maquinariaId = guia.rows[0].maquinaria_id;
 
@@ -204,7 +204,7 @@ router.post('/:facturaId/autorizar-envio', verifyToken, requireRole('administrat
         res.json({ ok: true, mensaje: 'Envio de correo encolado' });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al autorizar el envio de la factura' });
+        res.status(500).json({ error: 'Error al autorizar el envío de la factura' });
     }
 });
 

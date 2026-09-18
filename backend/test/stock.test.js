@@ -72,7 +72,7 @@ describe('validarTransferencia', () => {
     test('rechaza mover a la misma ubicacion', () => {
         const r = validarTransferencia({ ...base, destinoId: 1 });
         assert.strictEqual(r.valida, false);
-        assert.match(r.error, /misma ubicacion/);
+        assert.match(r.error, /misma ubicaci[oó]n/);
     });
 
     test('exige origen y destino', () => {

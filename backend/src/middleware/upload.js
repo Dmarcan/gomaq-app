@@ -41,9 +41,9 @@ const subidaImagen = multer({
 function manejarErroresDeSubida(err, req, res, next) {
     if (!(err instanceof multer.MulterError)) return next(err);
     if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ error: 'El archivo es demasiado grande' });
+        return res.status(413).json({ error: 'El archivo es demasiado grande (máximo 10 MB)' });
     }
-    return res.status(400).json({ error: err.message || 'Archivo no valido' });
+    return res.status(400).json({ error: err.message || 'Archivo no válido' });
 }
 
 module.exports = {

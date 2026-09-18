@@ -52,7 +52,7 @@ const limiteRegistro = rateLimit({
     standardHeaders: 'draft-7',
     legacyHeaders: false,
     keyGenerator: clavePorCliente,
-    message: { error: 'Demasiadas solicitudes de registro desde esta conexion. Intenta mas tarde.' },
+    message: { error: 'Demasiadas solicitudes de cuenta desde esta conexión. Intenta más tarde.' },
 });
 
 module.exports = { limiteLogin, limiteRegistro, ipDelCliente };

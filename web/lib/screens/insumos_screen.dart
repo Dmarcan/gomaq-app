@@ -140,7 +140,7 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
         toolbarHeight: 0,
         bottom: TabBar(
           controller: _tabController,
-          tabs: const [Tab(text: 'Catalogo'), Tab(text: 'Consumos recientes')],
+          tabs: const [Tab(text: 'Catálogo'), Tab(text: 'Consumos recientes')],
         ),
       ),
       floatingActionButton: puedeEscribir

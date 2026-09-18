@@ -21,7 +21,7 @@ router.post('/', limiteRegistro, async (req, res) => {
         return res.status(400).json({ error: 'nombre_contacto, email y password son requeridos' });
     }
     if (password.length < 8) {
-        return res.status(400).json({ error: 'La contrasena debe tener al menos 8 caracteres' });
+        return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
     }
 
     try {
@@ -61,7 +61,7 @@ router.post('/', limiteRegistro, async (req, res) => {
         res.status(201).json(result.rows[0]);
     } catch (err) {
         if (err.code === '23505') {
-            return res.status(400).json({ error: 'Ya existe una solicitud con ese correo en revision' });
+            return res.status(400).json({ error: 'Ya hay una solicitud de cuenta con ese correo en revisión' });
         }
         console.error(err);
         res.status(500).json({ error: 'Error al registrar la solicitud' });

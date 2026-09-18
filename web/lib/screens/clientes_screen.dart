@@ -171,7 +171,7 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
                       return Card(
                         child: ListTile(
                           title: Text(c['nombre']),
-                          subtitle: Text('${c['email'] ?? 'sin email'} | ${c['telefono'] ?? 'sin telefono'}'),
+                          subtitle: Text('${c['email'] ?? 'sin email'} | ${c['telefono'] ?? 'sin teléfono'}'),
                         ),
                       );
                     },

@@ -93,7 +93,7 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Nueva Orden de Trabajo'),
+          title: const Text('Nueva orden de trabajo'),
           content: SizedBox(
             width: 400,
             child: SingleChildScrollView(

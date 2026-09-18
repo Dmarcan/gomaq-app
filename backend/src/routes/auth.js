@@ -30,23 +30,23 @@ router.post('/login', limiteLogin, async (req, res) => {
             );
             const pendiente = solicitud.rows[0];
             if (pendiente && await bcrypt.compare(password, pendiente.password_hash)) {
-                return res.status(403).json({ error: 'Tu cuenta esta pendiente de aprobacion por el administrador' });
+                return res.status(403).json({ error: 'Tu cuenta todavía no está aprobada. Intenta de nuevo más tarde' });
             }
-            return res.status(401).json({ error: 'Credenciales invalidas' });
+            return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
         }
 
         const passwordOk = await bcrypt.compare(password, usuario.password_hash);
         if (!passwordOk) {
-            return res.status(401).json({ error: 'Credenciales invalidas' });
+            return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
         }
 
         // defensa en profundidad: hoy los usuarios solo se crean ya activos, pero si
         // alguna vez queda uno pendiente/rechazado en la tabla, no debe poder entrar
         if (usuario.estado_cuenta === 'pendiente') {
-            return res.status(403).json({ error: 'Tu cuenta esta pendiente de aprobacion por el administrador' });
+            return res.status(403).json({ error: 'Tu cuenta todavía no está aprobada. Intenta de nuevo más tarde' });
         }
         if (usuario.estado_cuenta === 'rechazado') {
-            return res.status(403).json({ error: 'Tu cuenta esta desactivada' });
+            return res.status(403).json({ error: 'Tu cuenta está desactivada. Contacta a GOMAQ' });
         }
 
         const token = jwt.sign(
@@ -67,7 +67,7 @@ router.post('/login', limiteLogin, async (req, res) => {
         });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al iniciar sesion' });
+        res.status(500).json({ error: 'Error al iniciar sesión' });
     }
 });
 

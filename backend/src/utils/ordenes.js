@@ -12,7 +12,7 @@ async function verificarDuenoOrden(ordenId, mecanicoId) {
 }
 
 /** Respuesta comun cuando el mecanico intenta modificar una OT ya cerrada. */
-const MENSAJE_OT_CERRADA = 'La orden ya esta cerrada y no se puede modificar';
+const MENSAJE_OT_CERRADA = 'La orden ya está cerrada y no se puede modificar';
 
 /**
  * Canal y destinatario para avisarle a un cliente: WhatsApp si hay telefono, si no correo.

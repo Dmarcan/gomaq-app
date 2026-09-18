@@ -49,7 +49,7 @@ router.get('/mio', verifyToken, requireRole('mecanico'), async (req, res) => {
         res.json({ vehiculo, documentos: await documentosConUrl(vehiculo.id) });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al consultar su vehiculo' });
+        res.status(500).json({ error: 'Error al consultar tu vehículo' });
     }
 });
 
@@ -57,11 +57,11 @@ router.get('/mio', verifyToken, requireRole('mecanico'), async (req, res) => {
 router.patch('/mio', verifyToken, requireRole('mecanico'), async (req, res) => {
     const { kilometraje } = req.body;
     if (kilometraje === undefined) {
-        return res.status(400).json({ error: 'Indique el kilometraje' });
+        return res.status(400).json({ error: 'Indica el kilometraje' });
     }
     const km = Number(kilometraje);
     if (isNaN(km) || km < 0) {
-        return res.status(400).json({ error: 'kilometraje debe ser un numero mayor o igual a 0' });
+        return res.status(400).json({ error: 'El kilometraje debe ser un número mayor o igual a 0' });
     }
     try {
         const result = await pool.query(
@@ -69,12 +69,12 @@ router.patch('/mio', verifyToken, requireRole('mecanico'), async (req, res) => {
             [km, req.user.id]
         );
         if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'No tiene un vehiculo asignado' });
+            return res.status(404).json({ error: 'No tienes un vehículo asignado' });
         }
         res.json(result.rows[0]);
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al actualizar el vehiculo' });
+        res.status(500).json({ error: 'Error al actualizar el vehículo' });
     }
 });
 
@@ -90,7 +90,7 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
         res.json(result.rows);
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al consultar vehiculos' });
+        res.status(500).json({ error: 'Error al consultar vehículos' });
     }
 });
 
@@ -128,10 +128,10 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
     } catch (err) {
         await client.query('ROLLBACK');
         if (err.code === '23505') {
-            return res.status(409).json({ error: 'Ya existe un vehiculo con esa patente o ese mecanico ya tiene uno' });
+            return res.status(409).json({ error: 'Ya existe un vehículo con esa patente, o ese mecánico ya tiene uno' });
         }
         console.error(err);
-        res.status(500).json({ error: 'Error al crear el vehiculo' });
+        res.status(500).json({ error: 'Error al crear el vehículo' });
     } finally {
         client.release();
     }
@@ -167,7 +167,7 @@ router.patch('/:id', verifyToken, requireRole('administrativo', 'gerente'), asyn
         );
         if (result.rows.length === 0) {
             await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Vehiculo no encontrado' });
+            return res.status(404).json({ error: 'Vehículo no encontrado' });
         }
         // si acaba de recibir mecanico y todavia no tenia ubicacion de stock, se le crea
         const vehiculo = result.rows[0];
@@ -184,10 +184,10 @@ router.patch('/:id', verifyToken, requireRole('administrativo', 'gerente'), asyn
     } catch (err) {
         await client.query('ROLLBACK');
         if (err.code === '23505') {
-            return res.status(409).json({ error: 'Ese mecanico ya tiene un vehiculo asignado' });
+            return res.status(409).json({ error: 'Ese mecánico ya tiene un vehículo asignado' });
         }
         console.error(err);
-        res.status(500).json({ error: 'Error al actualizar el vehiculo' });
+        res.status(500).json({ error: 'Error al actualizar el vehículo' });
     } finally {
         client.release();
     }
@@ -209,11 +209,11 @@ router.post('/:id/documentos', verifyToken, requireRole('mecanico', 'administrat
         try {
             const vehiculo = await pool.query('SELECT id, usuario_id FROM vehiculos WHERE id = $1', [req.params.id]);
             if (vehiculo.rows.length === 0) {
-                return res.status(404).json({ error: 'Vehiculo no encontrado' });
+                return res.status(404).json({ error: 'Vehículo no encontrado' });
             }
             // el mecanico solo puede subir documentos de su propio vehiculo
             if (req.user.rol === 'mecanico' && vehiculo.rows[0].usuario_id !== req.user.id) {
-                return res.status(403).json({ error: 'Ese vehiculo no esta asignado a usted' });
+                return res.status(403).json({ error: 'Ese vehículo no está asignado a ti' });
             }
 
             rutaStorage = rutaArchivo(['vehiculos', Number(req.params.id)], req.file.originalname);

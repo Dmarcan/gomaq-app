@@ -70,7 +70,7 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
 
     const lectura = Number(valor);
     if (valor === undefined || valor === null || valor === '' || isNaN(lectura) || lectura < 0) {
-        return res.status(400).json({ error: 'valor debe ser un numero de horas mayor o igual a 0' });
+        return res.status(400).json({ error: 'El horómetro debe ser un número de horas mayor o igual a 0' });
     }
     const { valido: uuidValido, uuid } = leerUuidCliente(req.body);
     if (!uuidValido) {
@@ -114,7 +114,7 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
             );
             if (suya.rows.length === 0) {
                 await client.query('ROLLBACK');
-                return res.status(403).json({ error: 'No tiene una orden de trabajo para este equipo' });
+                return res.status(403).json({ error: 'No tienes una orden de trabajo para este equipo' });
             }
         }
 
@@ -167,7 +167,7 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
             if (existente) return responderExistente(existente);
         }
         console.error(err);
-        res.status(500).json({ error: 'Error al registrar la lectura de horometro' });
+        res.status(500).json({ error: 'Error al registrar la lectura de horómetro' });
     } finally {
         client.release();
     }
@@ -219,7 +219,7 @@ router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativ
         });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al consultar el historial de horometro' });
+        res.status(500).json({ error: 'Error al consultar el historial de horómetro' });
     }
 });
 
@@ -252,7 +252,7 @@ router.get('/pendientes', verifyToken, requireRole('gerente', 'administrativo', 
         res.json(result.rows.map((f) => ({ ...f, ultima_lectura: num(f.ultima_lectura) })));
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al consultar los equipos pendientes de medicion' });
+        res.status(500).json({ error: 'Error al consultar los equipos pendientes de medición' });
     }
 });
 
@@ -296,7 +296,7 @@ router.get('/alertas', verifyToken, requireRole('gerente', 'administrativo', 'me
         res.json({ horas_aviso: HORAS_AVISO_MANTENCION, equipos });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al consultar las alertas de mantencion' });
+        res.status(500).json({ error: 'Error al consultar las alertas de mantención' });
     }
 });
 
@@ -323,7 +323,7 @@ router.post('/maquinaria/:id/reiniciar', verifyToken, requireRole('administrativ
         let base = valor === undefined || valor === null || valor === '' ? null : Number(valor);
         if (base !== null && (isNaN(base) || base < 0)) {
             await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'valor debe ser un numero de horas mayor o igual a 0' });
+            return res.status(400).json({ error: 'El horómetro debe ser un número de horas mayor o igual a 0' });
         }
         if (base === null) {
             const ultima = await client.query(
@@ -362,7 +362,7 @@ router.post('/maquinaria/:id/reiniciar', verifyToken, requireRole('administrativ
     } catch (err) {
         await client.query('ROLLBACK');
         console.error(err);
-        res.status(500).json({ error: 'Error al reiniciar el contador de mantencion' });
+        res.status(500).json({ error: 'Error al reiniciar el contador de mantención' });
     } finally {
         client.release();
     }
@@ -372,7 +372,7 @@ router.post('/maquinaria/:id/reiniciar', verifyToken, requireRole('administrativ
 router.patch('/maquinaria/:id/intervalo', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const intervalo = Number(req.body.intervalo_mantencion_horas);
     if (isNaN(intervalo) || intervalo <= 0) {
-        return res.status(400).json({ error: 'intervalo_mantencion_horas debe ser un numero mayor a 0' });
+        return res.status(400).json({ error: 'El intervalo de mantención debe ser mayor a 0 horas' });
     }
     try {
         const result = await pool.query(
@@ -385,7 +385,7 @@ router.patch('/maquinaria/:id/intervalo', verifyToken, requireRole('administrati
         res.json({ ...result.rows[0], intervalo_mantencion_horas: num(result.rows[0].intervalo_mantencion_horas) });
     } catch (err) {
         console.error(err);
-        res.status(500).json({ error: 'Error al actualizar el intervalo de mantencion' });
+        res.status(500).json({ error: 'Error al actualizar el intervalo de mantención' });
     }
 });
 

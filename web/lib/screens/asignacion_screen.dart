@@ -116,7 +116,7 @@ class _AsignarDialogState extends State<_AsignarDialog> {
   Widget build(BuildContext context) {
     final o = widget.orden;
     return AlertDialog(
-      title: const Text('Nueva Orden de Trabajo'),
+      title: const Text('Nueva orden de trabajo'),
       content: SizedBox(
         width: 420,
         child: SingleChildScrollView(

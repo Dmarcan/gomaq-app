@@ -404,7 +404,7 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
       const SizedBox(height: 16),
       FilledButton(
         onPressed: _procesando ? null : _autorizarEnvio,
-        child: const Text('Autorizar Envío de Correo'),
+        child: const Text('Enviar factura por correo'),
       ),
     ];
   }
