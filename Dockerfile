@@ -38,8 +38,11 @@ RUN npm ci --omit=dev
 
 COPY backend/ ./
 COPY --from=panel /app/web/build/web ./public
-# esquema y migraciones: scripts/migrar.js los aplica antes de cada despliegue (railway.json)
+# esquema y migraciones: scripts/migrar.js los aplica al arrancar (ver CMD)
 COPY db/ /db/
 
-# Railway entrega el puerto en PORT; server.js lo lee
-CMD ["node", "server.js"]
+# Primero las migraciones pendientes y despues el servidor (que lee el puerto de PORT). Se hace
+# al arrancar y no con el preDeployCommand de Railway, que en el primer despliegue no se aplico:
+# asi la base queda al dia en cualquier plataforma. Si una migracion falla, el servidor no
+# arranca, el chequeo de /api/health falla y Railway mantiene la version anterior.
+CMD ["sh", "-c", "node scripts/migrar.js && exec node server.js"]

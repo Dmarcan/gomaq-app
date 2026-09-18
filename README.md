@@ -15,7 +15,7 @@ Un sistema con 3 aplicaciones que comparten un mismo backend:
 Desde septiembre de 2026 el sistema corre en [Railway](https://railway.com), proyecto `gomaq`. Antes corría en un Dell OptiPlex GX520 en la oficina, detrás de un Quick Tunnel de Cloudflare cuya URL cambiaba en cada reinicio.
 
 - **URL pública (API y panel web):** https://gomaq-app-production.up.railway.app, con HTTPS. La misma URL sirve la API (`/api/*`) y el panel (`/`), porque el build de Flutter Web se sirve como estático desde el backend Node.
-- **Servicio `gomaq-app`:** se construye con el `Dockerfile` de la raíz, que compila el panel con Flutter 3.47.2 y arma el backend con Node 22. La configuración de despliegue está en `railway.json`: antes de cada despliegue corre `node scripts/migrar.js` y después Railway revisa `/api/health`.
+- **Servicio `gomaq-app`:** se construye con el `Dockerfile` de la raíz, que compila el panel con Flutter 3.47.2 y arma el backend con Node 22. La configuración de despliegue está en `railway.json`. Al arrancar, el contenedor corre `node scripts/migrar.js` y después el servidor; Railway revisa `/api/health` antes de dar el despliegue por bueno.
 - **Base de datos:** el servicio `Postgres` del mismo proyecto. `DATABASE_URL` del backend es una referencia (`${{Postgres.DATABASE_URL}}`), así que las credenciales no se copian a mano.
 - **Variables del servicio:** `DATABASE_URL`, `JWT_SECRET` (generado al azar al crear el proyecto), `TRUST_PROXY=1`, `SUPABASE_URL` y `SUPABASE_SERVICE_KEY`. Se ven con `railway variable list --service gomaq-app`.
 - **Todos los archivos pesados van a Supabase Storage**, en buckets privados con URLs firmadas temporales (1 h), nunca URLs públicas permanentes:
@@ -25,7 +25,7 @@ Desde septiembre de 2026 el sistema corre en [Railway](https://railway.com), pro
 
 ## Migraciones de la base de datos
 
-`db/schema.sql` y `db/migrations/NNN_*.sql` los aplica `backend/scripts/migrar.js` (`npm run migrar`), en orden y una sola vez cada uno. Lleva el registro en la tabla `schema_migraciones`. En Railway corre solo antes de cada despliegue; para agregar una migración basta con crear el archivo siguiente en `db/migrations/`.
+`db/schema.sql` y `db/migrations/NNN_*.sql` los aplica `backend/scripts/migrar.js` (`npm run migrar`), en orden y una sola vez cada uno. Lleva el registro en la tabla `schema_migraciones`. En Railway corre sola al arrancar el contenedor; para agregar una migración basta con crear el archivo siguiente en `db/migrations/`. Un candado de la base (`pg_advisory_lock`) evita que dos instancias migren a la vez.
 
 Cada migración corre en su propia transacción: si falla, no queda aplicada a medias y el despliegue se detiene sin reemplazar la versión anterior.
 
@@ -37,7 +37,7 @@ Una base creada a mano, sin registro, no se toca: el script no puede saber qué 
 ```bash
 railway up --service gomaq-app
 ```
-Sube el código de la carpeta actual, construye la imagen, aplica las migraciones pendientes y reemplaza la versión anterior solo si `/api/health` responde. Para seguirlo: `railway logs --service gomaq-app --build`.
+Sube el código de la carpeta actual y construye la imagen. Al arrancar se aplican las migraciones pendientes, y la versión anterior se reemplaza solo si `/api/health` responde. Para seguirlo: `railway logs --service gomaq-app --build`.
 
 **App del Mecánico:** apunta por defecto a la URL de Railway, así que funciona con datos móviles en terreno. Para generar el APK de producción:
 ```bash

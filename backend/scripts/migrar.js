@@ -4,8 +4,8 @@
 //
 // En el servidor local las migraciones se aplicaban a mano con psql y nada registraba cuales
 // ya habian corrido. En Railway no hay un servidor donde entrar a hacerlo: este script corre
-// antes de cada despliegue (preDeployCommand en railway.json) y lleva el registro en la tabla
-// schema_migraciones.
+// al arrancar el contenedor, antes que el servidor (CMD del Dockerfile), y lleva el registro en
+// la tabla schema_migraciones.
 //
 // Base vacia: aplica schema.sql y todas las migraciones.
 // Base existente sin registro (la del servidor local, migrada a mano): se niega a tocarla,
@@ -19,6 +19,9 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
+
+// numero arbitrario pero fijo que identifica el candado de migraciones en pg_advisory_lock
+const CANDADO_MIGRACIONES = 70214;
 
 // en el repositorio db/ esta junto a backend/; en la imagen de Docker se copia a /db
 const DIRECTORIO_DB = [path.join(__dirname, '../../db'), '/db'].find((d) => fs.existsSync(d));
@@ -35,6 +38,10 @@ async function main() {
 
     const cliente = new Client({ connectionString: process.env.DATABASE_URL });
     await cliente.connect();
+    // Candado de la base: si dos instancias arrancan a la vez (un despliegue nuevo mientras la
+    // anterior sigue viva, o al escalar), la segunda espera a que la primera termine y despues
+    // ve que no queda nada pendiente, en vez de aplicar las mismas migraciones en paralelo.
+    await cliente.query('SELECT pg_advisory_lock($1)', [CANDADO_MIGRACIONES]);
     try {
         await cliente.query(`CREATE TABLE IF NOT EXISTS schema_migraciones (
             nombre TEXT PRIMARY KEY,
@@ -84,6 +91,7 @@ async function main() {
             }
         }
     } finally {
+        await cliente.query('SELECT pg_advisory_unlock($1)', [CANDADO_MIGRACIONES]).catch(() => {});
         await cliente.end();
     }
 }
