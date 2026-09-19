@@ -4,6 +4,8 @@ import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import 'usuarios_screen.dart';
 import '../widgets/estado_vacio.dart';
+import '../widgets/dialogos.dart';
+import '../utils/rut.dart';
 
 class ClientesScreen extends StatefulWidget {
   const ClientesScreen({super.key});
@@ -94,55 +96,86 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
     final emailCtrl = TextEditingController();
     final telefonoCtrl = TextEditingController();
     int? ejecutivoId;
+    String? texto(TextEditingController c) => c.text.trim().isEmpty ? null : c.text.trim();
 
     if (!mounted) return;
-    final creado = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Nuevo cliente'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(controller: nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre / Razon social')),
-                TextField(controller: rutCtrl, decoration: const InputDecoration(labelText: 'RUT (opcional)')),
-                TextField(controller: emailCtrl, decoration: const InputDecoration(labelText: 'Email (opcional)')),
-                TextField(controller: telefonoCtrl, decoration: const InputDecoration(labelText: 'Telefono (opcional, formato +569...)')),
-                DropdownButtonFormField<int?>(
-                  initialValue: ejecutivoId,
-                  decoration: const InputDecoration(labelText: 'Ejecutivo asignado'),
-                  items: [
-                    const DropdownMenuItem<int?>(value: null, child: Text('Directo (sin ejecutivo)')),
-                    for (final e in ejecutivos) DropdownMenuItem<int?>(value: e['id'], child: Text(e['nombre'])),
-                  ],
-                  onChanged: (v) => setDialogState(() => ejecutivoId = v),
-                ),
-              ],
-            ),
+    final creado = await mostrarFormulario(
+      context,
+      icono: Icons.person_add,
+      titulo: 'Nuevo cliente',
+      subtitulo: 'Empresa o persona a la que se arrienda',
+      textoAccion: 'Crear cliente',
+      ancho: 520,
+      contenido: (context, redibujar) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextFormField(
+            controller: nombreCtrl,
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            decoration: decoracionCampo('Nombre o razón social', obligatorio: true),
+            validator: obligatorio('Escribe el nombre del cliente.'),
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Crear')),
-          ],
-        ),
+          separadorCampos,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: rutCtrl,
+                  decoration: decoracionCampo('RUT', ayuda: 'Por ejemplo 76.123.456-7.'),
+                  validator: (v) => (v == null || v.trim().isEmpty || rutEsValido(v)) ? null : 'El RUT no es válido. Revisa el dígito verificador.',
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextFormField(
+                  controller: telefonoCtrl,
+                  keyboardType: TextInputType.phone,
+                  decoration: decoracionCampo('Teléfono', ayuda: 'Con código de país: +56 9 1234 5678.'),
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return null;
+                    final digitos = v.replaceAll(RegExp(r'[\s()-]'), '');
+                    return RegExp(r'^\+?\d{8,15}$').hasMatch(digitos) ? null : 'Escribe un teléfono válido, por ejemplo +56 9 1234 5678.';
+                  },
+                ),
+              ),
+            ],
+          ),
+          separadorCampos,
+          TextFormField(
+            controller: emailCtrl,
+            keyboardType: TextInputType.emailAddress,
+            decoration: decoracionCampo('Correo', ayuda: 'Ahí se le envían los avisos y las facturas.'),
+            validator: (v) => (v == null || v.trim().isEmpty || RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v.trim())) ? null : 'Escribe un correo válido, por ejemplo nombre@empresa.cl.',
+          ),
+          separadorCampos,
+          DropdownButtonFormField<int?>(
+            initialValue: ejecutivoId,
+            isExpanded: true,
+            decoration: decoracionCampo('Ejecutivo asignado'),
+            items: [
+              const DropdownMenuItem<int?>(value: null, child: Text('Directo (sin ejecutivo)')),
+              for (final e in ejecutivos) DropdownMenuItem<int?>(value: e['id'], child: Text(e['nombre'])),
+            ],
+            onChanged: (v) => redibujar(() => ejecutivoId = v),
+          ),
+        ],
       ),
-    );
-
-    if (creado != true) return;
-    try {
-      await ApiClient.instance.post('/api/clientes', {
+      alGuardar: () => ApiClient.instance.post('/api/clientes', {
         'nombre': nombreCtrl.text.trim(),
-        'rut': rutCtrl.text.trim().isEmpty ? null : rutCtrl.text.trim(),
-        'email': emailCtrl.text.trim().isEmpty ? null : emailCtrl.text.trim(),
-        'telefono': telefonoCtrl.text.trim().isEmpty ? null : telefonoCtrl.text.trim(),
+        'rut': texto(rutCtrl),
+        'email': texto(emailCtrl),
+        'telefono': texto(telefonoCtrl),
         'ejecutivo_id': ejecutivoId,
-      });
+      }),
+    );
+    for (final c in [nombreCtrl, rutCtrl, emailCtrl, telefonoCtrl]) {
+      c.dispose();
+    }
+    if (creado && mounted) {
       _cargar();
-    } on ApiException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
-      }
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cliente creado')));
     }
   }
 

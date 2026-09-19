@@ -4,6 +4,7 @@ import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/dialogos.dart';
 import '../widgets/estado_chip.dart';
 import '../widgets/estado_vacio.dart';
 
@@ -42,7 +43,15 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
   }
 
   Future<void> _solicitarAsistencia(Map<String, dynamic> maquinaria) async {
-    await showDialog(context: context, builder: (_) => _SolicitarAsistenciaDialog(maquinaria: maquinaria));
+    // en un formulario, un clic fuera no debe botar lo escrito
+    final enviada = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => _SolicitarAsistenciaDialog(maquinaria: maquinaria),
+    );
+    if (enviada == true && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Asistencia solicitada. Te contactaremos pronto.')));
+    }
   }
 
   @override
@@ -133,116 +142,86 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
   final _descripcionCtrl = TextEditingController();
   String _tipo = 'falla';
   PlatformFile? _evidencia;
-  bool _enviando = false;
 
-  Future<void> _elegirEvidencia() async {
+  @override
+  void dispose() {
+    _descripcionCtrl.dispose();
+    super.dispose();
+  }
+
+  Future<void> _elegirEvidencia(StateSetter redibujar) async {
     final resultado = await FilePicker.platform.pickFiles(type: FileType.image, withData: true);
     if (resultado != null && resultado.files.single.bytes != null) {
-      setState(() => _evidencia = resultado.files.single);
+      redibujar(() => _evidencia = resultado.files.single);
     }
   }
 
   Future<void> _enviar() async {
-    if (_descripcionCtrl.text.trim().isEmpty) return;
-    setState(() => _enviando = true);
-    try {
-      if (_evidencia != null) {
-        await ApiClient.instance.postMultipart(
-          '/api/solicitudes',
-          bytes: _evidencia!.bytes!,
-          filename: _evidencia!.name,
-          fields: {
-            'maquinaria_id': '${widget.maquinaria['id']}',
-            'descripcion': _descripcionCtrl.text.trim(),
-            'tipo': _tipo,
-          },
-        );
-      } else {
-        await ApiClient.instance.post('/api/solicitudes', {
-          'maquinaria_id': widget.maquinaria['id'],
-          'descripcion': _descripcionCtrl.text.trim(),
-          'tipo': _tipo,
-        });
-      }
-      if (mounted) {
-        // capturar el messenger ANTES del pop: despues el context del dialogo esta muerto
-        // y la confirmacion nunca se mostraria
-        final messenger = ScaffoldMessenger.of(context);
-        Navigator.pop(context);
-        messenger.showSnackBar(
-          const SnackBar(content: Text('Asistencia solicitada. Te contactaremos pronto.')),
-        );
-      }
-    } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
-    } finally {
-      if (mounted) setState(() => _enviando = false);
+    final descripcion = _descripcionCtrl.text.trim();
+    if (_evidencia != null) {
+      await ApiClient.instance.postMultipart(
+        '/api/solicitudes',
+        bytes: _evidencia!.bytes!,
+        filename: _evidencia!.name,
+        fields: {'maquinaria_id': '${widget.maquinaria['id']}', 'descripcion': descripcion, 'tipo': _tipo},
+      );
+    } else {
+      await ApiClient.instance.post('/api/solicitudes', {
+        'maquinaria_id': widget.maquinaria['id'],
+        'descripcion': descripcion,
+        'tipo': _tipo,
+      });
     }
-  }
-
-  Widget _botonTipo(String valor, String etiqueta) {
-    final activo = _tipo == valor;
-    return Expanded(
-      child: OutlinedButton(
-        onPressed: () => setState(() => _tipo = valor),
-        style: OutlinedButton.styleFrom(
-          backgroundColor: activo ? GomaqColors.accion : Colors.white,
-          foregroundColor: activo ? Colors.white : GomaqColors.accion,
-        ),
-        child: Text(etiqueta, textAlign: TextAlign.center),
-      ),
-    );
   }
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('Solicitar asistencia - ${widget.maquinaria['codigo']}'),
-      content: SizedBox(
-        width: 380,
-        child: SingleChildScrollView(
-          child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('TIPO DE SOLICITUD', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                _botonTipo('falla', 'Reportar falla'),
-                const SizedBox(width: 8),
-                _botonTipo('mantencion_preventiva', 'Mantención preventiva'),
+    final falla = _tipo == 'falla';
+    return DialogoFormulario(
+      icono: Icons.support_agent,
+      titulo: 'Solicitar asistencia',
+      subtitulo: '${widget.maquinaria['codigo']} · ${widget.maquinaria['tipo']}',
+      textoAccion: 'Solicitar asistencia',
+      ancho: 460,
+      contenido: (context, redibujar) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('¿Qué necesitas?', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: SegmentedButton<String>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(value: 'falla', label: Text('Reportar una falla'), icon: Icon(Icons.warning_amber_rounded, size: 18)),
+                ButtonSegment(value: 'mantencion_preventiva', label: Text('Mantención preventiva'), icon: Icon(Icons.build_outlined, size: 18)),
               ],
+              selected: {_tipo},
+              onSelectionChanged: (s) => redibujar(() => _tipo = s.first),
             ),
-            const SizedBox(height: 16),
-            const Text('DESCRIBE EL PROBLEMA', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _descripcionCtrl,
-              maxLines: 4,
-              decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'Ej: La grúa presenta una fuga de aceite...'),
-            ),
-            const SizedBox(height: 16),
-            const Text('EVIDENCIA (OPCIONAL)', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 8),
-            OutlinedButton.icon(
-              onPressed: _elegirEvidencia,
-              icon: const Icon(Icons.camera_alt),
-              label: Text(_evidencia?.name ?? 'Adjuntar foto del equipo'),
-            ),
-          ],
           ),
-        ),
+          separadorCampos,
+          TextFormField(
+            controller: _descripcionCtrl,
+            minLines: 3,
+            maxLines: 5,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: decoracionCampo(
+              falla ? 'Describe el problema' : 'Describe lo que necesitas',
+              obligatorio: true,
+              ayuda: falla ? 'Por ejemplo: la grúa presenta una fuga de aceite.' : 'Por ejemplo: toca la revisión de las 350 horas.',
+            ),
+            validator: obligatorio('Cuéntanos qué pasa para poder ayudarte.'),
+          ),
+          separadorCampos,
+          OutlinedButton.icon(
+            onPressed: () => _elegirEvidencia(redibujar),
+            icon: const Icon(Icons.camera_alt),
+            label: Text(_evidencia?.name ?? 'Adjuntar una foto (opcional)'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancelar')),
-        FilledButton(
-          onPressed: _enviando ? null : _enviar,
-          child: _enviando
-              ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-              : const Text('Solicitar asistencia'),
-        ),
-      ],
+      alGuardar: _enviar,
     );
   }
 }

@@ -5,6 +5,8 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../widgets/dialogos.dart';
+import '../utils/formato.dart';
+import '../utils/numeros.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../widgets/estado_chip.dart';
@@ -260,6 +262,10 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
   int? _mecanicoSeleccionado;
   final _valorizacionCtrl = TextEditingController();
   bool _cargandoAccion = false;
+  // avisos en su campo: antes cada uno era un mensaje pasajero abajo, o un boton que no hacia nada
+  String? _errorMecanico;
+  String? _errorValorizacion;
+  String? _errorFolio;
 
   @override
   void initState() {
@@ -305,22 +311,16 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
   /// Anula una línea mal ingresada: queda tachada y el repuesto vuelve a su ubicación.
   /// Desde el panel se puede incluso con la OT cerrada, para corregir lo que el mecánico no alcanzó.
   Future<void> _anularLinea(dynamic linea) async {
-    final confirmado = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('¿Anular esta línea?'),
-        content: Text(
-          '${linea['insumo_nombre'] ?? linea['descripcion'] ?? 'Repuesto'} · ${linea['cantidad']}\n\n'
+    final confirmado = await mostrarConfirmacion(
+      context,
+      titulo: '¿Anular esta línea?',
+      mensaje: '${linea['insumo_nombre'] ?? linea['descripcion'] ?? 'Repuesto'} · ${linea['cantidad']}\n\n'
           'La línea queda tachada, el repuesto vuelve a su ubicación y deja de contar como gasto del equipo. '
           'No se puede deshacer.',
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Anular línea')),
-        ],
-      ),
+      textoAccion: 'Anular línea',
+      peligro: true,
     );
-    if (confirmado != true) return;
+    if (!confirmado) return;
     setState(() => _cargandoAccion = true);
     try {
       await ApiClient.instance.post('/api/insumos/orden/${widget.orden['id']}/linea/${linea['id']}/anular', {});
@@ -334,7 +334,10 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
   }
 
   Future<void> _asignar() async {
-    if (_mecanicoSeleccionado == null) return;
+    if (_mecanicoSeleccionado == null) {
+      setState(() => _errorMecanico = 'Elige el mecánico al que se asigna la orden.');
+      return;
+    }
     setState(() => _cargandoAccion = true);
     try {
       await ApiClient.instance.patch('/api/ordenes-trabajo/${widget.orden['id']}/asignar', {'mecanico_id': _mecanicoSeleccionado});
@@ -348,9 +351,10 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
   }
 
   Future<void> _aprobarValorizacion() async {
-    final monto = double.tryParse(_valorizacionCtrl.text.trim());
-    if (monto == null) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ingresa un monto valido')));
+    // "18.500" son dieciocho mil quinientos: leido con tryParse era 18,5 pesos
+    final monto = parsearMonto(_valorizacionCtrl.text);
+    if (monto == null || monto <= 0) {
+      setState(() => _errorValorizacion = 'Escribe un monto válido, por ejemplo 249.900.');
       return;
     }
     setState(() => _cargandoAccion = true);
@@ -369,7 +373,7 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
 
   Future<void> _subirFactura() async {
     if (_folioCtrl.text.trim().isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ingresa el numero de folio')));
+      setState(() => _errorFolio = 'Escribe el folio de la factura.');
       return;
     }
     final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
@@ -467,79 +471,134 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
     );
   }
 
+  /// Una fila de dato: la etiqueta apagada a la izquierda y el valor a su lado.
+  Widget _fila(String etiqueta, Widget valor) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(width: 170, child: Text(etiqueta, style: const TextStyle(fontSize: 13, color: Colors.black54))),
+          Expanded(child: valor),
+        ],
+      ),
+    );
+  }
+
+  Widget _texto(dynamic valor, {String siVacio = '-'}) {
+    final t = valor?.toString().trim() ?? '';
+    return Text(t.isEmpty ? siVacio : t, style: TextStyle(fontSize: 14, color: t.isEmpty ? Colors.black54 : Colors.black87));
+  }
+
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
     final o = widget.orden;
+    final valorizacion = o['valorizacion'];
 
-    return AlertDialog(
-      title: Text('OT #${o['id']} - ${o['maquinaria_codigo'] ?? ''}'),
-      content: SizedBox(
-        width: 420,
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text('Estado: ${o['estado']}'),
-              Text('Cliente: ${o['cliente_nombre'] ?? '-'}'),
-              Text('Tipo de servicio: ${_etiquetaTipoServicio(o['tipo_servicio'])}'),
-              Text('Motivo: ${o['motivo'] ?? '-'}'),
-              // el talonario separa lo que se encontró al llegar de lo que se hizo
-              Text('Observaciones iniciales: ${o['diagnostico'] ?? 'Sin registrar'}'),
-              Text('Observaciones finales: ${o['observacion_final'] ?? 'Sin registrar'}'),
-              if (o['folio_papel'] != null) Text('OT en papel: N° ${o['folio_papel']}'),
-              Text('Facturable: ${o['facturable'] == true ? 'Sí' : 'No'}'),
-              Text('Valorización: ${o['valorizacion'] ?? 'Sin aprobar'}'),
-              const Divider(height: 32),
+    return CuadroDialogo(
+      icono: Icons.assignment,
+      titulo: 'OT #${o['id']} · ${o['maquinaria_codigo'] ?? ''}',
+      subtitulo: 'Detalle de la orden de trabajo',
+      ancho: 620,
+      cuerpo: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _fila('Estado', Align(alignment: Alignment.centerLeft, child: EstadoChip(estado: o['estado']))),
+          _fila('Cliente', _texto(o['cliente_nombre'])),
+          _fila('Tipo de servicio', _texto(_etiquetaTipoServicio(o['tipo_servicio']))),
+          _fila('Motivo', _texto(o['motivo'])),
+          // el talonario separa lo que se encontró al llegar de lo que se hizo
+          _fila('Observaciones iniciales', _texto(o['diagnostico'], siVacio: 'Sin registrar')),
+          _fila('Observaciones finales', _texto(o['observacion_final'], siVacio: 'Sin registrar')),
+          if (o['folio_papel'] != null) _fila('OT en papel', _texto('N° ${o['folio_papel']}')),
+          _fila('Facturable', _texto(o['facturable'] == true ? 'Sí' : 'No')),
+          _fila('Valorización', _texto(valorizacion == null ? null : Formato.clp(num.tryParse('$valorizacion')), siVacio: 'Sin aprobar')),
+          const Divider(height: 32),
 
-              _seccionLineas(auth),
+          _seccionLineas(auth),
 
-              if (auth.esAdministrativo && o['mecanico_id'] == null) ...[
-                const Text('Asignar mecánico', style: TextStyle(fontWeight: FontWeight.bold)),
-                DropdownButtonFormField<int>(
-                  items: _mecanicos
-                      .map<DropdownMenuItem<int>>((m) => DropdownMenuItem(value: m['id'], child: Text(m['nombre'])))
-                      .toList(),
-                  onChanged: (v) => setState(() => _mecanicoSeleccionado = v),
+          if (auth.esAdministrativo && o['mecanico_id'] == null) ...[
+            const TituloSeccion('Asignar mecánico'),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: DropdownButtonFormField<int>(
+                    isExpanded: true,
+                    decoration: decoracionCampo('Mecánico').copyWith(errorText: _errorMecanico),
+                    items: _mecanicos.map<DropdownMenuItem<int>>((m) => DropdownMenuItem(value: m['id'], child: Text(m['nombre']))).toList(),
+                    onChanged: (v) => setState(() {
+                      _mecanicoSeleccionado = v;
+                      _errorMecanico = null;
+                    }),
+                  ),
                 ),
-                FilledButton(
-                  onPressed: _cargandoAccion ? null : _asignar,
-                  child: const Text('Asignar'),
-                ),
-                const SizedBox(height: 16),
-              ],
-
-              if (auth.esGerente && o['facturable'] == true && o['valorizacion'] == null) ...[
-                const Text('Aprobar valorización', style: TextStyle(fontWeight: FontWeight.bold)),
-                TextField(
-                  controller: _valorizacionCtrl,
-                  decoration: const InputDecoration(labelText: 'Monto (CLP)'),
-                  keyboardType: TextInputType.number,
-                ),
-                FilledButton(
-                  onPressed: _cargandoAccion ? null : _aprobarValorizacion,
-                  child: const Text('Aprobar'),
-                ),
-                const SizedBox(height: 16),
-              ],
-
-              if (auth.esAdministrativo && o['facturable'] == true) ...[
-                const Text('Gestión documental - factura', style: TextStyle(fontWeight: FontWeight.bold)),
-                TextField(controller: _folioCtrl, decoration: const InputDecoration(labelText: 'Número de folio SII')),
-                OutlinedButton.icon(
-                  onPressed: _cargandoAccion ? null : _subirFactura,
-                  icon: const Icon(Icons.upload_file),
-                  label: const Text('Subir PDF de factura'),
+                const SizedBox(width: 12),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: FilledButton(onPressed: _cargandoAccion ? null : _asignar, child: const Text('Asignar')),
                 ),
               ],
-            ],
-          ),
-        ),
+            ),
+            const SizedBox(height: 20),
+          ],
+
+          if (auth.esGerente && o['facturable'] == true && o['valorizacion'] == null) ...[
+            const TituloSeccion('Aprobar valorización'),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _valorizacionCtrl,
+                    keyboardType: TextInputType.number,
+                    decoration: decoracionCampo('Monto', prefijo: r'$ ', ayuda: 'En pesos, por ejemplo 249.900.').copyWith(errorText: _errorValorizacion),
+                    onChanged: (_) {
+                      if (_errorValorizacion != null) setState(() => _errorValorizacion = null);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: FilledButton(onPressed: _cargandoAccion ? null : _aprobarValorizacion, child: const Text('Aprobar')),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+          ],
+
+          if (auth.esAdministrativo && o['facturable'] == true) ...[
+            const TituloSeccion('Factura'),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(
+                  child: TextFormField(
+                    controller: _folioCtrl,
+                    decoration: decoracionCampo('Folio SII').copyWith(errorText: _errorFolio),
+                    onChanged: (_) {
+                      if (_errorFolio != null) setState(() => _errorFolio = null);
+                    },
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: OutlinedButton.icon(
+                    onPressed: _cargandoAccion ? null : _subirFactura,
+                    icon: const Icon(Icons.upload_file),
+                    label: const Text('Subir PDF de factura'),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ],
       ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
-      ],
+      acciones: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
     );
   }
 }

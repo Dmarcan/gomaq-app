@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../theme/gomaq_theme.dart';
 import '../utils/formato.dart';
+import '../widgets/dialogos.dart';
+import '../utils/numeros.dart';
 
 /// Horometro y mantencion preventiva (entrevista el jefe de taller/la administrativa, 20-21 julio 2026).
 ///
@@ -61,6 +63,8 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
   Future<void> _registrarLectura(Map<String, dynamic> equipo) async {
     final resultado = await showDialog<bool>(
       context: context,
+      // en un formulario, un clic fuera no debe botar lo escrito
+      barrierDismissible: false,
       builder: (_) => _DialogoLectura(equipo: equipo),
     );
     if (resultado == true) _cargar();
@@ -212,6 +216,8 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
   Future<void> _marcarMantencion(Map<String, dynamic> equipo) async {
     final confirmado = await showDialog<bool>(
       context: context,
+      // en un formulario, un clic fuera no debe botar lo escrito
+      barrierDismissible: false,
       builder: (_) => _DialogoReiniciar(equipo: equipo),
     );
     if (confirmado == true) _cargar();
@@ -231,8 +237,6 @@ class _DialogoLecturaState extends State<_DialogoLectura> {
   final _valorCtrl = TextEditingController();
   final _obsCtrl = TextEditingController();
   bool _reiniciar = false;
-  bool _guardando = false;
-  String? _error;
 
   @override
   void dispose() {
@@ -241,67 +245,46 @@ class _DialogoLecturaState extends State<_DialogoLectura> {
     super.dispose();
   }
 
-  Future<void> _guardar() async {
-    final valor = double.tryParse(_valorCtrl.text.trim().replaceAll(',', '.'));
-    if (valor == null || valor < 0) {
-      setState(() => _error = 'Ingresa las horas del horómetro');
-      return;
-    }
-    setState(() {
-      _guardando = true;
-      _error = null;
-    });
-    try {
-      await ApiClient.instance.post('/api/horometro/maquinaria/${widget.equipo['id']}', {
-        'valor': valor,
-        'observacion': _obsCtrl.text.trim().isEmpty ? null : _obsCtrl.text.trim(),
-        'reiniciar_contador': _reiniciar,
-      });
-      if (mounted) Navigator.pop(context, true);
-    } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    } finally {
-      if (mounted) setState(() => _guardando = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('Horómetro de ${widget.equipo['codigo']}'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
+    final ultima = widget.equipo['ultima_lectura'];
+    return DialogoFormulario(
+      icono: Icons.timer,
+      titulo: 'Horómetro de ${widget.equipo['codigo']}',
+      subtitulo: ultima == null ? 'Todavía no tiene lecturas' : 'Última lectura: ${Formato.medida(ultima, 'h')}',
+      textoAccion: 'Guardar lectura',
+      ancho: 460,
+      contenido: (context, redibujar) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          TextField(
+          TextFormField(
             controller: _valorCtrl,
             autofocus: true,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Horas del horómetro', border: OutlineInputBorder()),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: decoracionCampo('Horas del horómetro', obligatorio: true, sufijo: 'h'),
+            validator: (v) {
+              final n = parsearNumero(v ?? '');
+              return (n == null || n < 0) ? 'Escribe las horas que marca el horómetro.' : null;
+            },
           ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _obsCtrl,
-            decoration: const InputDecoration(labelText: 'Observación (opcional)', border: OutlineInputBorder()),
-          ),
+          separadorCampos,
+          TextFormField(controller: _obsCtrl, decoration: decoracionCampo('Observación')),
+          const SizedBox(height: 8),
           CheckboxListTile(
             contentPadding: EdgeInsets.zero,
+            controlAffinity: ListTileControlAffinity.leading,
             value: _reiniciar,
-            onChanged: (v) => setState(() => _reiniciar = v ?? false),
+            onChanged: (v) => redibujar(() => _reiniciar = v ?? false),
             title: const Text('Se hizo la mantención preventiva'),
-            subtitle: const Text('Reinicia el contador: esta lectura pasa a ser la base del próximo intervalo'),
+            subtitle: const Text('Reinicia el contador: esta lectura pasa a ser la base del próximo intervalo.'),
           ),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
-            ),
         ],
       ),
-      actions: [
-        TextButton(onPressed: _guardando ? null : () => Navigator.pop(context), child: const Text('Cancelar')),
-        ElevatedButton(onPressed: _guardando ? null : _guardar, child: Text(_guardando ? 'Guardando...' : 'Guardar')),
-      ],
+      alGuardar: () => ApiClient.instance.post('/api/horometro/maquinaria/${widget.equipo['id']}', {
+        'valor': parsearNumero(_valorCtrl.text),
+        'observacion': _obsCtrl.text.trim().isEmpty ? null : _obsCtrl.text.trim(),
+        'reiniciar_contador': _reiniciar,
+      }),
     );
   }
 }
@@ -316,10 +299,7 @@ class _DialogoReiniciar extends StatefulWidget {
 }
 
 class _DialogoReiniciarState extends State<_DialogoReiniciar> {
-  late final TextEditingController _valorCtrl =
-      TextEditingController(text: widget.equipo['ultima_lectura']?.toString() ?? '');
-  bool _guardando = false;
-  String? _error;
+  late final TextEditingController _valorCtrl = TextEditingController(text: widget.equipo['ultima_lectura']?.toString() ?? '');
 
   @override
   void dispose() {
@@ -327,65 +307,37 @@ class _DialogoReiniciarState extends State<_DialogoReiniciar> {
     super.dispose();
   }
 
-  Future<void> _guardar() async {
-    final valor = double.tryParse(_valorCtrl.text.trim().replaceAll(',', '.'));
-    if (valor == null || valor < 0) {
-      setState(() => _error = 'Indica a qué horómetro se hizo la mantención');
-      return;
-    }
-    setState(() {
-      _guardando = true;
-      _error = null;
-    });
-    try {
-      await ApiClient.instance
-          .post('/api/horometro/maquinaria/${widget.equipo['id']}/reiniciar', {'valor': valor});
-      if (mounted) Navigator.pop(context, true);
-    } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
-    } finally {
-      if (mounted) setState(() => _guardando = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text('Mantención de ${widget.equipo['codigo']}'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
+    return DialogoFormulario(
+      icono: Icons.build_circle_outlined,
+      titulo: 'Mantención de ${widget.equipo['codigo']}',
+      subtitulo: 'Marcar la mantención preventiva como hecha',
+      textoAccion: 'Confirmar mantención',
+      ancho: 440,
+      contenido: (context, redibujar) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'El contador vuelve a cero desde el horómetro que indiques, y el equipo deja de alertar.',
-            style: TextStyle(fontSize: 13),
-          ),
-          const SizedBox(height: 12),
-          TextField(
+          const LineaInfo(icono: Icons.info_outline, texto: 'El contador vuelve a cero desde el horómetro que indiques, y el equipo deja de alertar.'),
+          separadorCampos,
+          TextFormField(
             controller: _valorCtrl,
             autofocus: true,
-            keyboardType: TextInputType.number,
-            decoration: const InputDecoration(labelText: 'Horómetro de la mantención', border: OutlineInputBorder()),
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: decoracionCampo('Horómetro de la mantención', obligatorio: true, sufijo: 'h'),
+            validator: (v) {
+              final n = parsearNumero(v ?? '');
+              return (n == null || n < 0) ? 'Indica a qué horómetro se hizo la mantención.' : null;
+            },
           ),
-          if (_error != null)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: Text(_error!, style: const TextStyle(color: Colors.red, fontSize: 12)),
-            ),
         ],
       ),
-      actions: [
-        TextButton(onPressed: _guardando ? null : () => Navigator.pop(context), child: const Text('Cancelar')),
-        ElevatedButton(
-          onPressed: _guardando ? null : _guardar,
-          child: Text(_guardando ? 'Guardando...' : 'Confirmar'),
-        ),
-      ],
+      alGuardar: () => ApiClient.instance.post('/api/horometro/maquinaria/${widget.equipo['id']}/reiniciar', {'valor': parsearNumero(_valorCtrl.text)}),
     );
   }
 }
 
-/// Historial de lecturas del equipo, con el cliente que lo tenía en cada una.
+// Historial de lecturas del equipo, con el cliente que lo tenía en cada una.
 class _DialogoHistorial extends StatefulWidget {
   final int maquinariaId;
   final String codigo;
@@ -423,11 +375,13 @@ class _DialogoHistorialState extends State<_DialogoHistorial> {
   @override
   Widget build(BuildContext context) {
     final datos = _datos;
-    return AlertDialog(
-      title: Text('Historial de ${widget.codigo}'),
-      content: SizedBox(
-        width: 520,
-        height: 420,
+    return CuadroDialogo(
+      icono: Icons.history,
+      titulo: 'Historial de ${widget.codigo}',
+      subtitulo: 'Lecturas del horómetro y quién tenía el equipo',
+      ancho: 560,
+      cuerpo: SizedBox(
+        height: 400,
         child: _error != null
             ? Center(child: Text('Error: $_error'))
             : datos == null
@@ -441,7 +395,7 @@ class _DialogoHistorialState extends State<_DialogoHistorial> {
                     ],
                   ),
       ),
-      actions: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
+      acciones: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],
     );
   }
 

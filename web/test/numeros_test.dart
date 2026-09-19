@@ -62,4 +62,18 @@ void main() {
       expect(parsearMonto('mil'), isNull);
     });
   });
+
+  group('numeroParaEditar', () {
+    test('quita los ceros de mas que trae la base', () {
+      expect(numeroParaEditar('2500.00'), '2500');
+      expect(numeroParaEditar('7.80'), '7.8');
+      expect(numeroParaEditar(16), '16');
+    });
+
+    test('sin dato o algo que no es un numero queda vacio', () {
+      expect(numeroParaEditar(null), '');
+      expect(numeroParaEditar(''), '');
+      expect(numeroParaEditar('abc'), '');
+    });
+  });
 }

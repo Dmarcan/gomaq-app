@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/dialogos.dart';
 import '../widgets/estado_chip.dart';
 import '../widgets/estado_vacio.dart';
 
@@ -135,22 +136,19 @@ class _SeguimientoDialog extends StatelessWidget {
     final paso = _pasoActual();
     final mecanico = item['mecanico_nombre'] as String?;
 
-    return AlertDialog(
-      title: const Text('Seguimiento'),
-      content: SizedBox(
-        width: 380,
-        child: SingleChildScrollView(
-          child: Column(
+    return CuadroDialogo(
+      icono: Icons.timeline,
+      titulo: 'Seguimiento',
+      subtitulo: '${item['titulo']}',
+      ancho: 440,
+      cuerpo: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(item['titulo'], style: TextStyle(color: Colors.grey.shade700)),
-              const SizedBox(height: 16),
               for (var i = 0; i < _pasos.length; i++) _pasoTimeline(i, i <= paso, i == paso),
               if (mecanico != null && mecanico.isNotEmpty) ...[
                 const SizedBox(height: 12),
-                const Text('TÉCNICO ASIGNADO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 8),
+                const TituloSeccion('Técnico asignado'),
                 Container(
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
@@ -172,10 +170,8 @@ class _SeguimientoDialog extends StatelessWidget {
               // El botón "Contactar por WhatsApp" que había acá no hacía nada: solo avisaba que
               // aún no estaba disponible. Vuelve cuando se active WhatsApp Business.
             ],
-          ),
-        ),
       ),
-      actions: [
+      acciones: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
       ],
     );

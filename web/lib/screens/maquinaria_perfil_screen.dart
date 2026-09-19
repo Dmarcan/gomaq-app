@@ -159,8 +159,8 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
     final modeloCtrl = TextEditingController(text: m['modelo'] ?? '');
     final anioCtrl = TextEditingController(text: m['anio']?.toString() ?? '');
     final descripcionCtrl = TextEditingController(text: m['descripcion'] ?? '');
-    final capacidadCargaCtrl = TextEditingController(text: _sinCeros(m['capacidad_carga']));
-    final alturaTrabajoCtrl = TextEditingController(text: _sinCeros(m['altura_trabajo']));
+    final capacidadCargaCtrl = TextEditingController(text: numeroParaEditar(m['capacidad_carga']));
+    final alturaTrabajoCtrl = TextEditingController(text: numeroParaEditar(m['altura_trabajo']));
     final numeroSerieCtrl = TextEditingController(text: m['numero_serie'] ?? '');
     final numeroMotorCtrl = TextEditingController(text: m['numero_motor'] ?? '');
     final numeroChasisCtrl = TextEditingController(text: m['numero_chasis'] ?? '');
@@ -246,13 +246,6 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
       await _cargar(silencioso: true);
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ficha técnica guardada')));
     }
-  }
-
-  /// "2500.00" que llega de la base se muestra como "2500" al editar: los ceros de más confunden.
-  static String _sinCeros(dynamic v) {
-    final n = v == null ? null : num.tryParse('$v');
-    if (n == null) return '';
-    return n == n.roundToDouble() ? '${n.round()}' : '$n';
   }
 
   // ---- acciones ------------------------------------------------------------------------------

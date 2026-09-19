@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/dialogos.dart';
 
 class UsuariosScreen extends StatefulWidget {
   const UsuariosScreen({super.key});
@@ -53,26 +54,41 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
 
     int? clienteId;
     if (!mounted) return;
-    final confirmado = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Vincular a cliente existente'),
-          content: DropdownButtonFormField<int>(
-            decoration: const InputDecoration(labelText: 'Cliente'),
-            items: clientes.map<DropdownMenuItem<int>>((c) => DropdownMenuItem(value: c['id'], child: Text(c['nombre']))).toList(),
-            onChanged: (v) => setDialogState(() => clienteId = v),
+    final vinculada = await mostrarFormulario(
+      context,
+      icono: Icons.link,
+      titulo: 'Vincular a un cliente',
+      subtitulo: '${solicitud['nombre'] ?? 'Solicitud de cuenta'}',
+      textoAccion: 'Vincular y activar',
+      ancho: 440,
+      contenido: (context, redibujar) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'La cuenta se activa y queda ligada a este cliente: solo verá sus equipos y sus órdenes.',
+            style: TextStyle(fontSize: 13, color: Colors.black54),
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Vincular y activar')),
-          ],
-        ),
+          separadorCampos,
+          DropdownMenuFormField<int>(
+            expandedInsets: EdgeInsets.zero,
+            enableFilter: true,
+            requestFocusOnTap: true,
+            label: const Text('Cliente *'),
+            hintText: 'Busca por nombre',
+            dropdownMenuEntries: [
+              for (final c in clientes) DropdownMenuEntry<int>(value: c['id'] as int, label: '${c['nombre']}'),
+            ],
+            validator: (v) => v == null ? 'Elige el cliente al que se vincula la cuenta.' : null,
+            onSelected: (v) => redibujar(() => clienteId = v),
+          ),
+        ],
       ),
+      alGuardar: () => ApiClient.instance.post('/api/usuarios/solicitudes/${solicitud['id']}/aprobar', {'cliente_id': clienteId}),
     );
-
-    if (confirmado != true || clienteId == null) return;
-    await _aprobar(solicitud['id'], clienteId: clienteId);
+    if (vinculada && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cuenta activada')));
+      _cargar();
+    }
   }
 
   Future<void> _aprobar(int solicitudId, {int? clienteId}) async {
@@ -88,18 +104,14 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
   }
 
   Future<void> _rechazar(int solicitudId) async {
-    final confirmado = await showDialog<bool>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: const Text('¿Rechazar esta solicitud de cuenta?'),
-        content: const Text('La persona no podrá ingresar. Puede volver a postular más adelante con el mismo correo.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: const Text('Rechazar')),
-        ],
-      ),
+    final confirmado = await mostrarConfirmacion(
+      context,
+      titulo: '¿Rechazar esta solicitud de cuenta?',
+      mensaje: 'La persona no podrá ingresar. Puede volver a postular más adelante con el mismo correo.',
+      textoAccion: 'Rechazar solicitud',
+      peligro: true,
     );
-    if (confirmado != true) return;
+    if (!confirmado) return;
     try {
       await ApiClient.instance.post('/api/usuarios/solicitudes/$solicitudId/rechazar', {});
       _cargar();
@@ -142,22 +154,36 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
 
   Future<void> _editarWhatsapp(Map<String, dynamic> usuario) async {
     final ctrl = TextEditingController(text: usuario['telefono_whatsapp'] ?? '');
-    final guardar = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('WhatsApp de ${usuario['nombre']}'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Número', hintText: '+56 9 1234 5678'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-          ElevatedButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Guardar')),
-        ],
+    final guardado = await mostrarFormulario(
+      context,
+      icono: Icons.chat,
+      titulo: 'WhatsApp de ${usuario['nombre']}',
+      subtitulo: 'Número al que llegan los avisos de mantención',
+      textoAccion: 'Guardar número',
+      ancho: 420,
+      contenido: (context, redibujar) => TextFormField(
+        controller: ctrl,
+        autofocus: true,
+        keyboardType: TextInputType.phone,
+        decoration: decoracionCampo('Número', ayuda: 'Con código de país: +56 9 1234 5678. Déjalo en blanco para quitarlo.'),
+        // vacío es válido: es la forma de quitar el número
+        validator: (v) {
+          if (v == null || v.trim().isEmpty) return null;
+          final digitos = v.replaceAll(RegExp(r'[\s()-]'), '');
+          return RegExp(r'^\+?\d{8,15}$').hasMatch(digitos) ? null : 'Escribe un número válido, por ejemplo +56 9 1234 5678.';
+        },
       ),
+      alGuardar: () async {
+        final actualizado = await ApiClient.instance.patch('/api/usuarios/${usuario['id']}/alertas', {'telefono_whatsapp': ctrl.text.trim()});
+        if (!mounted) return;
+        setState(() {
+          final i = _internos.indexWhere((u) => u['id'] == usuario['id']);
+          if (i != -1) _internos[i] = actualizado;
+        });
+      },
     );
-    if (guardar == true) await _guardarAlertas(usuario, telefono: ctrl.text.trim());
+    ctrl.dispose();
+    if (guardado && mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Número guardado')));
   }
 
   /// Quién recibe el aviso de mantención próxima. Se configura acá y no en el .env del

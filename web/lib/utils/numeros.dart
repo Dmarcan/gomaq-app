@@ -31,3 +31,11 @@ double? parsearMonto(String texto) {
   if (_conMiles.hasMatch(t)) return double.tryParse(t.replaceAll('.', ''));
   return parsearNumero(t);
 }
+
+/// Un número de la base ("2500.00", "7.80") como se muestra en un campo al editarlo: sin los
+/// ceros de más. Vacío si no hay dato o no es un número.
+String numeroParaEditar(dynamic valor) {
+  final n = valor == null ? null : num.tryParse('$valor');
+  if (n == null) return '';
+  return n == n.roundToDouble() ? '${n.round()}' : '$n';
+}

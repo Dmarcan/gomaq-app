@@ -4,6 +4,8 @@ import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../utils/numeros.dart';
+import '../widgets/dialogos.dart';
 
 class FacturacionScreen extends StatefulWidget {
   const FacturacionScreen({super.key});
@@ -181,6 +183,11 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
   bool _detectando = false;
   bool _procesando = false;
   bool _guardandoEdicion = false;
+  // avisos de los campos: antes, con el folio o el PDF sin llenar, el boton no hacia nada y no decia por que
+  String? _errorArchivo;
+  String? _errorFolio;
+  String? _errorMonto;
+  String? _errorMontoEdicion;
   Map<String, dynamic>? _facturaCreada;
   final _folioEditCtrl = TextEditingController();
   final _montoEditCtrl = TextEditingController();
@@ -189,7 +196,7 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
   void initState() {
     super.initState();
     if (widget.item['monto_sugerido'] != null) {
-      _montoCtrl.text = widget.item['monto_sugerido'].toString();
+      _montoCtrl.text = numeroParaEditar(widget.item['monto_sugerido']);
     }
   }
 
@@ -207,7 +214,7 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
       );
       if (!mounted) return;
       setState(() {
-        if (deteccion['monto_detectado'] != null) _montoCtrl.text = deteccion['monto_detectado'].toString();
+        if (deteccion['monto_detectado'] != null) _montoCtrl.text = numeroParaEditar(deteccion['monto_detectado']);
         if (deteccion['folio_detectado'] != null) _folioCtrl.text = deteccion['folio_detectado'].toString();
       });
     } on ApiException catch (_) {
@@ -218,7 +225,14 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
   }
 
   Future<void> _subirFactura() async {
-    if (_folioCtrl.text.trim().isEmpty || _archivo == null) return;
+    // "249.900" son doscientos cuarenta y nueve mil novecientos; leido con tryParse era 249,9
+    final monto = parsearMonto(_montoCtrl.text);
+    setState(() {
+      _errorArchivo = _archivo == null ? 'Elige el PDF de la factura.' : null;
+      _errorFolio = _folioCtrl.text.trim().isEmpty ? 'Escribe el folio de la factura.' : null;
+      _errorMonto = (_montoCtrl.text.trim().isNotEmpty && monto == null) ? 'Escribe un monto válido, por ejemplo 249.900.' : null;
+    });
+    if (_errorArchivo != null || _errorFolio != null || _errorMonto != null) return;
     setState(() => _procesando = true);
     try {
       final esArriendo = widget.item['tipo'] == 'arriendo';
@@ -230,14 +244,14 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
         fields: {
           if (esArriendo) 'guia_recepcion_id': widget.item['id'].toString(),
           'folio': _folioCtrl.text.trim(),
-          if (_montoCtrl.text.trim().isNotEmpty) 'monto': _montoCtrl.text.trim(),
+          if (monto != null) 'monto': '$monto',
         },
       );
       if (mounted) {
         setState(() {
           _facturaCreada = resultado;
           _folioEditCtrl.text = resultado['folio']?.toString() ?? '';
-          _montoEditCtrl.text = resultado['monto']?.toString() ?? '';
+          _montoEditCtrl.text = numeroParaEditar(resultado['monto']);
         });
       }
     } on ApiException catch (e) {
@@ -249,11 +263,15 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
 
   Future<void> _guardarCambios() async {
     if (_facturaCreada == null) return;
+    final monto = parsearMonto(_montoEditCtrl.text);
+    final montoInvalido = _montoEditCtrl.text.trim().isNotEmpty && monto == null;
+    setState(() => _errorMontoEdicion = montoInvalido ? 'Escribe un monto válido, por ejemplo 249.900.' : null);
+    if (montoInvalido) return;
     setState(() => _guardandoEdicion = true);
     try {
       final actualizada = await ApiClient.instance.patch('/api/facturacion/${_facturaCreada!['id']}', {
         'folio': _folioEditCtrl.text.trim().isEmpty ? null : _folioEditCtrl.text.trim(),
-        'monto': _montoEditCtrl.text.trim().isEmpty ? null : _montoEditCtrl.text.trim(),
+        'monto': monto,
       });
       if (mounted) {
         setState(() => _facturaCreada = actualizada);
@@ -286,54 +304,84 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
 
   @override
   Widget build(BuildContext context) {
-    return AlertDialog(
-      title: Text(widget.item['titulo'] as String),
-      content: SizedBox(
-        width: 460,
-        child: SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisSize: MainAxisSize.min,
-            children: _facturaCreada == null ? _construirFormulario() : _construirVistaPrevia(),
-          ),
-        ),
+    final subiendo = _facturaCreada == null;
+    return CuadroDialogo(
+      icono: Icons.receipt_long,
+      titulo: widget.item['titulo'] as String,
+      subtitulo: subiendo ? 'Sube la factura del SII' : 'Revisa los datos y envía la factura al cliente',
+      ancho: 520,
+      cuerpo: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: subiendo ? _construirFormulario() : _construirVistaPrevia(),
       ),
-      actions: [
+      acciones: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
+        if (subiendo)
+          FilledButton(
+            onPressed: (_procesando || _detectando) ? null : _subirFactura,
+            child: _procesando
+                ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                : const Text('Subir factura'),
+          )
+        else
+          FilledButton.icon(
+            onPressed: _procesando ? null : _autorizarEnvio,
+            icon: const Icon(Icons.send, size: 16),
+            label: const Text('Enviar factura por correo'),
+          ),
       ],
     );
   }
 
   List<Widget> _construirFormulario() {
     return [
-      const Text('DOCUMENTO PDF DE LA FACTURA', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-      const SizedBox(height: 8),
+      const TituloSeccion('Documento PDF de la factura'),
       OutlinedButton.icon(
         onPressed: _elegirArchivo,
         icon: const Icon(Icons.upload_file),
         label: Text(_archivo?.name ?? 'Elegir PDF'),
       ),
+      if (_errorArchivo != null)
+        Padding(
+          padding: const EdgeInsets.only(top: 6),
+          child: Text(_errorArchivo!, style: const TextStyle(fontSize: 12, color: GomaqColors.estadoNegativo)),
+        ),
       if (_detectando) ...[
         const SizedBox(height: 8),
         const Row(
           children: [
             SizedBox(height: 14, width: 14, child: CircularProgressIndicator(strokeWidth: 2)),
             SizedBox(width: 8),
-            Text('Buscando monto en el PDF...', style: TextStyle(fontSize: 12, color: Colors.black54)),
+            Text('Buscando el monto y el folio en el PDF...', style: TextStyle(fontSize: 12, color: Colors.black54)),
           ],
         ),
       ],
-      const SizedBox(height: 12),
-      TextField(controller: _folioCtrl, decoration: const InputDecoration(labelText: 'Folio SII')),
-      TextField(
-        controller: _montoCtrl,
-        decoration: const InputDecoration(labelText: 'Monto (CLP)'),
-        keyboardType: TextInputType.number,
-      ),
       const SizedBox(height: 16),
-      FilledButton(
-        onPressed: (_procesando || _detectando) ? null : _subirFactura,
-        child: const Text('Subir factura'),
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: TextFormField(
+              controller: _folioCtrl,
+              decoration: decoracionCampo('Folio SII', obligatorio: true).copyWith(errorText: _errorFolio),
+              onChanged: (_) {
+                if (_errorFolio != null) setState(() => _errorFolio = null);
+              },
+            ),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: TextFormField(
+              controller: _montoCtrl,
+              keyboardType: TextInputType.number,
+              decoration: decoracionCampo('Monto', prefijo: r'$ ').copyWith(errorText: _errorMonto),
+              onChanged: (_) {
+                if (_errorMonto != null) setState(() => _errorMonto = null);
+              },
+            ),
+          ),
+        ],
       ),
     ];
   }
@@ -342,35 +390,33 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
     final f = _facturaCreada!;
     final cliente = widget.item['cliente_nombre'] ?? '-';
     return [
-      const Text('VISTA PREVIA ESTRUCTURADA', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-      const SizedBox(height: 4),
-      const Text(
-        'Si algo no se detectó bien, corrígelo aquí y guarda antes de enviar el correo',
-        style: TextStyle(fontSize: 12, color: Colors.black54, fontStyle: FontStyle.italic),
-      ),
-      const SizedBox(height: 8),
+      const LineaInfo(icono: Icons.info_outline, texto: 'Si algo no se detectó bien, corrígelo y guarda antes de enviar el correo.'),
+      const SizedBox(height: 14),
+      const TituloSeccion('Datos de la factura'),
       Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(color: GomaqColors.primario.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(8)),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(color: GomaqColors.primario.withValues(alpha: 0.08), borderRadius: BorderRadius.circular(10)),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Factura Electrónica', style: const TextStyle(fontWeight: FontWeight.bold, color: GomaqColors.accion)),
-            const SizedBox(height: 8),
+            Text('Cliente: $cliente', style: const TextStyle(fontWeight: FontWeight.w600)),
+            Text(widget.item['titulo'] as String, style: const TextStyle(fontSize: 13, color: Colors.black54)),
+            const SizedBox(height: 12),
             Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Expanded(child: TextField(controller: _folioEditCtrl, decoration: const InputDecoration(labelText: 'Folio'))),
+                Expanded(child: TextFormField(controller: _folioEditCtrl, decoration: decoracionCampo('Folio'))),
                 const SizedBox(width: 12),
                 Expanded(
-                  child: TextField(
+                  child: TextFormField(
                     controller: _montoEditCtrl,
-                    decoration: const InputDecoration(labelText: 'Monto (CLP)'),
                     keyboardType: TextInputType.number,
+                    decoration: decoracionCampo('Monto', prefijo: r'$ ').copyWith(errorText: _errorMontoEdicion),
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             Align(
               alignment: Alignment.centerRight,
               child: OutlinedButton(
@@ -380,31 +426,22 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
                     : const Text('Guardar cambios'),
               ),
             ),
-            const SizedBox(height: 8),
-            Text('Cliente: $cliente'),
-            Text(widget.item['titulo'] as String),
           ],
         ),
       ),
       const SizedBox(height: 16),
-      const Text('VISTA PREVIA DEL CORREO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-      const SizedBox(height: 8),
+      const TituloSeccion('Vista previa del correo'),
       Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(8)),
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(10)),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Factura folio ${f['folio']} — GOMAQ Maquinarias', style: const TextStyle(fontWeight: FontWeight.bold)),
+            Text('Factura folio ${f['folio']} — GOMAQ Maquinarias', style: const TextStyle(fontWeight: FontWeight.w700)),
             const SizedBox(height: 8),
             Text('Adjuntamos la factura correspondiente a ${widget.item['titulo']}. Ante cualquier consulta, puede responder directamente este correo.'),
           ],
         ),
-      ),
-      const SizedBox(height: 16),
-      FilledButton(
-        onPressed: _procesando ? null : _autorizarEnvio,
-        child: const Text('Enviar factura por correo'),
       ),
     ];
   }
