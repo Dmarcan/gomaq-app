@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../utils/formato.dart';
+import '../utils/numeros.dart';
+import '../widgets/dialogos.dart';
 import '../widgets/estado_vacio.dart';
 
 class InsumosScreen extends StatefulWidget {
@@ -56,75 +58,112 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
     final nombreCtrl = TextEditingController();
     final unidadCtrl = TextEditingController();
     final costoCtrl = TextEditingController();
+    // las que más se usan, a un toque: escribir "litro" o "Litro" o "lts" da tres unidades distintas
+    const sugeridas = ['unidad', 'litro', 'kg', 'metro'];
 
-    final creado = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('Nuevo insumo'),
-        content: SizedBox(
-          width: 360,
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(controller: nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre')),
-                TextField(controller: unidadCtrl, decoration: const InputDecoration(labelText: 'Unidad de medida (ej. litro, unidad)')),
-                TextField(
-                  controller: costoCtrl,
-                  decoration: const InputDecoration(labelText: 'Costo unitario (CLP)'),
-                  keyboardType: TextInputType.number,
-                ),
-              ],
-            ),
+    final creado = await mostrarFormulario(
+      context,
+      icono: Icons.inventory_2,
+      titulo: 'Nuevo insumo',
+      subtitulo: 'Repuesto o material del inventario',
+      textoAccion: 'Crear insumo',
+      ancho: 440,
+      contenido: (context, redibujar) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextFormField(
+            controller: nombreCtrl,
+            autofocus: true,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: decoracionCampo('Nombre', obligatorio: true),
+            validator: obligatorio('Escribe el nombre del insumo.'),
           ),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Crear')),
+          separadorCampos,
+          TextFormField(
+            controller: unidadCtrl,
+            onChanged: (_) => redibujar(() {}),
+            decoration: decoracionCampo('Unidad de medida', obligatorio: true),
+            validator: obligatorio('Escribe la unidad de medida.'),
+          ),
+          const SizedBox(height: 8),
+          Wrap(
+            spacing: 6,
+            runSpacing: 6,
+            children: [
+              for (final u in sugeridas)
+                ChoiceChip(
+                  label: Text(u),
+                  selected: unidadCtrl.text.trim() == u,
+                  onSelected: (_) => redibujar(() => unidadCtrl.text = u),
+                ),
+            ],
+          ),
+          separadorCampos,
+          TextFormField(
+            controller: costoCtrl,
+            keyboardType: TextInputType.number,
+            decoration: decoracionCampo('Costo unitario', prefijo: r'$ ', ayuda: 'En pesos. Puedes dejarlo en blanco y cargarlo después.'),
+            validator: numeroOpcional('Escribe un monto válido, por ejemplo 18.500.', monto: true),
+          ),
         ],
       ),
-    );
-
-    if (creado != true || nombreCtrl.text.trim().isEmpty || unidadCtrl.text.trim().isEmpty) return;
-    try {
-      await ApiClient.instance.post('/api/insumos', {
+      alGuardar: () => ApiClient.instance.post('/api/insumos', {
         'nombre': nombreCtrl.text.trim(),
         'unidad_medida': unidadCtrl.text.trim(),
-        'costo_unitario': double.tryParse(costoCtrl.text.trim()),
-      });
+        'costo_unitario': parsearMonto(costoCtrl.text),
+      }),
+    );
+    nombreCtrl.dispose();
+    unidadCtrl.dispose();
+    costoCtrl.dispose();
+    if (creado && mounted) {
       _cargar();
-    } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Insumo creado')));
     }
   }
 
   Future<void> _abrirDialogoIngreso(Map<String, dynamic> insumo) async {
     final cantidadCtrl = TextEditingController();
+    final unidad = '${insumo['unidad_medida']}';
+    final actual = parsearNumero('${insumo['stock_actual'] ?? 0}') ?? 0;
 
-    final confirmado = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Ingreso de stock - ${insumo['nombre']}'),
-        content: TextField(
-          controller: cantidadCtrl,
-          autofocus: true,
-          decoration: InputDecoration(labelText: 'Cantidad a sumar (${insumo['unidad_medida']})'),
-          keyboardType: const TextInputType.numberWithOptions(decimal: true),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Registrar')),
-        ],
-      ),
+    final registrado = await mostrarFormulario(
+      context,
+      icono: Icons.move_to_inbox,
+      titulo: 'Ingreso de stock',
+      subtitulo: '${insumo['nombre']}',
+      textoAccion: 'Registrar ingreso',
+      ancho: 420,
+      contenido: (context, redibujar) {
+        final cantidad = parsearNumero(cantidadCtrl.text);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            TextFormField(
+              controller: cantidadCtrl,
+              autofocus: true,
+              keyboardType: const TextInputType.numberWithOptions(decimal: true),
+              onChanged: (_) => redibujar(() {}),
+              decoration: decoracionCampo('Cantidad a sumar', obligatorio: true, sufijo: unidad),
+              validator: numeroPositivo('Escribe una cantidad mayor a cero.'),
+            ),
+            const SizedBox(height: 12),
+            // lo que quedaría en bodega, antes de confirmar: evita sumar 100 queriendo sumar 10
+            LineaInfo(
+              icono: Icons.inventory,
+              texto: cantidad != null && cantidad > 0
+                  ? 'Stock actual: ${Formato.medida(actual, unidad)} → quedarán ${Formato.medida(actual + cantidad, unidad)}'
+                  : 'Stock actual: ${Formato.medida(actual, unidad)}',
+            ),
+          ],
+        );
+      },
+      alGuardar: () => ApiClient.instance.post('/api/insumos/${insumo['id']}/ingreso', {'cantidad': parsearNumero(cantidadCtrl.text)}),
     );
-
-    final cantidad = double.tryParse(cantidadCtrl.text.trim());
-    if (confirmado != true || cantidad == null || cantidad <= 0) return;
-    try {
-      await ApiClient.instance.post('/api/insumos/${insumo['id']}/ingreso', {'cantidad': cantidad});
+    cantidadCtrl.dispose();
+    if (registrado && mounted) {
       _cargar();
-    } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ingreso de stock registrado')));
     }
   }
 
@@ -178,7 +217,7 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
                             child: ListTile(
                               title: Text(insumo['nombre']),
                               subtitle: Text(
-                                'Stock: ${insumo['stock_actual']} ${insumo['unidad_medida']} · Costo unitario: ${insumo['costo_unitario'] ?? '-'}',
+                                'Stock: ${insumo['stock_actual']} ${insumo['unidad_medida']} · Costo unitario: ${Formato.clp(parsearNumero('${insumo['costo_unitario'] ?? ''}'), siVacio: '-')}',
                               ),
                               trailing: !puedeEscribir
                                   ? null

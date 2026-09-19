@@ -3,6 +3,7 @@ import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/dialogos.dart';
 
 class AsignacionScreen extends StatefulWidget {
   const AsignacionScreen({super.key});
@@ -115,12 +116,13 @@ class _AsignarDialogState extends State<_AsignarDialog> {
   @override
   Widget build(BuildContext context) {
     final o = widget.orden;
-    return AlertDialog(
-      title: const Text('Nueva orden de trabajo'),
-      content: SizedBox(
-        width: 420,
-        child: SingleChildScrollView(
-          child: Column(
+    // se titulaba "Nueva orden de trabajo", pero no crea nada: asigna un mecánico a una orden que
+    // ya existe. El nombre viejo mandaba a buscar el formulario de crear en el lugar equivocado.
+    return CuadroDialogo(
+      icono: Icons.engineering,
+      titulo: 'Asignar mecánico',
+      subtitulo: 'OT #${o['id']} · ${o['maquinaria_codigo'] ?? ''}',
+      cuerpo: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -173,10 +175,8 @@ class _AsignarDialogState extends State<_AsignarDialog> {
                         ),
                 ),
           ],
-          ),
-        ),
       ),
-      actions: [
+      acciones: [
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
       ],
     );

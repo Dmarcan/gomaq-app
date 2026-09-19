@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'dialogos.dart';
 
 const categoriasEquipo = [
   (valor: 'grua_horquilla', etiqueta: 'Grúa Horquilla'),
@@ -53,6 +54,9 @@ bool mostrarAltura(String? categoria) => categoria == null || categoria == 'alza
 /// (grua horquilla / alzahombre / transpaleta / apilador piden datos distintos). Se usa tanto
 /// en el dialogo de creacion (FlotaScreen) como en el de edicion (MaquinariaPerfilScreen)
 /// para no duplicar esta logica en dos lugares.
+///
+/// Los campos van de a dos por fila: en una columna angosta, once campos apilados obligaban a
+/// desplazarse para llegar al final.
 List<Widget> camposFichaTecnica({
   required String? categoria,
   required String? combustible,
@@ -68,36 +72,72 @@ List<Widget> camposFichaTecnica({
   required TextEditingController numeroSerieCtrl,
   required TextEditingController descripcionCtrl,
 }) {
-  return [
-    TextField(controller: marcaCtrl, decoration: const InputDecoration(labelText: 'Marca')),
-    TextField(controller: modeloCtrl, decoration: const InputDecoration(labelText: 'Modelo')),
-    TextField(controller: anioCtrl, decoration: const InputDecoration(labelText: 'Año'), keyboardType: TextInputType.number),
+  final celdas = <Widget>[
+    TextFormField(controller: marcaCtrl, decoration: decoracionCampo('Marca')),
+    TextFormField(controller: modeloCtrl, decoration: decoracionCampo('Modelo')),
+    TextFormField(
+      controller: anioCtrl,
+      keyboardType: TextInputType.number,
+      decoration: decoracionCampo('Año'),
+      validator: _validarAnio,
+    ),
+    TextFormField(controller: numeroSerieCtrl, decoration: decoracionCampo('N° de serie')),
     if (mostrarCapacidad(categoria))
-      TextField(
+      TextFormField(
         controller: capacidadCargaCtrl,
-        decoration: const InputDecoration(labelText: 'Capacidad de carga (kg)'),
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: decoracionCampo('Capacidad de carga', sufijo: 'kg'),
+        validator: numeroOpcional('Escribe un número válido, por ejemplo 2500.'),
       ),
     if (mostrarAltura(categoria))
-      TextField(
+      TextFormField(
         controller: alturaTrabajoCtrl,
-        decoration: const InputDecoration(labelText: 'Altura de trabajo (m)'),
         keyboardType: const TextInputType.numberWithOptions(decimal: true),
+        decoration: decoracionCampo('Altura de trabajo', sufijo: 'm'),
+        validator: numeroOpcional('Escribe un número válido, por ejemplo 7,8.'),
       ),
-    if (mostrarMastil(categoria))
-      TextField(controller: numeroMastilCtrl, decoration: const InputDecoration(labelText: 'N° de mástil')),
     if (mostrarCombustible(categoria))
       DropdownButtonFormField<String>(
         initialValue: combustible,
-        decoration: const InputDecoration(labelText: 'Combustible'),
+        isExpanded: true,
+        decoration: decoracionCampo('Combustible'),
         items: [for (final c in combustiblesEquipo) DropdownMenuItem(value: c.valor, child: Text(c.etiqueta))],
         onChanged: onCombustibleChanged,
       ),
+    if (mostrarMastil(categoria)) TextFormField(controller: numeroMastilCtrl, decoration: decoracionCampo('N° de mástil')),
     if (mostrarMotorChasis(categoria)) ...[
-      TextField(controller: numeroMotorCtrl, decoration: const InputDecoration(labelText: 'N° de motor')),
-      TextField(controller: numeroChasisCtrl, decoration: const InputDecoration(labelText: 'N° de chasis')),
+      TextFormField(controller: numeroMotorCtrl, decoration: decoracionCampo('N° de motor')),
+      TextFormField(controller: numeroChasisCtrl, decoration: decoracionCampo('N° de chasis')),
     ],
-    TextField(controller: numeroSerieCtrl, decoration: const InputDecoration(labelText: 'N° de serie')),
-    TextField(controller: descripcionCtrl, decoration: const InputDecoration(labelText: 'Descripción'), maxLines: 2),
   ];
+
+  return [
+    for (var i = 0; i < celdas.length; i += 2) ...[
+      Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(child: celdas[i]),
+          const SizedBox(width: 12),
+          // una celda sola queda a media fila, con el mismo ancho que las demás
+          Expanded(child: i + 1 < celdas.length ? celdas[i + 1] : const SizedBox.shrink()),
+        ],
+      ),
+      separadorCampos,
+    ],
+    TextFormField(
+      controller: descripcionCtrl,
+      minLines: 2,
+      maxLines: 4,
+      decoration: decoracionCampo('Descripción', ayuda: 'Cualquier dato que ayude a distinguir el equipo.'),
+    ),
+  ];
+}
+
+/// El año es opcional, pero si se escribe tiene que ser uno posible para un equipo.
+String? _validarAnio(String? v) {
+  if (v == null || v.trim().isEmpty) return null;
+  final anio = int.tryParse(v.trim());
+  final maximo = DateTime.now().year + 1;
+  if (anio == null || anio < 1950 || anio > maximo) return 'Escribe un año entre 1950 y $maximo.';
+  return null;
 }

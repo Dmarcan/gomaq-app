@@ -221,6 +221,11 @@ router.post('/', verifyToken, requireRole('administrativo'), subidaImagen.single
         if (fotoPath) {
             await supabase.storage.from(BUCKET_EQUIPOS).remove([fotoPath]).catch(() => {});
         }
+        // codigo es unico: repetirlo es un error de quien escribe, no del servidor, y tiene que
+        // poder corregirlo sin adivinar
+        if (err.code === '23505') {
+            return res.status(409).json({ error: `Ya existe un equipo con el código ${codigo}.` });
+        }
         console.error(err);
         res.status(500).json({ error: 'Error al crear maquinaria' });
     }

@@ -59,6 +59,7 @@ before(async () => {
     app.use('/api/horometro', require('../src/routes/horometro').router);
     app.use('/api/facturacion', require('../src/routes/facturacion'));
     app.use('/api/rentabilidad', require('../src/routes/rentabilidad'));
+    app.use('/api/maquinarias', require('../src/routes/maquinarias'));
     await new Promise((resolve) => { servidor = app.listen(0, resolve); });
     base = `http://127.0.0.1:${servidor.address().port}`;
 
@@ -574,6 +575,31 @@ describe('costos por equipo', () => {
     test('el mecanico no ve los costos', async (t) => {
         if (!requiereBase(t)) return;
         const r = await pedir('GET', '/api/rentabilidad', 'mecanico');
+        assert.equal(r.status, 403);
+    });
+});
+
+describe('alta de equipos', () => {
+    test('repetir un codigo se informa como un choque que se puede corregir, no como un error del servidor', async (t) => {
+        if (!requiereBase(t)) return;
+        const codigo = `ZZ-${crypto.randomUUID().slice(0, 8)}`;
+        const primero = await pedir('POST', '/api/maquinarias', 'administrativo', { codigo, tipo: 'Equipo de prueba' });
+        assert.equal(primero.status, 201);
+        datos.equipos.push(primero.body.id);
+        const repetido = await pedir('POST', '/api/maquinarias', 'administrativo', { codigo, tipo: 'Otro' });
+        assert.equal(repetido.status, 409);
+        assert.match(repetido.body.error, new RegExp(codigo));
+    });
+
+    test('sin codigo o sin tipo se rechaza', async (t) => {
+        if (!requiereBase(t)) return;
+        assert.equal((await pedir('POST', '/api/maquinarias', 'administrativo', { tipo: 'X' })).status, 400);
+        assert.equal((await pedir('POST', '/api/maquinarias', 'administrativo', { codigo: 'ZZ-SINTIPO' })).status, 400);
+    });
+
+    test('solo el administrativo da de alta equipos', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedir('POST', '/api/maquinarias', 'mecanico', { codigo: 'ZZ-NOPUEDE', tipo: 'X' });
         assert.equal(r.status, 403);
     });
 });

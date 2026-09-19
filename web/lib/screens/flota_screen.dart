@@ -7,6 +7,8 @@ import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../utils/formato.dart';
+import '../utils/numeros.dart';
+import '../widgets/dialogos.dart';
 import '../widgets/estado_equipo.dart';
 import '../widgets/estado_vacio.dart';
 import '../widgets/ficha_tecnica_campos.dart';
@@ -231,117 +233,141 @@ class _FlotaScreenState extends State<FlotaScreen> {
     String? combustible;
     PlatformFile? foto;
 
-    if (!mounted) return;
-    final creado = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) {
-          final mostrarFicha = categoria != null;
+    // solo los campos que tienen texto: el servidor recibe un campo o no lo recibe
+    String? texto(TextEditingController c) => c.text.trim().isEmpty ? null : c.text.trim();
+    String? numero(TextEditingController c) {
+      final n = parsearNumero(c.text);
+      return n == null ? null : '$n';
+    }
 
-          return AlertDialog(
-            title: const Text('Nueva maquinaria'),
-            content: SizedBox(
-              width: 420,
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    TextField(controller: codigoCtrl, decoration: const InputDecoration(labelText: 'Codigo (ej. GH-204)')),
-                    TextField(controller: tipoCtrl, decoration: const InputDecoration(labelText: 'Tipo (ej. Grua Horquilla)')),
-                    TextField(controller: ubicacionCtrl, decoration: const InputDecoration(labelText: 'Ubicacion (opcional)')),
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<String>(
-                      initialValue: categoria,
-                      decoration: const InputDecoration(labelText: 'Categoría (para la ficha técnica)'),
-                      items: [for (final c in categoriasEquipo) DropdownMenuItem(value: c.valor, child: Text(c.etiqueta))],
-                      onChanged: (v) => setDialogState(() {
-                        // autocompleta "tipo" con la etiqueta de la categoria, salvo que el usuario
-                        // ya haya escrito algo distinto al auto-relleno anterior (no se pisa su edicion)
-                        final tipoActual = tipoCtrl.text.trim();
-                        if (tipoActual.isEmpty || tipoActual == etiquetasCategoria[categoria]) {
-                          tipoCtrl.text = v != null ? etiquetasCategoria[v]! : '';
-                        }
-                        categoria = v;
-                      }),
-                    ),
-                    if (mostrarFicha) ...[
-                      const SizedBox(height: 12),
-                      const Text('FICHA TÉCNICA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                      ...camposFichaTecnica(
-                        categoria: categoria,
-                        combustible: combustible,
-                        onCombustibleChanged: (v) => setDialogState(() => combustible = v),
-                        marcaCtrl: marcaCtrl,
-                        modeloCtrl: modeloCtrl,
-                        anioCtrl: anioCtrl,
-                        capacidadCargaCtrl: capacidadCargaCtrl,
-                        alturaTrabajoCtrl: alturaTrabajoCtrl,
-                        numeroMastilCtrl: numeroMastilCtrl,
-                        numeroMotorCtrl: numeroMotorCtrl,
-                        numeroChasisCtrl: numeroChasisCtrl,
-                        numeroSerieCtrl: numeroSerieCtrl,
-                        descripcionCtrl: descripcionCtrl,
-                      ),
-                      const SizedBox(height: 12),
-                      OutlinedButton.icon(
-                        onPressed: () async {
-                          final resultado = await FilePicker.platform.pickFiles(
-                            type: FileType.custom,
-                            allowedExtensions: ['jpg', 'jpeg', 'png'],
-                            withData: true,
-                          );
-                          if (resultado != null && resultado.files.single.bytes != null) {
-                            setDialogState(() => foto = resultado.files.single);
-                          }
-                        },
-                        icon: const Icon(Icons.image_outlined),
-                        label: Text(foto?.name ?? 'Agregar foto (opcional)'),
-                      ),
-                    ],
-                  ],
+    if (!mounted) return;
+    final creada = await mostrarFormulario(
+      context,
+      icono: Icons.local_shipping,
+      titulo: 'Nueva maquinaria',
+      subtitulo: 'Agrega un equipo a la flota',
+      textoAccion: 'Crear maquinaria',
+      ancho: 580,
+      contenido: (context, redibujar) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                flex: 2,
+                child: TextFormField(
+                  controller: codigoCtrl,
+                  autofocus: true,
+                  textCapitalization: TextCapitalization.characters,
+                  decoration: decoracionCampo('Código', obligatorio: true, ayuda: 'Por ejemplo GH-204.'),
+                  validator: obligatorio('Escribe el código del equipo.'),
                 ),
               ),
-            ),
-            actions: [
-              TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-              FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Crear')),
+              const SizedBox(width: 12),
+              Expanded(
+                flex: 3,
+                child: DropdownButtonFormField<String>(
+                  initialValue: categoria,
+                  isExpanded: true,
+                  decoration: decoracionCampo('Categoría', obligatorio: true, ayuda: 'Define qué datos pide la ficha.'),
+                  items: [for (final c in categoriasEquipo) DropdownMenuItem(value: c.valor, child: Text(c.etiqueta))],
+                  validator: (v) => v == null ? 'Elige la categoría.' : null,
+                  onChanged: (v) => redibujar(() {
+                    // autocompleta "tipo" con la etiqueta de la categoría, salvo que se haya escrito
+                    // algo distinto al autorrelleno anterior (no se pisa lo que el usuario editó)
+                    final tipoActual = tipoCtrl.text.trim();
+                    if (tipoActual.isEmpty || tipoActual == etiquetasCategoria[categoria]) {
+                      tipoCtrl.text = v != null ? etiquetasCategoria[v]! : '';
+                    }
+                    categoria = v;
+                  }),
+                ),
+              ),
             ],
-          );
-        },
+          ),
+          separadorCampos,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: tipoCtrl,
+                  decoration: decoracionCampo('Tipo', obligatorio: true, ayuda: 'Por ejemplo Grúa horquilla.'),
+                  validator: obligatorio('Escribe el tipo de equipo.'),
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: TextFormField(controller: ubicacionCtrl, decoration: decoracionCampo('Ubicación'))),
+            ],
+          ),
+          if (categoria != null) ...[
+            const SizedBox(height: 8),
+            const Divider(),
+            const TituloSeccion('Ficha técnica'),
+            ...camposFichaTecnica(
+              categoria: categoria,
+              combustible: combustible,
+              onCombustibleChanged: (v) => redibujar(() => combustible = v),
+              marcaCtrl: marcaCtrl,
+              modeloCtrl: modeloCtrl,
+              anioCtrl: anioCtrl,
+              capacidadCargaCtrl: capacidadCargaCtrl,
+              alturaTrabajoCtrl: alturaTrabajoCtrl,
+              numeroMastilCtrl: numeroMastilCtrl,
+              numeroMotorCtrl: numeroMotorCtrl,
+              numeroChasisCtrl: numeroChasisCtrl,
+              numeroSerieCtrl: numeroSerieCtrl,
+              descripcionCtrl: descripcionCtrl,
+            ),
+            separadorCampos,
+            OutlinedButton.icon(
+              onPressed: () async {
+                final resultado = await FilePicker.platform.pickFiles(
+                  type: FileType.custom,
+                  allowedExtensions: ['jpg', 'jpeg', 'png'],
+                  withData: true,
+                );
+                if (resultado != null && resultado.files.single.bytes != null) {
+                  redibujar(() => foto = resultado.files.single);
+                }
+              },
+              icon: const Icon(Icons.image_outlined),
+              label: Text(foto?.name ?? 'Agregar foto (opcional)'),
+            ),
+          ],
+        ],
       ),
-    );
-
-    if (creado != true || codigoCtrl.text.trim().isEmpty || tipoCtrl.text.trim().isEmpty) return;
-    try {
-      await ApiClient.instance.postMultipart(
+      alGuardar: () => ApiClient.instance.postMultipart(
         '/api/maquinarias',
         bytes: foto?.bytes,
         filename: foto?.name,
         fields: {
           'codigo': codigoCtrl.text.trim(),
           'tipo': tipoCtrl.text.trim(),
-          if (ubicacionCtrl.text.trim().isNotEmpty) 'ubicacion': ubicacionCtrl.text.trim(),
-          if (categoria != null) 'categoria_equipo': categoria!,
-          if (marcaCtrl.text.trim().isNotEmpty) 'marca': marcaCtrl.text.trim(),
-          if (modeloCtrl.text.trim().isNotEmpty) 'modelo': modeloCtrl.text.trim(),
-          if (anioCtrl.text.trim().isNotEmpty) 'anio': anioCtrl.text.trim(),
-          if (descripcionCtrl.text.trim().isNotEmpty) 'descripcion': descripcionCtrl.text.trim(),
-          if (capacidadCargaCtrl.text.trim().isNotEmpty) 'capacidad_carga': capacidadCargaCtrl.text.trim(),
-          if (alturaTrabajoCtrl.text.trim().isNotEmpty) 'altura_trabajo': alturaTrabajoCtrl.text.trim(),
-          if (numeroSerieCtrl.text.trim().isNotEmpty) 'numero_serie': numeroSerieCtrl.text.trim(),
-          if (numeroMotorCtrl.text.trim().isNotEmpty) 'numero_motor': numeroMotorCtrl.text.trim(),
-          if (numeroChasisCtrl.text.trim().isNotEmpty) 'numero_chasis': numeroChasisCtrl.text.trim(),
-          if (numeroMastilCtrl.text.trim().isNotEmpty) 'numero_mastil': numeroMastilCtrl.text.trim(),
+          'categoria_equipo': categoria!,
+          'ubicacion': ?texto(ubicacionCtrl),
+          'marca': ?texto(marcaCtrl),
+          'modelo': ?texto(modeloCtrl),
+          'anio': ?texto(anioCtrl),
+          'descripcion': ?texto(descripcionCtrl),
+          'capacidad_carga': ?numero(capacidadCargaCtrl),
+          'altura_trabajo': ?numero(alturaTrabajoCtrl),
+          'numero_serie': ?texto(numeroSerieCtrl),
+          'numero_motor': ?texto(numeroMotorCtrl),
+          'numero_chasis': ?texto(numeroChasisCtrl),
+          'numero_mastil': ?texto(numeroMastilCtrl),
           'tipo_combustible': (categoria == 'transpaleta' || categoria == 'apilador') ? 'electrica' : (combustible ?? ''),
         },
-      );
+      ),
+    );
+    for (final c in [codigoCtrl, tipoCtrl, ubicacionCtrl, marcaCtrl, modeloCtrl, anioCtrl, descripcionCtrl, capacidadCargaCtrl, alturaTrabajoCtrl, numeroSerieCtrl, numeroMotorCtrl, numeroChasisCtrl, numeroMastilCtrl]) {
+      c.dispose();
+    }
+    if (creada && mounted) {
       _cargar();
       _cargarResumen();
-    } on ApiException catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
-      }
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Maquinaria creada')));
     }
   }
 

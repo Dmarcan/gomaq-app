@@ -4,6 +4,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../services/api_client.dart';
+import '../widgets/dialogos.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../widgets/estado_chip.dart';
@@ -87,71 +88,71 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
 
   Future<void> _abrirDialogoCrear({int? maquinariaInicial}) async {
     List<dynamic> maquinarias = [];
-    List<dynamic> clientes = [];
     try {
       maquinarias = (await ApiClient.instance.get('/api/maquinarias'))['items'];
-      clientes = await ApiClient.instance.get('/api/clientes');
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
       return;
     }
 
     int? maquinariaId = maquinarias.any((m) => m['id'] == maquinariaInicial) ? maquinariaInicial : null;
-    // el cliente de la orden suele ser quien tiene el equipo hoy: se propone, y se puede cambiar
-    int? clienteId = maquinariaId == null ? null : maquinarias.firstWhere((m) => m['id'] == maquinariaId)['cliente_id'];
     final motivoCtrl = TextEditingController();
 
     if (!mounted) return;
-    final creado = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Nueva orden de trabajo'),
-          content: SizedBox(
-            width: 400,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  DropdownButtonFormField<int>(
-                    initialValue: maquinariaId,
-                    decoration: const InputDecoration(labelText: 'Maquinaria'),
-                    items: maquinarias
-                        .map<DropdownMenuItem<int>>((m) => DropdownMenuItem(value: m['id'], child: Text('${m['codigo']} - ${m['tipo']}')))
-                        .toList(),
-                    onChanged: (v) => setDialogState(() => maquinariaId = v),
-                  ),
-                  DropdownButtonFormField<int>(
-                    initialValue: clienteId,
-                    decoration: const InputDecoration(labelText: 'Cliente'),
-                    items: clientes
-                        .map<DropdownMenuItem<int>>((c) => DropdownMenuItem(value: c['id'], child: Text(c['nombre'])))
-                        .toList(),
-                    onChanged: (v) => setDialogState(() => clienteId = v),
-                  ),
-                  TextField(controller: motivoCtrl, decoration: const InputDecoration(labelText: 'Motivo')),
-                ],
-              ),
+    final creada = await mostrarFormulario(
+      context,
+      icono: Icons.assignment_add,
+      titulo: 'Nueva orden de trabajo',
+      subtitulo: 'Trabajo a hacer en un equipo',
+      textoAccion: 'Crear orden',
+      contenido: (context, redibujar) {
+        final equipo = maquinarias.cast<Map<String, dynamic>?>().firstWhere((m) => m!['id'] == maquinariaId, orElse: () => null);
+        return Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            DropdownMenuFormField<int>(
+              initialSelection: maquinariaId,
+              expandedInsets: EdgeInsets.zero,
+              enableFilter: true,
+              requestFocusOnTap: true,
+              label: const Text('Equipo *'),
+              hintText: 'Busca por código o tipo',
+              dropdownMenuEntries: [
+                for (final m in maquinarias) DropdownMenuEntry<int>(value: m['id'] as int, label: '${m['codigo']} · ${m['tipo']}'),
+              ],
+              validator: (v) => v == null ? 'Elige el equipo de la orden.' : null,
+              onSelected: (v) => redibujar(() => maquinariaId = v),
             ),
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Crear')),
+            if (equipo != null) ...[
+              const SizedBox(height: 10),
+              // el cliente no se pregunta: la base ya sabe quién tiene el equipo, y el servidor
+              // lo copia a la orden al crearla
+              LineaInfo(
+                icono: Icons.business,
+                texto: equipo['cliente'] != null ? 'Cliente: ${equipo['cliente']}' : 'Sin cliente: es una mantención interna',
+              ),
+            ],
+            separadorCampos,
+            TextFormField(
+              controller: motivoCtrl,
+              minLines: 2,
+              maxLines: 4,
+              textCapitalization: TextCapitalization.sentences,
+              decoration: decoracionCampo('Motivo', obligatorio: true, ayuda: 'Qué falla o qué trabajo se pide.'),
+              validator: obligatorio('Escribe el motivo de la orden.'),
+            ),
           ],
-        ),
-      ),
-    );
-
-    if (creado != true || maquinariaId == null) return;
-    try {
-      await ApiClient.instance.post('/api/ordenes-trabajo', {
+        );
+      },
+      alGuardar: () => ApiClient.instance.post('/api/ordenes-trabajo', {
         'maquinaria_id': maquinariaId,
-        'cliente_id': clienteId,
         'motivo': motivoCtrl.text.trim(),
-      });
+      }),
+    );
+    motivoCtrl.dispose();
+    if (creada && mounted) {
       _cargar();
-    } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Orden de trabajo creada')));
     }
   }
 

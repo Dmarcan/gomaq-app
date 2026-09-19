@@ -134,7 +134,11 @@ GoRouter construirRouter(AuthService auth) {
                   mensaje: 'El enlace no corresponde a un equipo. Vuelve a Flota y elígelo de la lista.',
                 );
               }
-              return MaquinariaPerfilScreen(key: ValueKey(id), maquinariaId: id);
+              return MaquinariaPerfilScreen(
+                key: ValueKey(id),
+                maquinariaId: id,
+                pestanaInicial: estado.uri.queryParameters['pestana'] ?? 'resumen',
+              );
             },
           ),
           GoRoute(

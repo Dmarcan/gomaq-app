@@ -10,6 +10,8 @@ import '../widgets/estado_equipo.dart';
 import '../widgets/ficha_tecnica_campos.dart';
 import '../widgets/pestanas.dart';
 import '../utils/formato.dart';
+import '../utils/numeros.dart';
+import '../widgets/dialogos.dart';
 
 /// Perfil de un equipo: quién es, en qué estado está y qué hacer con él.
 ///
@@ -19,7 +21,11 @@ import '../utils/formato.dart';
 /// los enlaces compartidos vuelven a este equipo.
 class MaquinariaPerfilScreen extends StatefulWidget {
   final int maquinariaId;
-  const MaquinariaPerfilScreen({super.key, required this.maquinariaId});
+
+  /// Pestaña con que abre: 'resumen', 'ficha', 'historial' o 'costos'. Costos por equipo abre
+  /// el perfil directo en 'costos'.
+  final String pestanaInicial;
+  const MaquinariaPerfilScreen({super.key, required this.maquinariaId, this.pestanaInicial = 'resumen'});
 
   @override
   State<MaquinariaPerfilScreen> createState() => _MaquinariaPerfilScreenState();
@@ -32,7 +38,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
   bool _cargando = true;
   String? _error;
   bool _subiendoFoto = false;
-  String _pestana = 'resumen';
+  late String _pestana = const ['resumen', 'ficha', 'historial', 'costos'].contains(widget.pestanaInicial) ? widget.pestanaInicial : 'resumen';
 
   @override
   void initState() {
@@ -153,87 +159,100 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
     final modeloCtrl = TextEditingController(text: m['modelo'] ?? '');
     final anioCtrl = TextEditingController(text: m['anio']?.toString() ?? '');
     final descripcionCtrl = TextEditingController(text: m['descripcion'] ?? '');
-    final capacidadCargaCtrl = TextEditingController(text: m['capacidad_carga']?.toString() ?? '');
-    final alturaTrabajoCtrl = TextEditingController(text: m['altura_trabajo']?.toString() ?? '');
+    final capacidadCargaCtrl = TextEditingController(text: _sinCeros(m['capacidad_carga']));
+    final alturaTrabajoCtrl = TextEditingController(text: _sinCeros(m['altura_trabajo']));
     final numeroSerieCtrl = TextEditingController(text: m['numero_serie'] ?? '');
     final numeroMotorCtrl = TextEditingController(text: m['numero_motor'] ?? '');
     final numeroChasisCtrl = TextEditingController(text: m['numero_chasis'] ?? '');
     final numeroMastilCtrl = TextEditingController(text: m['numero_mastil'] ?? '');
     String? categoria = m['categoria_equipo'];
     String? combustible = m['tipo_combustible'];
+    String? texto(TextEditingController c) => c.text.trim().isEmpty ? null : c.text.trim();
 
-    final guardado = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: Text('Editar ${m['codigo']}'),
-          content: SizedBox(
-            width: 420,
-            child: SingleChildScrollView(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  TextField(controller: tipoCtrl, decoration: const InputDecoration(labelText: 'Tipo')),
-                  TextField(controller: ubicacionCtrl, decoration: const InputDecoration(labelText: 'Ubicación')),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: categoria,
-                    decoration: const InputDecoration(labelText: 'Categoría'),
-                    items: [for (final c in categoriasEquipo) DropdownMenuItem(value: c.valor, child: Text(c.etiqueta))],
-                    onChanged: (v) => setDialogState(() => categoria = v),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text('FICHA TÉCNICA', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
-                  ...camposFichaTecnica(
-                    categoria: categoria,
-                    combustible: combustible,
-                    onCombustibleChanged: (v) => setDialogState(() => combustible = v),
-                    marcaCtrl: marcaCtrl,
-                    modeloCtrl: modeloCtrl,
-                    anioCtrl: anioCtrl,
-                    capacidadCargaCtrl: capacidadCargaCtrl,
-                    alturaTrabajoCtrl: alturaTrabajoCtrl,
-                    numeroMastilCtrl: numeroMastilCtrl,
-                    numeroMotorCtrl: numeroMotorCtrl,
-                    numeroChasisCtrl: numeroChasisCtrl,
-                    numeroSerieCtrl: numeroSerieCtrl,
-                    descripcionCtrl: descripcionCtrl,
-                  ),
-                ],
+    final guardada = await mostrarFormulario(
+      context,
+      icono: Icons.edit_note,
+      titulo: 'Editar ${m['codigo']}',
+      subtitulo: 'Datos de la ficha técnica del equipo',
+      textoAccion: 'Guardar cambios',
+      ancho: 580,
+      contenido: (context, redibujar) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: tipoCtrl,
+                  autofocus: true,
+                  decoration: decoracionCampo('Tipo', obligatorio: true),
+                  validator: obligatorio('Escribe el tipo de equipo.'),
+                ),
               ),
-            ),
+              const SizedBox(width: 12),
+              Expanded(child: TextFormField(controller: ubicacionCtrl, decoration: decoracionCampo('Ubicación'))),
+            ],
           ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Guardar')),
-          ],
-        ),
+          separadorCampos,
+          DropdownButtonFormField<String>(
+            initialValue: categoria,
+            isExpanded: true,
+            decoration: decoracionCampo('Categoría', ayuda: 'Define qué datos pide la ficha.'),
+            items: [for (final c in categoriasEquipo) DropdownMenuItem(value: c.valor, child: Text(c.etiqueta))],
+            onChanged: (v) => redibujar(() => categoria = v),
+          ),
+          const SizedBox(height: 8),
+          const Divider(),
+          const TituloSeccion('Ficha técnica'),
+          ...camposFichaTecnica(
+            categoria: categoria,
+            combustible: combustible,
+            onCombustibleChanged: (v) => redibujar(() => combustible = v),
+            marcaCtrl: marcaCtrl,
+            modeloCtrl: modeloCtrl,
+            anioCtrl: anioCtrl,
+            capacidadCargaCtrl: capacidadCargaCtrl,
+            alturaTrabajoCtrl: alturaTrabajoCtrl,
+            numeroMastilCtrl: numeroMastilCtrl,
+            numeroMotorCtrl: numeroMotorCtrl,
+            numeroChasisCtrl: numeroChasisCtrl,
+            numeroSerieCtrl: numeroSerieCtrl,
+            descripcionCtrl: descripcionCtrl,
+          ),
+        ],
       ),
-    );
-
-    if (guardado != true) return;
-    try {
-      await ApiClient.instance.patch('/api/maquinarias/${widget.maquinariaId}', {
-        'tipo': tipoCtrl.text.trim().isEmpty ? null : tipoCtrl.text.trim(),
-        'ubicacion': ubicacionCtrl.text.trim().isEmpty ? null : ubicacionCtrl.text.trim(),
+      alGuardar: () => ApiClient.instance.patch('/api/maquinarias/${widget.maquinariaId}', {
+        'tipo': texto(tipoCtrl),
+        'ubicacion': texto(ubicacionCtrl),
         'categoria_equipo': categoria,
-        'marca': marcaCtrl.text.trim().isEmpty ? null : marcaCtrl.text.trim(),
-        'modelo': modeloCtrl.text.trim().isEmpty ? null : modeloCtrl.text.trim(),
-        'anio': anioCtrl.text.trim().isEmpty ? null : int.tryParse(anioCtrl.text.trim()),
-        'descripcion': descripcionCtrl.text.trim().isEmpty ? null : descripcionCtrl.text.trim(),
-        'capacidad_carga': capacidadCargaCtrl.text.trim().isEmpty ? null : double.tryParse(capacidadCargaCtrl.text.trim()),
-        'altura_trabajo': alturaTrabajoCtrl.text.trim().isEmpty ? null : double.tryParse(alturaTrabajoCtrl.text.trim()),
-        'numero_serie': numeroSerieCtrl.text.trim().isEmpty ? null : numeroSerieCtrl.text.trim(),
-        'numero_motor': numeroMotorCtrl.text.trim().isEmpty ? null : numeroMotorCtrl.text.trim(),
-        'numero_chasis': numeroChasisCtrl.text.trim().isEmpty ? null : numeroChasisCtrl.text.trim(),
-        'numero_mastil': numeroMastilCtrl.text.trim().isEmpty ? null : numeroMastilCtrl.text.trim(),
+        'marca': texto(marcaCtrl),
+        'modelo': texto(modeloCtrl),
+        'anio': int.tryParse(anioCtrl.text.trim()),
+        'descripcion': texto(descripcionCtrl),
+        'capacidad_carga': parsearNumero(capacidadCargaCtrl.text),
+        'altura_trabajo': parsearNumero(alturaTrabajoCtrl.text),
+        'numero_serie': texto(numeroSerieCtrl),
+        'numero_motor': texto(numeroMotorCtrl),
+        'numero_chasis': texto(numeroChasisCtrl),
+        'numero_mastil': texto(numeroMastilCtrl),
         'tipo_combustible': combustible,
-      });
-      await _cargar();
-    } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      }),
+    );
+    for (final c in [tipoCtrl, ubicacionCtrl, marcaCtrl, modeloCtrl, anioCtrl, descripcionCtrl, capacidadCargaCtrl, alturaTrabajoCtrl, numeroSerieCtrl, numeroMotorCtrl, numeroChasisCtrl, numeroMastilCtrl]) {
+      c.dispose();
     }
+    if (guardada) {
+      await _cargar(silencioso: true);
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ficha técnica guardada')));
+    }
+  }
+
+  /// "2500.00" que llega de la base se muestra como "2500" al editar: los ceros de más confunden.
+  static String _sinCeros(dynamic v) {
+    final n = v == null ? null : num.tryParse('$v');
+    if (n == null) return '';
+    return n == n.roundToDouble() ? '${n.round()}' : '$n';
   }
 
   // ---- acciones ------------------------------------------------------------------------------
@@ -242,21 +261,45 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
     final actual = _maquinaria!['estado'] as String?;
     final elegido = await showDialog<String>(
       context: context,
-      builder: (dialogContext) => SimpleDialog(
-        title: Text('Estado de ${_maquinaria!['codigo']}'),
-        children: [
-          for (final estado in const ['operativa', 'en_mantencion', 'fuera_de_servicio'])
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(dialogContext, estado),
-              child: Row(
-                children: [
-                  EstadoEquipo(estado: estado),
-                  const Spacer(),
-                  if (estado == actual) const Text('Actual', style: TextStyle(color: Colors.black54, fontSize: 12)),
-                ],
+      builder: (dialogContext) => CuadroDialogo(
+        icono: Icons.swap_horiz,
+        titulo: 'Cambiar estado',
+        subtitulo: '${_maquinaria!['codigo']} está ${GomaqColors.etiquetaEstado(actual).toLowerCase()}',
+        ancho: 400,
+        cuerpo: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            for (final estado in const ['operativa', 'en_mantencion', 'fuera_de_servicio'])
+              Padding(
+                padding: const EdgeInsets.only(bottom: 8),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(10),
+                  onTap: () => Navigator.pop(dialogContext, estado),
+                  focusColor: GomaqColors.accion.withValues(alpha: 0.12),
+                  child: Semantics(
+                    button: true,
+                    selected: estado == actual,
+                    label: '${GomaqColors.etiquetaEstado(estado)}${estado == actual ? ', estado actual' : ''}',
+                    excludeSemantics: true,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(10),
+                        border: Border.all(color: estado == actual ? GomaqColors.accion : Colors.grey.shade300, width: estado == actual ? 2 : 1),
+                      ),
+                      child: Row(
+                        children: [
+                          EstadoEquipo(estado: estado),
+                          const Spacer(),
+                          if (estado == actual) const Text('Actual', style: TextStyle(color: Colors.black54, fontSize: 12)),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
               ),
-            ),
-        ],
+          ],
+        ),
       ),
     );
     if (elegido == null || elegido == actual) return;
