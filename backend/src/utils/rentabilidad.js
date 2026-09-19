@@ -148,6 +148,7 @@ function clasificarResultado({ gasto, ingreso, lineas_sin_precio = 0 }) {
  */
 function resumirFlota(equipos, { diasPeriodo }) {
     const resumen = {
+        total: equipos.length,
         gasto_total: 0,
         ingreso_total: 0,
         margen_total: 0,

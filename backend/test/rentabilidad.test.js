@@ -271,6 +271,13 @@ describe('resumirFlota', () => {
         ...extra,
     });
 
+    test('informa cuantos equipos tiene la flota, incluso los que estan en equilibrio', () => {
+        const r = resumirFlota([equipo(100, 300, 0), equipo(500, 500, 0), equipo(0, 0, 0)], { diasPeriodo: 100 });
+        assert.strictEqual(r.total, 3);
+        // el equilibrio no tiene contador propio: solo cuenta en el total
+        assert.strictEqual(r.con_ganancia + r.a_perdida + r.sin_movimiento, 2);
+    });
+
     test('suma gasto, ingreso y margen de toda la flota', () => {
         const r = resumirFlota([equipo(100, 300, 10), equipo(500, 200, 20)], { diasPeriodo: 100 });
         assert.strictEqual(r.gasto_total, 600);
