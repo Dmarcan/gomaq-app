@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
 import 'services/auth_service.dart';
 import 'services/connectivity_service.dart';
@@ -7,7 +8,11 @@ import 'screens/login_screen.dart';
 import 'screens/ordenes_list_screen.dart';
 import 'theme/gomaq_theme.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  // Formato.fecha usa DateFormat con locale es_CL, y intl no trae esos datos hasta que se cargan:
+  // sin esta linea, la pantalla que muestra una fecha fallaba con LocaleDataException.
+  await initializeDateFormatting('es_CL');
   runApp(const GomaqMecanicoApp());
 }
 

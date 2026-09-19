@@ -1,12 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
+import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
 import 'router.dart';
 import 'services/auth_service.dart';
 import 'theme/gomaq_theme.dart';
 
-void main() {
+Future<void> main() async {
   // URLs limpias, sin el "#" de la estrategia por hash. El backend ya devuelve index.html
   // para cualquier ruta que no sea /api (el fallback de SPA en server.js), que es justo lo
   // que esta estrategia necesita para que un F5 en /flota no termine en un 404.
@@ -17,6 +18,11 @@ void main() {
   // desde el arranque para que el contenido exista en el árbol de accesibilidad del navegador.
   WidgetsFlutterBinding.ensureInitialized();
   SemanticsBinding.instance.ensureSemantics();
+
+  // Formato.fecha usa DateFormat con locale es_CL, y intl no trae esos datos hasta que se cargan:
+  // sin esta linea, cualquier pantalla que mostrara una fecha (el historial de OT de un equipo,
+  // por ejemplo) fallaba con LocaleDataException y quedaba en gris.
+  await initializeDateFormatting('es_CL');
 
   runApp(const GomaqWebApp());
 }
