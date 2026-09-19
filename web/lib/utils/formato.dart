@@ -37,6 +37,15 @@ class Formato {
     return '${valor < 0 ? '-' : ''}\$$formateado';
   }
 
+  /// 2.500 kg, 7,8 m — una medida con su unidad y separadores chilenos. La API entrega los
+  /// NUMERIC como texto ("7.80"), así que acepta String o número; vacío si no hay dato.
+  static String medida(dynamic valor, String unidad, {String siVacio = ''}) {
+    if (valor == null) return siVacio;
+    final n = valor is num ? valor : num.tryParse('$valor');
+    if (n == null) return siVacio;
+    return '${NumberFormat('#,##0.##', 'es_CL').format(n)} $unidad';
+  }
+
   /// Duración en "2h 15m", a partir de minutos.
   static String duracion(int minutos) => '${minutos ~/ 60}h ${minutos % 60}m';
 

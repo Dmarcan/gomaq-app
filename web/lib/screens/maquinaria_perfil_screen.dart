@@ -1,13 +1,22 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../widgets/estado_chip.dart';
+import '../widgets/estado_equipo.dart';
 import '../widgets/ficha_tecnica_campos.dart';
+import '../widgets/pestanas.dart';
 import '../utils/formato.dart';
 
+/// Perfil de un equipo: quién es, en qué estado está y qué hacer con él.
+///
+/// Arriba, lo que hay que saber de un vistazo (estado, medida principal, combustible, cliente y
+/// cuánto falta para la mantención) y las acciones. Debajo, pestañas para no apilar la ficha, el
+/// historial y los costos en una sola página larga. Tiene URL propia (/flota/:id), así que F5 y
+/// los enlaces compartidos vuelven a este equipo.
 class MaquinariaPerfilScreen extends StatefulWidget {
   final int maquinariaId;
   const MaquinariaPerfilScreen({super.key, required this.maquinariaId});
@@ -23,6 +32,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
   bool _cargando = true;
   String? _error;
   bool _subiendoFoto = false;
+  String _pestana = 'resumen';
 
   @override
   void initState() {
@@ -30,11 +40,15 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
   }
 
-  Future<void> _cargar() async {
-    setState(() {
-      _cargando = true;
-      _error = null;
-    });
+  /// `silencioso` recarga los datos sin volver a la rueda de carga: se usa después de cambiar
+  /// el estado o la ficha, para que la pantalla no parpadee.
+  Future<void> _cargar({bool silencioso = false}) async {
+    if (!silencioso) {
+      setState(() {
+        _cargando = true;
+        _error = null;
+      });
+    }
     try {
       final maquinaria = await ApiClient.instance.get('/api/maquinarias/${widget.maquinariaId}');
       final historial = await ApiClient.instance.get('/api/maquinarias/${widget.maquinariaId}/ordenes-trabajo');
@@ -50,7 +64,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
         if (mounted) setState(() => _rentabilidad = rentabilidad);
       } on ApiException catch (_) {}
     } on ApiException catch (e) {
-      setState(() => _error = e.message);
+      if (mounted) setState(() => _error = e.message);
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -222,194 +236,469 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
     }
   }
 
-  Widget _tile(String etiqueta, String? valor) {
-    if (valor == null || valor.trim().isEmpty) return const SizedBox.shrink();
-    return Container(
-      width: 180,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.shade200),
-        borderRadius: BorderRadius.circular(12),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+  // ---- acciones ------------------------------------------------------------------------------
+
+  Future<void> _cambiarEstado() async {
+    final actual = _maquinaria!['estado'] as String?;
+    final elegido = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => SimpleDialog(
+        title: Text('Estado de ${_maquinaria!['codigo']}'),
         children: [
-          Text(etiqueta, style: const TextStyle(fontSize: 11, color: Colors.black54)),
-          const SizedBox(height: 4),
-          Text(valor, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+          for (final estado in const ['operativa', 'en_mantencion', 'fuera_de_servicio'])
+            SimpleDialogOption(
+              onPressed: () => Navigator.pop(dialogContext, estado),
+              child: Row(
+                children: [
+                  EstadoEquipo(estado: estado),
+                  const Spacer(),
+                  if (estado == actual) const Text('Actual', style: TextStyle(color: Colors.black54, fontSize: 12)),
+                ],
+              ),
+            ),
         ],
       ),
     );
+    if (elegido == null || elegido == actual) return;
+    try {
+      await ApiClient.instance.patch('/api/maquinarias/${widget.maquinariaId}/estado', {'estado': elegido});
+      await _cargar(silencioso: true);
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('${_maquinaria!['codigo']} quedó ${GomaqColors.etiquetaEstado(elegido).toLowerCase()}')));
+      }
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    }
   }
+
+  void _crearOrden() => context.go('/ordenes?nueva=1&maquinaria=${widget.maquinariaId}');
+
+  void _volver() => context.canPop() ? context.pop() : context.go('/flota');
+
+  // ---- datos derivados -----------------------------------------------------------------------
+
+  static bool _vacio(dynamic v) => v == null || '$v'.trim().isEmpty;
+
+  /// Los datos de la ficha que ayudan a distinguir y mantener el equipo y todavía no se cargaron.
+  /// Motor, chasis y mástil no cuentan: no aplican a todos los equipos (un alzahombre eléctrico
+  /// no tiene motor de combustión) y avisarlos como faltantes sería ruido.
+  List<String> _datosFaltantes(Map<String, dynamic> m) {
+    final c = m['categoria_equipo'] as String?;
+    return [
+      if (_vacio(m['marca'])) 'marca',
+      if (_vacio(m['modelo'])) 'modelo',
+      if (_vacio(m['anio'])) 'año',
+      if (_vacio(m['numero_serie'])) 'N° de serie',
+      if (mostrarCapacidad(c) && _vacio(m['capacidad_carga'])) 'capacidad de carga',
+      if (mostrarAltura(c) && _vacio(m['altura_trabajo'])) 'altura de trabajo',
+      if (mostrarCombustible(c) && _vacio(m['tipo_combustible'])) 'combustible',
+      if (_vacio(m['foto_url'])) 'foto',
+    ];
+  }
+
+  static String _lista(List<String> items) =>
+      items.length <= 1 ? items.join() : '${items.sublist(0, items.length - 1).join(', ')} y ${items.last}';
+
+  /// La medida que mejor describe al equipo: la altura en un alzahombre, la capacidad en el resto.
+  ({String etiqueta, String valor}) _medidaPrincipal(Map<String, dynamic> m) {
+    final capacidad = Formato.medida(m['capacidad_carga'], 'kg');
+    final altura = Formato.medida(m['altura_trabajo'], 'm');
+    switch (m['categoria_equipo']) {
+      case 'alzahombre':
+        return (etiqueta: 'Altura de trabajo', valor: altura);
+      case null:
+        // sin categoría no se sabe cuál corresponde: se muestra la que exista
+        if (capacidad.isEmpty && altura.isNotEmpty) return (etiqueta: 'Altura de trabajo', valor: altura);
+        return (etiqueta: 'Capacidad de carga', valor: capacidad);
+      default:
+        return (etiqueta: 'Capacidad de carga', valor: capacidad);
+    }
+  }
+
+  /// Cuánto falta para la preventiva, según el horómetro. Devuelve el texto y un color que avisa
+  /// cuando está por vencer o vencida.
+  ({String texto, Color? color}) _textoMantencion(Map<String, dynamic>? mant) {
+    if (mant == null || mant['horas_restantes'] == null) {
+      return (texto: '', color: null);
+    }
+    final restantes = (mant['horas_restantes'] as num).toDouble();
+    if (mant['vencida'] == true) {
+      return (texto: 'Vencida hace ${Formato.medida(restantes.abs(), 'h')}', color: GomaqColors.textoEstado('fuera_de_servicio'));
+    }
+    final texto = 'En ${Formato.medida(restantes, 'h')}';
+    return (texto: texto, color: mant['por_vencer'] == true ? GomaqColors.textoEstado('en_mantencion') : null);
+  }
+
+  // ---- pantalla ------------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
 
-    return Scaffold(
-      backgroundColor: const Color(0xFFF7F7F8),
-      appBar: AppBar(title: Text(_maquinaria != null ? '${_maquinaria!['codigo']}' : 'Equipo')),
-      body: _cargando
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? Center(child: Text('Error: $_error'))
-              : _construirContenido(auth),
-    );
+    Widget cuerpo;
+    if (_cargando) {
+      cuerpo = const Center(child: CircularProgressIndicator());
+    } else if (_error != null) {
+      cuerpo = Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('No se pudo cargar el equipo: $_error'),
+            const SizedBox(height: 12),
+            OutlinedButton(onPressed: _cargar, child: const Text('Reintentar')),
+          ],
+        ),
+      );
+    } else {
+      cuerpo = _contenido(auth);
+    }
+
+    return Scaffold(backgroundColor: Colors.transparent, body: cuerpo);
   }
 
-  Widget _construirContenido(AuthService auth) {
+  Widget _contenido(AuthService auth) {
     final m = _maquinaria!;
-    final categoria = m['categoria_equipo'] as String?;
 
     return RefreshIndicator(
       onRefresh: _cargar,
       child: ListView(
-        padding: const EdgeInsets.all(24),
+        padding: const EdgeInsets.fromLTRB(24, 0, 24, 32),
         children: [
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(16),
-              boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 16, offset: const Offset(0, 4))],
-            ),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: m['foto_url'] != null
-                      ? Image.network(m['foto_url'], width: 160, height: 160, fit: BoxFit.cover)
-                      : Container(
-                          width: 160,
-                          height: 160,
-                          color: GomaqColors.primario.withValues(alpha: 0.08),
-                          child: Icon(iconoCategoria(categoria), size: 48, color: GomaqColors.primario),
-                        ),
-                ),
-                const SizedBox(width: 20),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Icon(iconoCategoria(categoria), size: 18, color: GomaqColors.primario),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              '${m['codigo']} - ${m['tipo']}',
-                              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 8),
-                      if (categoria != null)
-                        Text(etiquetasCategoria[categoria] ?? '', style: const TextStyle(color: Colors.black54, fontSize: 13)),
-                      const SizedBox(height: 10),
-                      EstadoChip(estado: m['estado']),
-                      const SizedBox(height: 14),
-                      if (auth.esAdministrativo)
-                        Wrap(
-                          spacing: 8,
-                          runSpacing: 8,
-                          children: [
-                            OutlinedButton.icon(
-                              onPressed: _subiendoFoto ? null : _cambiarFoto,
-                              icon: _subiendoFoto
-                                  ? const SizedBox(height: 14, width: 14, child: CircularProgressIndicator(strokeWidth: 2))
-                                  : const Icon(Icons.image_outlined, size: 16),
-                              label: const Text('Cambiar foto'),
-                            ),
-                            FilledButton.icon(
-                              onPressed: _editarFichaTecnica,
-                              icon: const Icon(Icons.edit, size: 16),
-                              label: const Text('Editar ficha técnica'),
-                            ),
-                          ],
-                        ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton.icon(onPressed: _volver, icon: const Icon(Icons.arrow_back, size: 18), label: const Text('Flota')),
           ),
-          const SizedBox(height: 24),
-          const Text('FICHA TÉCNICA', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 12,
-            runSpacing: 12,
-            children: [
-              _tile('Cliente actual', m['cliente']),
-              _tile('Marca', m['marca']),
-              _tile('Modelo', m['modelo']),
-              _tile('Año', m['anio']?.toString()),
-              if (mostrarCapacidad(categoria)) _tile('Capacidad de carga', m['capacidad_carga'] != null ? '${m['capacidad_carga']} kg' : null),
-              if (mostrarAltura(categoria)) _tile('Altura de trabajo', m['altura_trabajo'] != null ? '${m['altura_trabajo']} m' : null),
-              if (mostrarMastil(categoria)) _tile('N° de mástil', m['numero_mastil']),
-              if (mostrarCombustible(categoria))
-                _tile('Combustible', m['tipo_combustible'] != null ? etiquetasCombustible[m['tipo_combustible']] : null),
-              if (mostrarMotorChasis(categoria)) ...[
-                _tile('N° de motor', m['numero_motor']),
-                _tile('N° de chasis', m['numero_chasis']),
-              ],
-              _tile('N° de serie', m['numero_serie']),
+          _cabecera(m, auth),
+          const SizedBox(height: 16),
+          _cifrasClave(m),
+          const SizedBox(height: 20),
+          Pestanas(
+            items: [
+              (id: 'resumen', etiqueta: 'Resumen', cantidad: null),
+              (id: 'ficha', etiqueta: 'Ficha técnica', cantidad: null),
+              (id: 'historial', etiqueta: 'Historial', cantidad: _historial.length),
+              if (_rentabilidad != null) (id: 'costos', etiqueta: 'Costos', cantidad: null),
             ],
+            seleccionada: _pestana,
+            onSeleccionar: (id) => setState(() => _pestana = id),
           ),
-          if ((m['descripcion'] as String?)?.trim().isNotEmpty ?? false) ...[
-            const SizedBox(height: 16),
-            Text(m['descripcion'], style: const TextStyle(fontSize: 13, color: Colors.black87)),
-          ],
-          if (_rentabilidad != null) ...[
-            const SizedBox(height: 28),
-            const Text('COSTO DEL EQUIPO (ÚLTIMOS 12 MESES)',
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-            const SizedBox(height: 12),
-            _bloqueCosto(),
-          ],
-          const SizedBox(height: 28),
-          const Text('HISTORIAL DE ÓRDENES DE TRABAJO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-          const SizedBox(height: 12),
-          if (_historial.isEmpty)
-            const Text('Sin órdenes de trabajo registradas para este equipo', style: TextStyle(color: Colors.black54))
-          else
-            for (final ot in _historial)
-              Container(
-                margin: const EdgeInsets.only(bottom: 10),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: Colors.grey.shade200),
-                ),
-                child: IntrinsicHeight(
-                  child: Row(
-                    children: [
-                      Container(
-                        width: 4,
-                        decoration: BoxDecoration(
-                          color: GomaqColors.colorEstado(ot['estado']),
-                          borderRadius: const BorderRadius.horizontal(left: Radius.circular(10)),
-                        ),
+          const SizedBox(height: 20),
+          switch (_pestana) {
+            'ficha' => _pestanaFicha(m, auth),
+            'historial' => _pestanaHistorial(),
+            'costos' => _pestanaCostos(),
+            _ => _pestanaResumen(m, auth),
+          },
+        ],
+      ),
+    );
+  }
+
+  Widget _cabecera(Map<String, dynamic> m, AuthService auth) {
+    final categoria = m['categoria_equipo'] as String?;
+    final marcaModelo = [m['marca'], m['modelo']].where((x) => !_vacio(x)).join(' ');
+    final subtitulo = [
+      m['tipo'],
+      if (marcaModelo.isNotEmpty) marcaModelo,
+      if (categoria != null) etiquetasCategoria[categoria],
+    ].where((x) => !_vacio(x)).join(' · ');
+
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        boxShadow: [BoxShadow(color: Colors.black.withValues(alpha: 0.06), blurRadius: 16, offset: const Offset(0, 4))],
+      ),
+      child: Wrap(
+        spacing: 20,
+        runSpacing: 16,
+        crossAxisAlignment: WrapCrossAlignment.center,
+        children: [
+          Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ClipRRect(
+                borderRadius: BorderRadius.circular(12),
+                child: m['foto_url'] != null
+                    ? Image.network(m['foto_url'], width: 72, height: 72, fit: BoxFit.cover)
+                    : Container(
+                        width: 72,
+                        height: 72,
+                        color: GomaqColors.primario.withValues(alpha: 0.10),
+                        child: Icon(iconoCategoria(categoria), size: 34, color: GomaqColors.accion),
                       ),
-                      Expanded(
-                        child: ListTile(
-                          title: Text('OT #${ot['id']} · ${ot['motivo'] ?? 'Sin motivo especificado'}'),
-                          subtitle: Text(
-                            // dd/mm/aaaa como en el resto del sistema (antes mostraba 2026-09-09)
-                            '${ot['diagnostico'] ?? 'Sin diagnóstico'}\n${Formato.fecha(ot['fecha_creacion'])}'
-                            '${ot['fecha_cierre'] != null ? ' → ${Formato.fecha(ot['fecha_cierre'])}' : ''}',
-                          ),
-                          isThreeLine: true,
-                          trailing: EstadoChip(estado: ot['estado']),
-                        ),
-                      ),
-                    ],
-                  ),
+              ),
+              const SizedBox(width: 16),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 520),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Wrap(
+                      spacing: 12,
+                      runSpacing: 6,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      children: [
+                        Text('${m['codigo']}', style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700)),
+                        EstadoEquipo(estado: m['estado'], grande: true),
+                      ],
+                    ),
+                    const SizedBox(height: 4),
+                    Text(subtitulo, style: const TextStyle(color: Colors.black54, fontSize: 14)),
+                  ],
                 ),
               ),
+            ],
+          ),
+          if (auth.esAdministrativo)
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                OutlinedButton.icon(onPressed: _cambiarEstado, icon: const Icon(Icons.swap_horiz, size: 18), label: const Text('Cambiar estado')),
+                OutlinedButton.icon(onPressed: _crearOrden, icon: const Icon(Icons.assignment_add, size: 18), label: const Text('Crear orden de trabajo')),
+              ],
+            ),
         ],
+      ),
+    );
+  }
+
+  Widget _cifrasClave(Map<String, dynamic> m) {
+    final medida = _medidaPrincipal(m);
+    final combustible = m['tipo_combustible'] != null ? etiquetasCombustible[m['tipo_combustible']] : null;
+    final cliente = m['cliente'] as String?;
+    final mant = _textoMantencion(m['mantencion'] as Map<String, dynamic>?);
+
+    return Wrap(
+      spacing: 12,
+      runSpacing: 12,
+      children: [
+        _cifraClave(medida.etiqueta, medida.valor),
+        _cifraClave('Combustible', combustible ?? ''),
+        _cifraClave('Cliente actual', cliente ?? (m['estado'] == 'operativa' ? 'Disponible' : 'Sin cliente')),
+        _cifraClave('Próxima mantención', mant.texto, color: mant.color, textoVacio: 'Sin lecturas de horómetro'),
+      ],
+    );
+  }
+
+  /// Una cifra grande de la cabecera. Sin dato se dice "Sin dato" en gris en vez de ocultarla:
+  /// que falte la altura de un alzahombre es información, no algo que deba desaparecer.
+  Widget _cifraClave(String etiqueta, String valor, {Color? color, String textoVacio = 'Sin dato'}) {
+    final vacio = valor.isEmpty;
+    return Semantics(
+      container: true,
+      label: '$etiqueta: ${vacio ? textoVacio : valor}',
+      child: ExcludeSemantics(
+        child: Container(
+          width: 210,
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: Colors.grey.shade300),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(etiqueta, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+              const SizedBox(height: 4),
+              Text(
+                vacio ? textoVacio : valor,
+                style: TextStyle(
+                  fontSize: vacio ? 14 : 20,
+                  fontWeight: vacio ? FontWeight.w500 : FontWeight.w700,
+                  color: vacio ? Colors.black54 : (color ?? Colors.black87),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ---- pestañas ------------------------------------------------------------------------------
+
+  Widget _pestanaResumen(Map<String, dynamic> m, AuthService auth) {
+    final faltantes = _datosFaltantes(m);
+    final recientes = _historial.take(3).toList();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (faltantes.isNotEmpty) ...[
+          _avisoFaltantes(faltantes, auth),
+          const SizedBox(height: 20),
+        ],
+        const Text('Últimas órdenes de trabajo', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 10),
+        if (recientes.isEmpty)
+          const Text('Este equipo no tiene órdenes de trabajo registradas.', style: TextStyle(color: Colors.black54))
+        else ...[
+          for (final ot in recientes) _filaOt(ot),
+          if (_historial.length > recientes.length)
+            TextButton(onPressed: () => setState(() => _pestana = 'historial'), child: Text('Ver las ${_historial.length} órdenes')),
+        ],
+      ],
+    );
+  }
+
+  Widget _avisoFaltantes(List<String> faltantes, AuthService auth) {
+    final color = GomaqColors.textoEstado('en_mantencion');
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+      decoration: BoxDecoration(
+        color: GomaqColors.estadoAdvertencia.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.info_outline, color: color, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              '${faltantes.length == 1 ? 'Falta 1 dato' : 'Faltan ${faltantes.length} datos'} de la ficha: ${_lista(faltantes)}.',
+              style: TextStyle(color: color, fontWeight: FontWeight.w600),
+            ),
+          ),
+          if (auth.esAdministrativo) TextButton(onPressed: _editarFichaTecnica, child: const Text('Completar')),
+        ],
+      ),
+    );
+  }
+
+  Widget _pestanaFicha(Map<String, dynamic> m, AuthService auth) {
+    final categoria = m['categoria_equipo'] as String?;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (auth.esAdministrativo) ...[
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              FilledButton.icon(onPressed: _editarFichaTecnica, icon: const Icon(Icons.edit, size: 16), label: const Text('Editar ficha técnica')),
+              OutlinedButton.icon(
+                onPressed: _subiendoFoto ? null : _cambiarFoto,
+                icon: _subiendoFoto
+                    ? const SizedBox(height: 14, width: 14, child: CircularProgressIndicator(strokeWidth: 2))
+                    : const Icon(Icons.image_outlined, size: 16),
+                label: Text(m['foto_url'] == null ? 'Agregar foto' : 'Cambiar foto'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+        ],
+        Wrap(
+          spacing: 12,
+          runSpacing: 12,
+          children: [
+            _tile('Marca', m['marca']),
+            _tile('Modelo', m['modelo']),
+            _tile('Año', m['anio']?.toString()),
+            if (mostrarCapacidad(categoria)) _tile('Capacidad de carga', Formato.medida(m['capacidad_carga'], 'kg')),
+            if (mostrarAltura(categoria)) _tile('Altura de trabajo', Formato.medida(m['altura_trabajo'], 'm')),
+            if (mostrarCombustible(categoria))
+              _tile('Combustible', m['tipo_combustible'] != null ? etiquetasCombustible[m['tipo_combustible']] : null),
+            _tile('N° de serie', m['numero_serie']),
+            if (mostrarMotorChasis(categoria)) ...[
+              _tile('N° de motor', m['numero_motor']),
+              _tile('N° de chasis', m['numero_chasis']),
+            ],
+            if (mostrarMastil(categoria)) _tile('N° de mástil', m['numero_mastil']),
+            _tile('Ubicación', m['ubicacion']),
+          ],
+        ),
+        if (!_vacio(m['descripcion'])) ...[
+          const SizedBox(height: 16),
+          Text('${m['descripcion']}', style: const TextStyle(fontSize: 14, color: Colors.black87)),
+        ],
+      ],
+    );
+  }
+
+  Widget _tile(String etiqueta, String? valor) {
+    final vacio = _vacio(valor);
+    return Semantics(
+      container: true,
+      label: '$etiqueta: ${vacio ? 'sin dato' : valor}',
+      child: ExcludeSemantics(
+        child: Container(
+          width: 200,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: Colors.grey.shade300),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(etiqueta, style: const TextStyle(fontSize: 12, color: Colors.black54)),
+              const SizedBox(height: 4),
+              Text(
+                vacio ? 'Sin dato' : valor!,
+                style: TextStyle(fontSize: 14, fontWeight: vacio ? FontWeight.w400 : FontWeight.w600, color: vacio ? Colors.black54 : Colors.black87),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _pestanaHistorial() {
+    if (_historial.isEmpty) {
+      return const Text('Este equipo no tiene órdenes de trabajo registradas.', style: TextStyle(color: Colors.black54));
+    }
+    return Column(children: [for (final ot in _historial) _filaOt(ot)]);
+  }
+
+  Widget _pestanaCostos() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Costo del equipo, últimos 12 meses', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 12),
+        _bloqueCosto(),
+      ],
+    );
+  }
+
+  Widget _filaOt(Map<String, dynamic> ot) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: Colors.grey.shade200),
+      ),
+      child: IntrinsicHeight(
+        child: Row(
+          children: [
+            Container(
+              width: 4,
+              decoration: BoxDecoration(
+                color: GomaqColors.colorEstado(ot['estado']),
+                borderRadius: const BorderRadius.horizontal(left: Radius.circular(10)),
+              ),
+            ),
+            Expanded(
+              child: ListTile(
+                title: Text('OT #${ot['id']} · ${ot['motivo'] ?? 'Sin motivo especificado'}'),
+                subtitle: Text(
+                  // dd/mm/aaaa como en el resto del sistema (antes mostraba 2026-09-09)
+                  '${ot['diagnostico'] ?? 'Sin diagnóstico'}\n${Formato.fecha(ot['fecha_creacion'])}'
+                  '${ot['fecha_cierre'] != null ? ' → ${Formato.fecha(ot['fecha_cierre'])}' : ''}',
+                ),
+                isThreeLine: true,
+                trailing: EstadoChip(estado: ot['estado']),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

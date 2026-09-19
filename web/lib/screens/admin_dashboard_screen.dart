@@ -25,10 +25,12 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   // que es un refresh universal sin depender de pull-to-refresh (inusable con mouse)
   Key _refreshKey = UniqueKey();
 
-  ItemMenu get _itemActivo => itemsMenu.firstWhere(
-        (i) => i.ruta == widget.rutaActual,
-        orElse: () => itemsMenu.first,
-      );
+  // /flota/12 (el perfil de un equipo) sigue siendo la sección Flota. "/" no cuenta como prefijo
+  // de nada: todas las rutas empiezan con él y dejaría siempre activo el Dashboard.
+  bool _esRutaActiva(ItemMenu i) =>
+      i.ruta == widget.rutaActual || (i.ruta != '/' && widget.rutaActual.startsWith('${i.ruta}/'));
+
+  ItemMenu get _itemActivo => itemsMenu.firstWhere(_esRutaActiva, orElse: () => itemsMenu.first);
 
   @override
   void didUpdateWidget(AdminDashboardScreen oldWidget) {
@@ -188,7 +190,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   }
 
   Widget _itemMenu(ItemMenu item, {required bool cerrarAlNavegar}) {
-    final activo = item.ruta == widget.rutaActual;
+    final activo = _esRutaActiva(item);
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
       child: Material(

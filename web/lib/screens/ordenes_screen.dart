@@ -12,7 +12,10 @@ import '../widgets/estado_vacio.dart';
 class OrdenesScreen extends StatefulWidget {
   /// Abre el formulario de nueva OT al entrar (el botón del Dashboard llega con ?nueva=1).
   final bool abrirNueva;
-  const OrdenesScreen({super.key, this.abrirNueva = false});
+
+  /// Equipo con el que se abre el formulario de nueva orden (desde el perfil del equipo).
+  final int? maquinariaInicial;
+  const OrdenesScreen({super.key, this.abrirNueva = false, this.maquinariaInicial});
 
   @override
   State<OrdenesScreen> createState() => _OrdenesScreenState();
@@ -38,8 +41,11 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
       if (widget.abrirNueva) {
         // se quita ?nueva=1 de la URL: si quedara, refrescar o recargar la página volvería a
         // abrir el formulario y un clic distraído crearía una OT duplicada
+        // el equipo se lee antes de limpiar la URL: al cambiarla la pantalla se reconstruye con
+        // maquinariaInicial en null, y el formulario abriria sin el equipo elegido
+        final maquinaria = widget.maquinariaInicial;
         context.go('/ordenes');
-        _abrirDialogoCrear();
+        _abrirDialogoCrear(maquinariaInicial: maquinaria);
       }
     });
   }
@@ -79,7 +85,7 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
     }
   }
 
-  Future<void> _abrirDialogoCrear() async {
+  Future<void> _abrirDialogoCrear({int? maquinariaInicial}) async {
     List<dynamic> maquinarias = [];
     List<dynamic> clientes = [];
     try {
@@ -90,8 +96,9 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
       return;
     }
 
-    int? maquinariaId;
-    int? clienteId;
+    int? maquinariaId = maquinarias.any((m) => m['id'] == maquinariaInicial) ? maquinariaInicial : null;
+    // el cliente de la orden suele ser quien tiene el equipo hoy: se propone, y se puede cambiar
+    int? clienteId = maquinariaId == null ? null : maquinarias.firstWhere((m) => m['id'] == maquinariaId)['cliente_id'];
     final motivoCtrl = TextEditingController();
 
     if (!mounted) return;
@@ -107,6 +114,7 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   DropdownButtonFormField<int>(
+                    initialValue: maquinariaId,
                     decoration: const InputDecoration(labelText: 'Maquinaria'),
                     items: maquinarias
                         .map<DropdownMenuItem<int>>((m) => DropdownMenuItem(value: m['id'], child: Text('${m['codigo']} - ${m['tipo']}')))
@@ -114,6 +122,7 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
                     onChanged: (v) => setDialogState(() => maquinariaId = v),
                   ),
                   DropdownButtonFormField<int>(
+                    initialValue: clienteId,
                     decoration: const InputDecoration(labelText: 'Cliente'),
                     items: clientes
                         .map<DropdownMenuItem<int>>((c) => DropdownMenuItem(value: c['id'], child: Text(c['nombre'])))

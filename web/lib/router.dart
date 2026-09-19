@@ -8,6 +8,7 @@ import 'screens/cliente_portal_screen.dart';
 import 'screens/rol_no_soportado_screen.dart';
 import 'screens/dashboard_screen.dart';
 import 'screens/flota_screen.dart';
+import 'screens/maquinaria_perfil_screen.dart';
 import 'screens/guias_screen.dart';
 import 'screens/facturacion_screen.dart';
 import 'screens/asignacion_screen.dart';
@@ -19,6 +20,7 @@ import 'screens/insumos_screen.dart';
 import 'screens/horometro_screen.dart';
 import 'screens/rentabilidad_screen.dart';
 import 'screens/vehiculos_screen.dart';
+import 'widgets/estado_vacio.dart';
 
 /// Rutas del panel.
 ///
@@ -54,6 +56,11 @@ const List<ItemMenu> itemsMenu = [
 ];
 
 GoRouter construirRouter(AuthService auth) {
+  // Sin esto, context.push('/flota/12') abre el perfil pero la barra de direcciones sigue en
+  // /flota: F5 o compartir el enlace volverian a la lista. Con la opcion activa la URL sigue
+  // tambien a las navegaciones con push, que Flota usa para conservar su pestana y filtros.
+  GoRouter.optionURLReflectsImperativeAPIs = true;
+
   return GoRouter(
     // reevalua el redirect cuando cambia la sesion (login, logout, token vencido)
     refreshListenable: auth,
@@ -115,10 +122,30 @@ GoRouter construirRouter(AuthService auth) {
             },
           ),
           GoRoute(
+            // el perfil de un equipo tiene URL propia: F5 y los enlaces compartidos vuelven a el
+            // (antes se abria con Navigator.push y recargar la pagina lo perdia)
+            path: '/flota/:id',
+            builder: (context, estado) {
+              final id = int.tryParse(estado.pathParameters['id'] ?? '');
+              if (id == null) {
+                return const EstadoVacio(
+                  icono: Icons.search_off,
+                  titulo: 'No encontramos ese equipo',
+                  mensaje: 'El enlace no corresponde a un equipo. Vuelve a Flota y elígelo de la lista.',
+                );
+              }
+              return MaquinariaPerfilScreen(key: ValueKey(id), maquinariaId: id);
+            },
+          ),
+          GoRoute(
             path: '/ordenes',
             // sin key por la consulta: OrdenesScreen limpia ?nueva=1 apenas abre el formulario,
             // y una key nueva la volvería a montar y cerraría el formulario recién abierto
-            builder: (_, estado) => OrdenesScreen(abrirNueva: estado.uri.queryParameters['nueva'] == '1'),
+            builder: (_, estado) => OrdenesScreen(
+              abrirNueva: estado.uri.queryParameters['nueva'] == '1',
+              // llega desde "Crear orden de trabajo" en el perfil de un equipo
+              maquinariaInicial: int.tryParse(estado.uri.queryParameters['maquinaria'] ?? ''),
+            ),
           ),
           GoRoute(path: '/asignacion', builder: (_, _) => const AsignacionScreen()),
           GoRoute(path: '/asistencias', builder: (_, _) => const SolicitudesScreen()),
