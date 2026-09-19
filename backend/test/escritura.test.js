@@ -24,7 +24,7 @@ const HABILITADO = process.env.GOMAQ_TEST_ESCRITURA === '1' && Boolean(process.e
 let servidor;
 let base;
 let pool;
-const datos = { ordenes: [], insumos: [] };
+const datos = { ordenes: [], insumos: [], equipos: [] };
 const tokens = {};
 
 function requiereBase(t) {
@@ -58,6 +58,7 @@ before(async () => {
     app.use('/api/insumos', require('../src/routes/insumos'));
     app.use('/api/horometro', require('../src/routes/horometro').router);
     app.use('/api/facturacion', require('../src/routes/facturacion'));
+    app.use('/api/rentabilidad', require('../src/routes/rentabilidad'));
     await new Promise((resolve) => { servidor = app.listen(0, resolve); });
     base = `http://127.0.0.1:${servidor.address().port}`;
 
@@ -96,6 +97,12 @@ after(async () => {
         await pool.query('DELETE FROM movimientos_insumo WHERE orden_trabajo_id = ANY($1)', [ots]);
         await pool.query('DELETE FROM ordenes_trabajo WHERE id = ANY($1)', [ots]);
     }
+    if (datos.equipos.length) {
+        await pool.query('DELETE FROM facturas WHERE maquinaria_id = ANY($1)', [datos.equipos]);
+        await pool.query('DELETE FROM guias WHERE maquinaria_id = ANY($1)', [datos.equipos]);
+        await pool.query('DELETE FROM lecturas_horometro WHERE maquinaria_id = ANY($1)', [datos.equipos]);
+        await pool.query('DELETE FROM maquinarias WHERE id = ANY($1)', [datos.equipos]);
+    }
     await pool.query(
         `DELETE FROM notificaciones_pendientes
          WHERE created_at >= $1 AND payload->>'tipo' = 'mantencion_proxima'
@@ -116,13 +123,13 @@ after(async () => {
 });
 
 /** OT de prueba asignada al mecanico, creada directo en la base. */
-async function crearOt(estado = 'en_terreno', mecanicoId = datos.mecanicoId) {
+async function crearOt(estado = 'en_terreno', mecanicoId = datos.mecanicoId, maquinariaId = datos.maquinariaId) {
     // con el cliente del equipo, para que cerrar o asignar encolen el aviso como en la realidad
     const r = await pool.query(
         `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, mecanico_id, estado, motivo)
          SELECT id, cliente_id, $2, $3, 'OT de prueba automatizada' FROM maquinarias WHERE id = $1
          RETURNING id`,
-        [datos.maquinariaId, mecanicoId, estado]
+        [maquinariaId, mecanicoId, estado]
     );
     datos.ordenes.push(r.rows[0].id);
     return r.rows[0].id;
@@ -364,5 +371,209 @@ describe('ciclo de vida de la OT', () => {
         const cerrada = await pedir('GET', '/api/facturacion/pendientes', 'gerente');
         assert.ok(cerrada.body.reparaciones_pendientes_valorizar.some((o) => o.id === ot));
         assert.equal((await pedir('PATCH', `/api/ordenes-trabajo/${ot}/valorizacion`, 'gerente', { valorizacion: 0 })).status, 200);
+    });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Cliente de la orden y costos por equipo
+// ---------------------------------------------------------------------------------------------
+
+/** Equipo propio de la prueba: las reglas no deben depender de los equipos que ya existan. */
+async function crearEquipo(clienteId = null) {
+    const r = await pool.query(
+        `INSERT INTO maquinarias (codigo, tipo, cliente_id) VALUES ($1, 'Equipo de prueba', $2) RETURNING id, codigo`,
+        [`ZZ-${crypto.randomUUID().slice(0, 8)}`, clienteId]
+    );
+    datos.equipos.push(r.rows[0].id);
+    return r.rows[0];
+}
+
+async function algunCliente() {
+    const r = await pool.query('SELECT id FROM clientes ORDER BY id LIMIT 1');
+    return r.rows[0] ? r.rows[0].id : null;
+}
+
+describe('cliente de la orden de trabajo', () => {
+    test('una orden nueva toma el cliente que tiene el equipo, sin que se lo pidan', async (t) => {
+        if (!requiereBase(t)) return;
+        const clienteId = await algunCliente();
+        if (!clienteId) return t.skip('la base no tiene clientes');
+        const equipo = await crearEquipo(clienteId);
+        const r = await pedir('POST', '/api/ordenes-trabajo', 'administrativo', { maquinaria_id: equipo.id, motivo: 'prueba' });
+        assert.equal(r.status, 201);
+        datos.ordenes.push(r.body.id);
+        assert.equal(r.body.cliente_id, clienteId);
+    });
+
+    test('un equipo sin cliente da una orden sin cliente: es mantencion interna', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const r = await pedir('POST', '/api/ordenes-trabajo', 'administrativo', { maquinaria_id: equipo.id, motivo: 'prueba' });
+        assert.equal(r.status, 201);
+        datos.ordenes.push(r.body.id);
+        assert.equal(r.body.cliente_id, null);
+    });
+
+    test('un cliente explicito de la llamada se respeta', async (t) => {
+        if (!requiereBase(t)) return;
+        const clienteId = await algunCliente();
+        if (!clienteId) return t.skip('la base no tiene clientes');
+        const equipo = await crearEquipo(null);
+        const r = await pedir('POST', '/api/ordenes-trabajo', 'administrativo', { maquinaria_id: equipo.id, cliente_id: clienteId });
+        assert.equal(r.status, 201);
+        datos.ordenes.push(r.body.id);
+        assert.equal(r.body.cliente_id, clienteId);
+    });
+
+    test('la orden conserva su cliente aunque el equipo se devuelva despues', async (t) => {
+        if (!requiereBase(t)) return;
+        const clienteId = await algunCliente();
+        if (!clienteId) return t.skip('la base no tiene clientes');
+        const equipo = await crearEquipo(clienteId);
+        const r = await pedir('POST', '/api/ordenes-trabajo', 'administrativo', { maquinaria_id: equipo.id, motivo: 'prueba' });
+        datos.ordenes.push(r.body.id);
+        // la guia de recepcion deja el equipo sin cliente
+        await pool.query('UPDATE maquinarias SET cliente_id = NULL WHERE id = $1', [equipo.id]);
+        const guardada = await pool.query('SELECT cliente_id FROM ordenes_trabajo WHERE id = $1', [r.body.id]);
+        assert.equal(guardada.rows[0].cliente_id, clienteId);
+    });
+
+    test('un equipo que no existe se informa como tal, no como error del servidor', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedir('POST', '/api/ordenes-trabajo', 'administrativo', { maquinaria_id: 999999999, motivo: 'prueba' });
+        assert.equal(r.status, 404);
+    });
+
+    test('sin equipo se rechaza', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedir('POST', '/api/ordenes-trabajo', 'administrativo', { motivo: 'prueba' });
+        assert.equal(r.status, 400);
+    });
+});
+
+describe('costos por equipo', () => {
+    /** Un equipo con todo lo que entra a las cuentas: repuestos, factura, arriendo y horometro. */
+    async function equipoConMovimiento() {
+        const clienteId = await algunCliente();
+        const equipo = await crearEquipo(clienteId);
+        const ot = await crearOt('finalizada', datos.mecanicoId, equipo.id);
+
+        // gasto: 3 x $1.000, mas una linea anulada que NO debe contar
+        await pool.query(
+            `INSERT INTO movimientos_insumo (orden_trabajo_id, cantidad, tipo, precio_unitario, descripcion)
+             VALUES ($1, 3, 'salida', 1000, 'repuesto de prueba')`,
+            [ot]
+        );
+        await pool.query(
+            `INSERT INTO movimientos_insumo (orden_trabajo_id, cantidad, tipo, precio_unitario, descripcion, anulada_at)
+             VALUES ($1, 5, 'salida', 9999, 'linea anulada de prueba', now())`,
+            [ot]
+        );
+        // ingreso: una factura de arriendo directa al equipo
+        await pool.query(`INSERT INTO facturas (folio, archivo_url, monto, maquinaria_id) VALUES ('T-COSTOS', 'x', 10000, $1)`, [equipo.id]);
+
+        // arriendo del dia 40 al 35 hacia atras (6 dias con el despacho de la manana), y un
+        // despacho fallido que no debe sumar nada
+        const hace = (dias, hora) => {
+            const d = new Date();
+            d.setDate(d.getDate() - dias);
+            d.setHours(hora, 0, 0, 0);
+            return d;
+        };
+        const guia = (tipo, fecha, fallido = false) =>
+            pool.query(
+                `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, fallido, cliente_id) VALUES ($1, $2, 'x', $3, $4, $5)`,
+                [equipo.id, tipo, fecha, fallido, clienteId]
+            );
+        await guia('despacho', hace(40, 9));
+        await guia('recepcion', hace(35, 9));
+        await guia('despacho', hace(20, 9), true);
+        await guia('recepcion', hace(15, 9), true);
+
+        // horometro: 100 h hace 60 dias y 160 h hace 10 dias = 60 h de uso
+        await pool.query(
+            `INSERT INTO lecturas_horometro (maquinaria_id, valor, origen, fecha) VALUES ($1, 100, 'panel', $2), ($1, 160, 'panel', $3)`,
+            [equipo.id, hace(60, 10), hace(10, 10)]
+        );
+        return equipo;
+    }
+
+    const buscar = async (equipo, extra = '') => {
+        const r = await pedir('GET', `/api/rentabilidad?q=${equipo.codigo}${extra}`, 'administrativo');
+        assert.equal(r.status, 200);
+        return r.body;
+    };
+
+    test('calcula gasto, ingreso, margen y las medidas de la industria de un equipo', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await equipoConMovimiento();
+        const { items } = await buscar(equipo);
+        assert.equal(items.length, 1);
+        const e = items[0];
+        assert.equal(e.gasto, 3000, 'la linea anulada no cuenta como gasto');
+        assert.equal(e.ingreso, 10000);
+        assert.equal(e.margen, 7000);
+        assert.equal(e.resultado, 'con_ganancia');
+        assert.equal(e.gasto_sobre_ingreso, 30);
+        assert.equal(e.horas_uso, 60);
+        assert.equal(e.gasto_por_hora, 50);
+        assert.equal(e.dias_arrendado, 6, 'las guias fallidas no suman dias');
+    });
+
+    test('un equipo sin movimiento queda sin datos en vez de inventarlos', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const { items } = await buscar(equipo);
+        const e = items[0];
+        assert.equal(e.resultado, 'sin_movimiento');
+        assert.equal(e.gasto_sobre_ingreso, null);
+        assert.equal(e.gasto_por_hora, null);
+        assert.equal(e.horas_uso, null);
+        assert.equal(e.dias_arrendado, 0);
+    });
+
+    test('el filtro por resultado deja solo los equipos de esa clase', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await equipoConMovimiento();
+        const gana = await buscar(equipo, '&resultado=con_ganancia');
+        assert.equal(gana.items.length, 1);
+        const pierde = await buscar(equipo, '&resultado=a_perdida');
+        assert.equal(pierde.items.length, 0);
+    });
+
+    test('el resumen de arriba no cambia al buscar un equipo', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await equipoConMovimiento();
+        const todos = (await pedir('GET', '/api/rentabilidad?limit=1', 'administrativo')).body;
+        const uno = await buscar(equipo);
+        assert.deepEqual(uno.resumen, todos.resumen);
+        assert.ok(todos.resumen.gasto_total >= 3000);
+        assert.ok(todos.resumen.ingreso_total >= 10000);
+    });
+
+    test('ordenar por una columna deja los vacios al final, en los dos sentidos', async (t) => {
+        if (!requiereBase(t)) return;
+        await equipoConMovimiento();
+        for (const dir of ['asc', 'desc']) {
+            const r = await pedir('GET', `/api/rentabilidad?orden=hora&dir=${dir}`, 'administrativo');
+            const valores = r.body.items.map((e) => e.gasto_por_hora);
+            const primerVacio = valores.indexOf(null);
+            if (primerVacio !== -1) assert.ok(valores.slice(primerVacio).every((v) => v === null), `${dir}: un valor aparecio despues de un vacio`);
+            const conValor = valores.filter((v) => v !== null);
+            const esperado = [...conValor].sort((a, b) => (dir === 'asc' ? a - b : b - a));
+            assert.deepEqual(conValor, esperado);
+        }
+    });
+
+    test('un orden inventado no rompe la consulta', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedir('GET', `/api/rentabilidad?orden=${encodeURIComponent("x'; DROP TABLE maquinarias; --")}`, 'administrativo');
+        assert.equal(r.status, 200);
+    });
+
+    test('el mecanico no ve los costos', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedir('GET', '/api/rentabilidad', 'mecanico');
+        assert.equal(r.status, 403);
     });
 });

@@ -30,4 +30,4 @@ function calcularDiasTranscurridos(fechaDespacho, fechaFin) {
     return Math.max(0, dias);
 }
 
-module.exports = { HORA_CORTE, calcularInicioCobro, calcularDiasTranscurridos };
+module.exports = { HORA_CORTE, calcularInicioCobro, calcularDiasTranscurridos, diaCalendarioUtc };

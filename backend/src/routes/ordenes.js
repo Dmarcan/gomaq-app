@@ -24,13 +24,22 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
         return res.status(400).json({ error: 'maquinaria_id es requerido' });
     }
     try {
+        // El cliente de la orden es quien tiene el equipo AHORA, y la base ya lo sabe: no hay que
+        // preguntarlo. Se copia a la orden (no se deriva despues) porque maquinarias.cliente_id
+        // se pone en NULL al recibir el equipo de vuelta, y la orden tiene que seguir diciendo
+        // de quien era. Es lo mismo que hace la OT que abre el mecanico en terreno. Un
+        // cliente_id explicito se respeta, para quien llame a la API con otro criterio.
+        const equipo = await pool.query('SELECT cliente_id FROM maquinarias WHERE id = $1', [maquinaria_id]);
+        if (equipo.rows.length === 0) {
+            return res.status(404).json({ error: 'Maquinaria no encontrada' });
+        }
         // facturable nace en false y ya no lo decide nadie a mano: se deriva de las lineas
         // de repuesto de la OT (ver utils/facturableOt.js), como en el talonario de papel
         const result = await pool.query(
             `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, origen, motivo)
              VALUES ($1, $2, COALESCE($3::origen_orden, 'directo'), $4)
              RETURNING *`,
-            [maquinaria_id, cliente_id || null, origen || null, motivo || null]
+            [maquinaria_id, cliente_id || equipo.rows[0].cliente_id || null, origen || null, motivo || null]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
