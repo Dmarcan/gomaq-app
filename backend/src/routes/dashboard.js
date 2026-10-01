@@ -30,6 +30,11 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
         const notificacionesError = await pool.query(
             `SELECT COUNT(*) AS n FROM notificaciones_pendientes WHERE estado = 'error'`
         );
+        // pendientes que llevan mas de 10 min vencidos sin que nadie los tome: el worker esta caido
+        const notificacionesAtrasadas = await pool.query(
+            `SELECT COUNT(*) AS n FROM notificaciones_pendientes
+             WHERE estado = 'pendiente' AND intentos < 5 AND proximo_intento < now() - interval '10 minutes'`
+        );
         // la aprobacion de cuentas de clientes vive en una pestaña de Clientes: el atajo la hace visible
         const cuentasPorAprobar = await pool.query(
             `SELECT COUNT(*) AS n FROM solicitudes_cliente WHERE estado = 'pendiente'`
@@ -41,6 +46,7 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
                 pendientes_facturar: Number(pendientesFacturar.rows[0].n),
                 solicitudes_pendientes: Number(solicitudesPendientes.rows[0].n),
                 notificaciones_error: Number(notificacionesError.rows[0].n),
+                notificaciones_atrasadas: Number(notificacionesAtrasadas.rows[0].n),
                 cuentas_por_aprobar: Number(cuentasPorAprobar.rows[0].n),
             },
         });

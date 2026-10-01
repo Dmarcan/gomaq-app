@@ -153,5 +153,9 @@ app.get('*', (req, res, next) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`GOMAQ backend escuchando en puerto ${PORT}`);
-    iniciarWorker();
+    // En produccion el worker corre como servicio aparte (scripts/worker.js) y la API lo apaga con
+    // NOTIFICACIONES_EN_PROCESO=0. Por defecto sigue encendido aca: asi el desarrollo local y el CI
+    // no cambian. Si el flag quedara mal puesto, el peor caso son dos emisores, y SKIP LOCKED
+    // impide que un aviso salga dos veces.
+    if (process.env.NOTIFICACIONES_EN_PROCESO !== '0') iniciarWorker();
 });

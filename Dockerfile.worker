@@ -1,0 +1,17 @@
+# Imagen del worker de notificaciones (servicio `gomaq-worker` en Railway): solo Node, sin Flutter
+# ni panel. Es la misma base que la etapa de backend del Dockerfile principal.
+#
+# No aplica migraciones: las corre la API (gomaq-app) al arrancar. Asi dos servicios no migran a la
+# vez; el worker solo lee y escribe notificaciones_pendientes.
+FROM node:22-bookworm-slim
+
+ENV NODE_ENV=production
+WORKDIR /app
+
+COPY backend/package.json backend/package-lock.json ./
+RUN npm ci --omit=dev
+
+COPY backend/ ./
+
+# `node` directo (sin npm ni sh -c) para que reciba SIGTERM y cierre el lote en curso antes de salir
+CMD ["node", "scripts/worker.js"]
