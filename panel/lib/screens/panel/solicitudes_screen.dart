@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import '../services/api_client.dart';
-import '../widgets/estado_chip.dart';
-import '../widgets/estado_vacio.dart';
+import '../../services/api_client.dart';
+import '../../widgets/estado_chip.dart';
+import '../../widgets/estado_vacio.dart';
 
 class SolicitudesScreen extends StatefulWidget {
   const SolicitudesScreen({super.key});

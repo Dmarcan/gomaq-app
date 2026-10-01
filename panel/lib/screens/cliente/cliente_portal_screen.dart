@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../services/auth_service.dart';
-import '../theme/gomaq_theme.dart';
-import '../widgets/confirmar_cerrar_sesion.dart';
+import '../../services/auth_service.dart';
+import '../../theme/gomaq_theme.dart';
+import '../../widgets/confirmar_cerrar_sesion.dart';
 import 'cliente_mis_equipos_screen.dart';
 import 'cliente_seguimiento_screen.dart';
 import 'cliente_historial_screen.dart';

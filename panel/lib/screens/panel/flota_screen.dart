@@ -3,16 +3,16 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import '../services/api_client.dart';
-import '../services/auth_service.dart';
-import '../theme/gomaq_theme.dart';
-import '../utils/formato.dart';
-import '../utils/numeros.dart';
-import '../widgets/dialogos.dart';
-import '../widgets/estado_equipo.dart';
-import '../widgets/estado_vacio.dart';
-import '../widgets/ficha_tecnica_campos.dart';
-import '../widgets/pestanas.dart';
+import '../../services/api_client.dart';
+import '../../services/auth_service.dart';
+import '../../theme/gomaq_theme.dart';
+import '../../utils/formato.dart';
+import '../../utils/numeros.dart';
+import '../../widgets/dialogos.dart';
+import '../../widgets/estado_equipo.dart';
+import '../../widgets/estado_vacio.dart';
+import '../../widgets/ficha_tecnica_campos.dart';
+import '../../widgets/pestanas.dart';
 
 /// Flota: los equipos de GOMAQ en una tabla, con una pestaña por categoría.
 ///

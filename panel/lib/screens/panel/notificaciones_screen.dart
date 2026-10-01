@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import '../services/api_client.dart';
-import '../theme/gomaq_theme.dart';
+import '../../services/api_client.dart';
+import '../../theme/gomaq_theme.dart';
 
 class NotificacionesScreen extends StatefulWidget {
   const NotificacionesScreen({super.key});

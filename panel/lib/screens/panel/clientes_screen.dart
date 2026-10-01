@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../services/api_client.dart';
-import '../services/auth_service.dart';
+import '../../services/api_client.dart';
+import '../../services/auth_service.dart';
 import 'usuarios_screen.dart';
-import '../widgets/estado_vacio.dart';
-import '../widgets/dialogos.dart';
-import '../utils/rut.dart';
+import '../../widgets/estado_vacio.dart';
+import '../../widgets/dialogos.dart';
+import '../../utils/rut.dart';
 
 class ClientesScreen extends StatefulWidget {
   const ClientesScreen({super.key});

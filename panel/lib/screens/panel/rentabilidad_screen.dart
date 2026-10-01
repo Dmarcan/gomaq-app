@@ -1,11 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import '../services/api_client.dart';
-import '../theme/gomaq_theme.dart';
-import '../utils/formato.dart';
-import '../widgets/estado_vacio.dart';
-import '../widgets/pestanas.dart';
+import '../../services/api_client.dart';
+import '../../theme/gomaq_theme.dart';
+import '../../utils/formato.dart';
+import '../../widgets/estado_vacio.dart';
+import '../../widgets/pestanas.dart';
 
 /// Costo real por equipo (entrevista el jefe de taller, punto 1).
 ///

@@ -9,8 +9,8 @@ Sistema de Gestión y Comunicación Centralizado para una empresa de arriendo de
 Un sistema con 3 aplicaciones que comparten un mismo backend:
 
 - **Backend** (`backend/`) — API REST en Node.js + Express + PostgreSQL
-- **App del Mecánico** (`mobile/`) — Flutter, Android, **offline-first** (SQLite local + cola de sincronización)
-- **Panel Web** (`web/`) — Flutter Web, con vistas distintas por rol: Administrativo/Gerente (panel de gestión) y Cliente (portal de seguimiento)
+- **App del Mecánico** (`terreno/`) — Flutter, Android, **offline-first** (SQLite local + cola de sincronización)
+- **Panel** (`panel/`) — Flutter, web y Android, con vistas distintas por rol: Administrativo/Gerente (panel de gestión) y Cliente (portal de seguimiento)
 
 ## Infraestructura actual: Railway
 
@@ -75,8 +75,9 @@ gomaq/
 ├── db/
 │   ├── schema.sql             # esquema base
 │   └── migrations/            # 001..00N, se aplican a mano en orden (no hay migration runner)
-├── mobile/                    # Flutter, app del mecanico (offline-first)
-└── web/                       # Flutter Web, panel Admin/Gerente + portal Cliente
+├── comun/                     # paquete Dart compartido: cliente HTTP (ClienteApi) y Formato
+├── panel/                     # Flutter (web y Android), panel Admin/Gerente + portal Cliente
+└── terreno/                   # Flutter, app del mecanico (offline-first), solo Android
 ```
 
 ## Roles y permisos (Tabla 6.1 del informe, implementada en `requireRole`)

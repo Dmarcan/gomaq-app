@@ -2,16 +2,16 @@ import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import '../services/api_client.dart';
-import '../services/auth_service.dart';
-import '../theme/gomaq_theme.dart';
-import '../widgets/estado_chip.dart';
-import '../widgets/estado_equipo.dart';
-import '../widgets/ficha_tecnica_campos.dart';
-import '../widgets/pestanas.dart';
-import '../utils/formato.dart';
-import '../utils/numeros.dart';
-import '../widgets/dialogos.dart';
+import '../../services/api_client.dart';
+import '../../services/auth_service.dart';
+import '../../theme/gomaq_theme.dart';
+import '../../widgets/estado_chip.dart';
+import '../../widgets/estado_equipo.dart';
+import '../../widgets/ficha_tecnica_campos.dart';
+import '../../widgets/pestanas.dart';
+import '../../utils/formato.dart';
+import '../../utils/numeros.dart';
+import '../../widgets/dialogos.dart';
 
 /// Perfil de un equipo: quién es, en qué estado está y qué hacer con él.
 ///

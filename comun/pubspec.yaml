@@ -1,5 +1,5 @@
 name: gomaq_comun
-description: Codigo compartido entre el panel (web/) y la app del mecanico (mobile/).
+description: Codigo compartido entre el panel (panel/) y la app del mecanico (terreno/).
 publish_to: none
 resolution: workspace
 

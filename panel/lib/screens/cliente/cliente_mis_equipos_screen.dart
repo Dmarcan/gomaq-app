@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
-import '../services/api_client.dart';
-import '../services/auth_service.dart';
-import '../theme/gomaq_theme.dart';
-import '../widgets/dialogos.dart';
-import '../widgets/estado_chip.dart';
-import '../widgets/estado_vacio.dart';
+import '../../services/api_client.dart';
+import '../../services/auth_service.dart';
+import '../../theme/gomaq_theme.dart';
+import '../../widgets/dialogos.dart';
+import '../../widgets/estado_chip.dart';
+import '../../widgets/estado_vacio.dart';
 
 class ClienteMisEquiposScreen extends StatefulWidget {
   const ClienteMisEquiposScreen({super.key});

@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
-import '../router.dart';
-import '../services/auth_service.dart';
-import '../theme/gomaq_theme.dart';
-import '../widgets/confirmar_cerrar_sesion.dart';
+import '../../router.dart';
+import '../../services/auth_service.dart';
+import '../../theme/gomaq_theme.dart';
+import '../../widgets/confirmar_cerrar_sesion.dart';
 
 /// Marco del panel: barra lateral fija y el contenido de la seccion activa.
 ///
