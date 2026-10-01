@@ -1,15 +1,11 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:gomaq_comun/gomaq_comun.dart';
 
-class ApiException implements Exception {
-  final int statusCode;
-  final String message;
-  ApiException(this.statusCode, this.message);
-  @override
-  String toString() => 'ApiException($statusCode): $message';
-}
+export 'package:gomaq_comun/gomaq_comun.dart' show ApiException;
 
+/// Acceso al backend del panel: el cliente HTTP vive en `comun/` (ClienteApi) y aqui solo
+/// queda lo propio del panel, que es donde se guarda la sesion y como se cierra al vencer.
 class ApiClient {
   ApiClient._();
   static final ApiClient instance = ApiClient._();
@@ -25,13 +21,24 @@ class ApiClient {
   // la IP LAN, el tunel de Cloudflare, o un dominio propio mas adelante.
   // Solo hace falta pasar --dart-define=GOMAQ_API_URL=http://192.168.1.132:3000
   // para `flutter run` en desarrollo, donde la app NO corre en el mismo origen que el backend.
-  static const String baseUrl = String.fromEnvironment('GOMAQ_API_URL', defaultValue: '');
-
-  static const _timeout = Duration(seconds: 15);
+  //
+  // En el APK del panel no hay "mismo origen": una ruta relativa no tiene host y la llamada
+  // falla, asi que fuera de la web la URL por defecto es la de produccion.
+  static const String baseUrl = String.fromEnvironment(
+    'GOMAQ_API_URL',
+    defaultValue: kIsWeb ? '' : 'https://gomaq-app-production.up.railway.app',
+  );
 
   final _storage = const FlutterSecureStorage();
 
-  Future<String?> get _token => _storage.read(key: 'jwt_token');
+  late final ClienteApi _api = ClienteApi(
+    baseUrl: baseUrl,
+    tokenProvider: leerToken,
+    timeout: const Duration(seconds: 15),
+    timeoutSubida: const Duration(seconds: 30),
+    // Se lee en cada 401 porque AuthService registra el callback despues de crearse.
+    alNoAutorizado: () => onSesionExpirada?.call(),
+  );
 
   Future<void> guardarToken(String token) => _storage.write(key: 'jwt_token', value: token);
   Future<void> borrarToken() async {
@@ -45,47 +52,9 @@ class ApiClient {
   Future<void> guardarUsuario(String usuarioJson) => _storage.write(key: 'usuario_json', value: usuarioJson);
   Future<String?> leerUsuario() => _storage.read(key: 'usuario_json');
 
-  Future<Map<String, String>> _headers({bool json = true}) async {
-    final token = await _token;
-    return {
-      if (json) 'Content-Type': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    };
-  }
-
-  dynamic _procesar(http.Response resp) {
-    if (resp.statusCode >= 200 && resp.statusCode < 300) {
-      if (resp.body.isEmpty) return null;
-      return jsonDecode(resp.body);
-    }
-    String mensaje = resp.body;
-    try {
-      mensaje = jsonDecode(resp.body)['error'] ?? resp.body;
-    } catch (_) {}
-    if (resp.statusCode == 401) {
-      onSesionExpirada?.call();
-    }
-    throw ApiException(resp.statusCode, mensaje);
-  }
-
-  Future<dynamic> get(String path) async {
-    final resp = await http.get(Uri.parse('$baseUrl$path'), headers: await _headers()).timeout(_timeout);
-    return _procesar(resp);
-  }
-
-  Future<dynamic> post(String path, Map<String, dynamic> body) async {
-    final resp = await http
-        .post(Uri.parse('$baseUrl$path'), headers: await _headers(), body: jsonEncode(body))
-        .timeout(_timeout);
-    return _procesar(resp);
-  }
-
-  Future<dynamic> patch(String path, Map<String, dynamic> body) async {
-    final resp = await http
-        .patch(Uri.parse('$baseUrl$path'), headers: await _headers(), body: jsonEncode(body))
-        .timeout(_timeout);
-    return _procesar(resp);
-  }
+  Future<dynamic> get(String path) => _api.get(path);
+  Future<dynamic> post(String path, Map<String, dynamic> body) => _api.post(path, body);
+  Future<dynamic> patch(String path, Map<String, dynamic> body) => _api.patch(path, body);
 
   /// Subida de archivo (PDF de guia/factura, foto de equipo) via multipart, usando los
   /// campos de texto en [fields]. El archivo es opcional (ej. crear un equipo sin foto todavia).
@@ -94,37 +63,14 @@ class ApiClient {
     List<int>? bytes,
     String? filename,
     Map<String, String> fields = const {},
-  }) async {
-    return _enviarMultipart('POST', path, bytes: bytes, filename: filename, fields: fields);
-  }
+  }) =>
+      _api.postMultipart(path, bytes: bytes, filename: filename, fields: fields);
 
   Future<dynamic> patchMultipart(
     String path, {
     List<int>? bytes,
     String? filename,
     Map<String, String> fields = const {},
-  }) async {
-    return _enviarMultipart('PATCH', path, bytes: bytes, filename: filename, fields: fields);
-  }
-
-  Future<dynamic> _enviarMultipart(
-    String metodo,
-    String path, {
-    List<int>? bytes,
-    String? filename,
-    Map<String, String> fields = const {},
-  }) async {
-    final uri = Uri.parse('$baseUrl$path');
-    final request = http.MultipartRequest(metodo, uri);
-    final headers = await _headers(json: false);
-    request.headers.addAll(headers);
-    request.fields.addAll(fields);
-    if (bytes != null && filename != null) {
-      request.files.add(http.MultipartFile.fromBytes('archivo', bytes, filename: filename));
-    }
-
-    final streamed = await request.send().timeout(const Duration(seconds: 30));
-    final resp = await http.Response.fromStream(streamed);
-    return _procesar(resp);
-  }
+  }) =>
+      _api.patchMultipart(path, bytes: bytes, filename: filename, fields: fields);
 }

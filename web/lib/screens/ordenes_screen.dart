@@ -473,14 +473,27 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
 
   /// Una fila de dato: la etiqueta apagada a la izquierda y el valor a su lado.
   Widget _fila(String etiqueta, Widget valor) {
+    const estiloEtiqueta = TextStyle(fontSize: 13, color: Colors.black54);
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 5),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          SizedBox(width: 170, child: Text(etiqueta, style: const TextStyle(fontSize: 13, color: Colors.black54))),
-          Expanded(child: valor),
-        ],
+      // Con 170 px para la etiqueta, en un teléfono el valor quedaba en ~100 px: bajo 420 px
+      // la etiqueta pasa encima del valor.
+      child: LayoutBuilder(
+        builder: (context, c) {
+          if (c.maxWidth < 420) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [Text(etiqueta, style: estiloEtiqueta), valor],
+            );
+          }
+          return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              SizedBox(width: 170, child: Text(etiqueta, style: estiloEtiqueta)),
+              Expanded(child: valor),
+            ],
+          );
+        },
       ),
     );
   }

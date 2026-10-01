@@ -86,7 +86,7 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
       body: Center(
         child: Card(
           child: Padding(
-            padding: const EdgeInsets.all(32),
+            padding: EdgeInsets.all(MediaQuery.sizeOf(context).width < 480 ? 20 : 32),
             child: SizedBox(
               width: 420,
               child: SingleChildScrollView(
@@ -118,6 +118,22 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
     );
   }
 
+  /// Dos campos lado a lado cuando hay espacio; uno bajo el otro en un teléfono, donde cada uno
+  /// quedaba de unos 140 px y las etiquetas se cortaban ("Repetir contra...").
+  Widget _enFila(Widget a, Widget b) {
+    return LayoutBuilder(
+      builder: (context, c) {
+        if (c.maxWidth < 380) {
+          return Column(children: [a, const SizedBox(height: 12), b]);
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [Expanded(child: a), const SizedBox(width: 12), Expanded(child: b)],
+        );
+      },
+    );
+  }
+
   Widget _construirFormulario() {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -135,24 +151,17 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
         const SizedBox(height: 12),
         TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: 'Correo electrónico *'), keyboardType: TextInputType.emailAddress),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _passwordCtrl,
-                decoration: const InputDecoration(labelText: 'Contraseña *', helperText: 'Mínimo 8 caracteres'),
-                obscureText: true,
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: _confirmarCtrl,
-                decoration: const InputDecoration(labelText: 'Repetir contraseña *'),
-                obscureText: true,
-              ),
-            ),
-          ],
+        _enFila(
+          TextField(
+            controller: _passwordCtrl,
+            decoration: const InputDecoration(labelText: 'Contraseña *', helperText: 'Mínimo 8 caracteres'),
+            obscureText: true,
+          ),
+          TextField(
+            controller: _confirmarCtrl,
+            decoration: const InputDecoration(labelText: 'Repetir contraseña *'),
+            obscureText: true,
+          ),
         ),
         const SizedBox(height: 20),
         const Text('DATOS DE LA EMPRESA QUE REPRESENTAS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
@@ -163,22 +172,15 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
         const SizedBox(height: 12),
         TextField(controller: _whatsappCtrl, decoration: const InputDecoration(labelText: 'Teléfono de contacto (WhatsApp)')),
         const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(
-              child: TextField(
-                controller: _horarioTrabajoCtrl,
-                decoration: const InputDecoration(labelText: 'Horario de trabajo', hintText: 'ej. 08:00-18:00'),
-              ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: _horarioColacionCtrl,
-                decoration: const InputDecoration(labelText: 'Horario de colación', hintText: 'ej. 13:00-14:00'),
-              ),
-            ),
-          ],
+        _enFila(
+          TextField(
+            controller: _horarioTrabajoCtrl,
+            decoration: const InputDecoration(labelText: 'Horario de trabajo', hintText: 'ej. 08:00-18:00'),
+          ),
+          TextField(
+            controller: _horarioColacionCtrl,
+            decoration: const InputDecoration(labelText: 'Horario de colación', hintText: 'ej. 13:00-14:00'),
+          ),
         ),
         const SizedBox(height: 12),
         TextField(controller: _direccionCtrl, decoration: const InputDecoration(labelText: 'Dirección'), maxLines: 2),

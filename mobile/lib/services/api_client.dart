@@ -1,15 +1,13 @@
-import 'dart:convert';
-import 'package:http/http.dart' as http;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:gomaq_comun/gomaq_comun.dart';
 
-class ApiException implements Exception {
-  final int statusCode;
-  final String message;
-  ApiException(this.statusCode, this.message);
-  @override
-  String toString() => 'ApiException($statusCode): $message';
-}
+export 'package:gomaq_comun/gomaq_comun.dart' show ApiException;
 
+/// Acceso al backend de la app del mecanico: el cliente HTTP vive en `comun/` (ClienteApi) y
+/// aqui solo queda lo propio de la app, que es donde se guarda el token.
+///
+/// Los errores de red (`SocketException`, `TimeoutException`, `ClientException`) salen sin
+/// envolver: `SyncService` los clasifica por tipo para decidir si reintenta la tarea.
 class ApiClient {
   ApiClient._();
   static final ApiClient instance = ApiClient._();
@@ -24,62 +22,23 @@ class ApiClient {
 
   final _storage = const FlutterSecureStorage();
 
-  Future<String?> get _token => _storage.read(key: 'jwt_token');
+  // Los 12 s se mantienen explicitos (tambien en las subidas, como antes): en terreno con mala
+  // senal conviene fallar rapido y dejar la tarea en la cola. No hay aviso de sesion vencida.
+  late final ClienteApi _api = ClienteApi(
+    baseUrl: baseUrl,
+    tokenProvider: leerToken,
+    timeout: const Duration(seconds: 12),
+    timeoutSubida: const Duration(seconds: 12),
+  );
 
   Future<void> guardarToken(String token) => _storage.write(key: 'jwt_token', value: token);
   Future<void> borrarToken() => _storage.delete(key: 'jwt_token');
   Future<String?> leerToken() => _storage.read(key: 'jwt_token');
 
-  Future<Map<String, String>> _headers({bool json = true}) async {
-    final token = await _token;
-    return {
-      if (json) 'Content-Type': 'application/json',
-      if (token != null) 'Authorization': 'Bearer $token',
-    };
-  }
-
-  dynamic _procesar(http.Response resp) {
-    if (resp.statusCode >= 200 && resp.statusCode < 300) {
-      if (resp.body.isEmpty) return null;
-      return jsonDecode(resp.body);
-    }
-    String mensaje = resp.body;
-    try {
-      mensaje = jsonDecode(resp.body)['error'] ?? resp.body;
-    } catch (_) {}
-    throw ApiException(resp.statusCode, mensaje);
-  }
-
-  static const _timeout = Duration(seconds: 12);
-
-  Future<dynamic> get(String path) async {
-    final resp = await http
-        .get(Uri.parse('$baseUrl$path'), headers: await _headers())
-        .timeout(_timeout);
-    return _procesar(resp);
-  }
-
-  Future<dynamic> post(String path, Map<String, dynamic> body) async {
-    final resp = await http
-        .post(
-          Uri.parse('$baseUrl$path'),
-          headers: await _headers(),
-          body: jsonEncode(body),
-        )
-        .timeout(_timeout);
-    return _procesar(resp);
-  }
-
-  Future<dynamic> patch(String path, Map<String, dynamic> body) async {
-    final resp = await http
-        .patch(
-          Uri.parse('$baseUrl$path'),
-          headers: await _headers(),
-          body: jsonEncode(body),
-        )
-        .timeout(_timeout);
-    return _procesar(resp);
-  }
+  Future<dynamic> get(String path) => _api.get(path);
+  Future<dynamic> post(String path, Map<String, dynamic> body) => _api.post(path, body);
+  Future<dynamic> patch(String path, Map<String, dynamic> body) => _api.patch(path, body);
+  Future<dynamic> put(String path, Map<String, dynamic> body) => _api.put(path, body);
 
   /// Subida multipart de un archivo. La evidencia de las OT usa URL firmada de Supabase, pero
   /// los documentos del vehiculo van por multipart al backend, que es quien decide el bucket.
@@ -88,23 +47,6 @@ class ApiClient {
     required List<int> bytes,
     required String filename,
     Map<String, String> fields = const {},
-  }) async {
-    final solicitud = http.MultipartRequest('POST', Uri.parse('$baseUrl$path'))
-      ..headers.addAll(await _headers(json: false))
-      ..fields.addAll(fields)
-      ..files.add(http.MultipartFile.fromBytes('archivo', bytes, filename: filename));
-    final streamed = await solicitud.send().timeout(_timeout);
-    return _procesar(await http.Response.fromStream(streamed));
-  }
-
-  Future<dynamic> put(String path, Map<String, dynamic> body) async {
-    final resp = await http
-        .put(
-          Uri.parse('$baseUrl$path'),
-          headers: await _headers(),
-          body: jsonEncode(body),
-        )
-        .timeout(_timeout);
-    return _procesar(resp);
-  }
+  }) =>
+      _api.postMultipart(path, bytes: bytes, filename: filename, fields: fields);
 }

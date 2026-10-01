@@ -188,17 +188,32 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
         children: [
           const Text('¿Qué necesitas?', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
-          SizedBox(
-            width: double.infinity,
-            child: SegmentedButton<String>(
-              showSelectedIcon: false,
-              segments: const [
-                ButtonSegment(value: 'falla', label: Text('Reportar una falla'), icon: Icon(Icons.warning_amber_rounded, size: 18)),
-                ButtonSegment(value: 'mantencion_preventiva', label: Text('Mantención preventiva'), icon: Icon(Icons.build_outlined, size: 18)),
-              ],
-              selected: {_tipo},
-              onSelectionChanged: (s) => redibujar(() => _tipo = s.first),
-            ),
+          // En un teléfono el cuadro mide ~300 px y dos opciones con icono y texto largo no caben
+          // ("Mantención preventiva" se cortaba): con poco ancho se acortan los textos.
+          LayoutBuilder(
+            builder: (context, c) {
+              final corto = c.maxWidth < 380;
+              return SizedBox(
+                width: double.infinity,
+                child: SegmentedButton<String>(
+                  showSelectedIcon: false,
+                  segments: [
+                    ButtonSegment(
+                      value: 'falla',
+                      label: Text(corto ? 'Falla' : 'Reportar una falla'),
+                      icon: const Icon(Icons.warning_amber_rounded, size: 18),
+                    ),
+                    ButtonSegment(
+                      value: 'mantencion_preventiva',
+                      label: Text(corto ? 'Mantención' : 'Mantención preventiva'),
+                      icon: const Icon(Icons.build_outlined, size: 18),
+                    ),
+                  ],
+                  selected: {_tipo},
+                  onSelectionChanged: (s) => redibujar(() => _tipo = s.first),
+                ),
+              );
+            },
           ),
           separadorCampos,
           TextFormField(

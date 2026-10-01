@@ -402,26 +402,44 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final ejecutivos = (_ventasPorEjecutivo?['ejecutivos'] as List?) ?? const [];
     final totalVentas = (_ventasPorEjecutivo?['total_general'] as num?) ?? 0;
 
+    // En un teléfono (<600 px) los bloques que iban lado a lado se apilan: la leyenda de la dona
+    // quedaba de ~40 px (el texto bajaba una letra por línea) y los 4 atajos se cortaban.
+    final compacto = MediaQuery.sizeOf(context).width < 600;
+
+    final atajosTarjetas = [
+      // el número cuenta órdenes de reparación sin monto, no equipos
+      _tarjetaAtajo('${atajos['pendientes_facturar']}', 'Reparaciones por valorizar', () => widget.onNavegar('/facturacion')),
+      _tarjetaAtajo('${atajos['solicitudes_pendientes']}', 'Asistencias por atender', () => widget.onNavegar('/asistencias')),
+      // la aprobación de cuentas vive en una pestaña de Clientes: sin este atajo no se veía
+      _tarjetaAtajo('${atajos['cuentas_por_aprobar'] ?? 0}', 'Cuentas por aprobar', () => widget.onNavegar('/clientes')),
+      _tarjetaAtajo('${atajos['notificaciones_error']}', 'Avisos con error', () => widget.onNavegar('/notificaciones')),
+    ];
+
+    final panelDona = _panelGrafico(titulo: 'ESTADO OPERATIVO', child: _donaEstadoFlota(flota));
+    final panelLinea = _panelGrafico(titulo: 'ÓRDENES DE TRABAJO POR MES', child: _lineaOtsPorMes());
+
+    final botonNuevaOt = FilledButton.icon(
+      onPressed: () => widget.onNavegar('/ordenes', filtro: {'nueva': '1'}),
+      icon: const Icon(Icons.add),
+      label: const Text('Nueva orden de trabajo'),
+    );
+    final resumen = Text('Vista general de los ${flota['total']} equipos de GOMAQ',
+        style: const TextStyle(color: Colors.black54));
+
     return RefreshIndicator(
       onRefresh: _cargar,
       child: ListView(
-        padding: const EdgeInsets.all(24),
+        padding: EdgeInsets.all(compacto ? 16 : 24),
         children: [
           // La acción principal va arriba: antes "Crear Orden de Trabajo" quedaba al final de la
           // página, fuera de la vista, y además solo llevaba a la lista sin abrir el formulario.
-          Row(
-            children: [
-              Expanded(
-                child: Text('Vista general de los ${flota['total']} equipos de GOMAQ',
-                    style: const TextStyle(color: Colors.black54)),
-              ),
-              FilledButton.icon(
-                onPressed: () => widget.onNavegar('/ordenes', filtro: {'nueva': '1'}),
-                icon: const Icon(Icons.add),
-                label: const Text('Nueva orden de trabajo'),
-              ),
-            ],
-          ),
+          if (compacto)
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [resumen, const SizedBox(height: 12), botonNuevaOt],
+            )
+          else
+            Row(children: [Expanded(child: resumen), botonNuevaOt]),
           const SizedBox(height: 20),
 
           _tituloSeccion('DISPONIBILIDAD COMERCIAL'),
@@ -446,41 +464,38 @@ class _DashboardScreenState extends State<DashboardScreen> {
           const SizedBox(height: 24),
 
           // estado operativo (dona con leyenda navegable) + OTs por mes, lado a lado
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: _panelGrafico(
-                  titulo: 'ESTADO OPERATIVO',
-                  child: _donaEstadoFlota(flota),
-                ),
-              ),
-              const SizedBox(width: 16),
-              Expanded(
-                child: _panelGrafico(
-                  titulo: 'ÓRDENES DE TRABAJO POR MES',
-                  child: _lineaOtsPorMes(),
-                ),
-              ),
-            ],
-          ),
+          if (compacto)
+            Column(children: [panelDona, const SizedBox(height: 16), panelLinea])
+          else
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(child: panelDona),
+                const SizedBox(width: 16),
+                Expanded(child: panelLinea),
+              ],
+            ),
           const SizedBox(height: 24),
 
           _tituloSeccion('ATAJOS'),
           const SizedBox(height: 8),
-          Row(
-            children: [
-              // el número cuenta órdenes de reparación sin monto, no equipos
-              _tarjetaAtajo('${atajos['pendientes_facturar']}', 'Reparaciones por valorizar', () => widget.onNavegar('/facturacion')),
-              const SizedBox(width: 16),
-              _tarjetaAtajo('${atajos['solicitudes_pendientes']}', 'Asistencias por atender', () => widget.onNavegar('/asistencias')),
-              const SizedBox(width: 16),
-              // la aprobación de cuentas vive en una pestaña de Clientes: sin este atajo no se veía
-              _tarjetaAtajo('${atajos['cuentas_por_aprobar'] ?? 0}', 'Cuentas por aprobar', () => widget.onNavegar('/clientes')),
-              const SizedBox(width: 16),
-              _tarjetaAtajo('${atajos['notificaciones_error']}', 'Avisos con error', () => widget.onNavegar('/notificaciones')),
-            ],
-          ),
+          if (compacto)
+            Column(
+              children: [
+                Row(children: [atajosTarjetas[0], const SizedBox(width: 12), atajosTarjetas[1]]),
+                const SizedBox(height: 12),
+                Row(children: [atajosTarjetas[2], const SizedBox(width: 12), atajosTarjetas[3]]),
+              ],
+            )
+          else
+            Row(
+              children: [
+                for (var i = 0; i < atajosTarjetas.length; i++) ...[
+                  if (i > 0) const SizedBox(width: 16),
+                  atajosTarjetas[i],
+                ],
+              ],
+            ),
           const SizedBox(height: 24),
 
           if (ejecutivos.isNotEmpty) ...[

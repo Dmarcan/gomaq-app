@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
@@ -17,7 +18,7 @@ Future<void> main() async {
   // oculto ("Enable accessibility"): un lector de pantalla no leía NADA del panel. Se enciende
   // desde el arranque para que el contenido exista en el árbol de accesibilidad del navegador.
   WidgetsFlutterBinding.ensureInitialized();
-  SemanticsBinding.instance.ensureSemantics();
+  if (kIsWeb) SemanticsBinding.instance.ensureSemantics();
 
   // Formato.fecha usa DateFormat con locale es_CL, y intl no trae esos datos hasta que se cargan:
   // sin esta linea, cualquier pantalla que mostrara una fecha (el historial de OT de un equipo,

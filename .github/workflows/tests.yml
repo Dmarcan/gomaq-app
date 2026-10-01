@@ -1,4 +1,4 @@
-# Tests del backend en cada push y pull request.
+# Tests del backend y del panel en cada push y pull request.
 #
 # Railway despliega main automaticamente, con "Wait for CI": si este workflow falla, ese commit no
 # llega a produccion. Por eso corren los tres niveles de la bateria, no solo las funciones puras:
@@ -6,6 +6,10 @@
 #   - reglas de negocio y autorizacion (sin base de datos)
 #   - escritura: reintentos de la cola offline, anulacion de lineas, ciclo de vida de la OT
 #   - extremo a extremo: contra el backend levantado aca mismo, no contra produccion
+#
+# El job "panel" corre analyze y test de comun/ y web/ con la misma version de Flutter que el
+# Dockerfile. Va en este workflow (y no en uno aparte) porque Railway espera el resultado de cada
+# workflow: si el panel no pasa, no se despliega. La app del mecanico tiene el suyo, mobile.yml.
 #
 # La base es un Postgres temporal que GitHub crea y borra en cada ejecucion. Los secretos son de
 # prueba: el workflow no necesita ninguna credencial real (Supabase no se llama en estos casos).
@@ -83,3 +87,37 @@ jobs:
       - name: Log del backend si algo fallo
         if: failure()
         run: cat servidor.log || true
+
+  panel:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # misma version que el ARG FLUTTER_VERSION del Dockerfile
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.2
+          channel: stable
+          cache: true
+
+      # un solo pubspec.lock en la raiz para comun/ y web/; falla si no coincide con los pubspec
+      - name: Dependencias del workspace
+        run: flutter pub get --enforce-lockfile
+
+      # los avisos de nivel info (hoy hay 1) no rompen el build; errores y warnings si
+      - name: Analizar comun
+        working-directory: comun
+        run: dart analyze
+
+      - name: Tests de comun
+        working-directory: comun
+        run: dart test
+
+      - name: Analizar el panel
+        working-directory: web
+        run: flutter analyze --no-fatal-infos
+
+      - name: Tests del panel
+        working-directory: web
+        run: flutter test

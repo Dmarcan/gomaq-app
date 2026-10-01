@@ -467,7 +467,10 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
                       ),
               ),
               const SizedBox(width: 16),
-              ConstrainedBox(
+              // Flexible: sin él, el subtítulo no tenía límite de ancho en un teléfono y se salía
+              // de la tarjeta en vez de pasar a la línea siguiente.
+              Flexible(
+                child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 520),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -484,6 +487,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
                     const SizedBox(height: 4),
                     Text(subtitulo, style: const TextStyle(color: Colors.black54, fontSize: 14)),
                   ],
+                ),
                 ),
               ),
             ],

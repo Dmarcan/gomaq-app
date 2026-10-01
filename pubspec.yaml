@@ -1,0 +1,11 @@
+name: gomaq_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.11.5
+
+# mobile/ no es miembro: depende de comun/ por path y conserva su propio pubspec.lock
+# para que un cambio de dependencias del panel no altere el APK del mecanico.
+workspace:
+  - comun
+  - web

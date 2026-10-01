@@ -21,6 +21,8 @@ version: 1.0.0+1
 environment:
   sdk: ^3.11.5
 
+resolution: workspace
+
 # Dependencies specify other packages that your package needs in order to work.
 # To automatically upgrade your package dependencies to the latest versions
 # consider running `flutter pub upgrade --major-versions`. Alternatively,
@@ -34,6 +36,9 @@ dependencies:
   flutter_web_plugins:
     sdk: flutter
 
+  gomaq_comun:
+    path: ../comun
+
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
@@ -45,6 +50,7 @@ dependencies:
   fl_chart: ^0.69.0
   go_router: ^18.0.1
   intl: ^0.20.3
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:
