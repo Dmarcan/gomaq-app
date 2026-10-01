@@ -1,17 +1,24 @@
-# gomaq_web
+# panel
 
-A new Flutter project.
+Panel de GOMAQ para administrativo, gerente y cliente. Es una app Flutter multiplataforma: el mismo
+codigo compila a **web** (se sirve desde el backend, misma URL que la API) y a **Android**
+(`cl.gomaq.gomaq_panel`). El cliente entra al portal en `/portal`; administrativo y gerente al
+panel de gestion.
 
-## Getting Started
+## Estructura
+- `lib/screens/acceso/`: login, registro de clientes, rol no soportado
+- `lib/screens/cliente/`: portal del cliente
+- `lib/screens/panel/`: pantallas de administrativo y gerente
+- `lib/services/`, `lib/widgets/`, `lib/theme/`, `lib/utils/`
 
-This project is a starting point for a Flutter application.
+## Correrlo
+```bash
+flutter pub get    # en la raiz del repositorio: panel/ y comun/ comparten un workspace de Dart
+cd panel
+flutter run -d chrome --dart-define=GOMAQ_API_URL=http://localhost:3000
+flutter test && flutter analyze
+flutter build apk --release    # apunta por defecto al servidor de Railway
+```
 
-A few resources to get you started if this is your first Flutter project:
-
-- [Learn Flutter](https://docs.flutter.dev/get-started/learn-flutter)
-- [Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Flutter learning resources](https://docs.flutter.dev/reference/learning-resources)
-
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+El cliente HTTP y el formato de fechas y montos viven en `../comun`. Mas contexto: `../CLAUDE.md` y
+`../docs/tecnica/PLAN_ARQUITECTURA_FRONTEND.md`.
