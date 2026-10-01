@@ -169,6 +169,40 @@ void main() {
       expect(visto.body, isNot(contains('filename=')));
     });
 
+    // El backend filtra por el tipo que declara cada archivo: si el cliente manda
+    // application/octet-stream, rechaza toda subida con «El archivo debe ser un PDF/una imagen».
+    group('tipo del archivo', () {
+      Future<String> cuerpoDeSubida(String nombre, List<int> bytes) async {
+        late http.Request visto;
+        final api = _api((r) async {
+          visto = r;
+          return _json({});
+        });
+        await api.postMultipart('/x', bytes: bytes, filename: nombre);
+        // los bytes de un PNG no son UTF-8 valido: se lee el cuerpo como latin1
+        return latin1.decode(visto.bodyBytes).toLowerCase();
+      }
+
+      test('PDF por la extension', () async {
+        final cuerpo = await cuerpoDeSubida('guia.pdf', [0x25, 0x50, 0x44, 0x46, 0x2d]);
+        expect(cuerpo, contains('content-type: application/pdf'));
+      });
+
+      test('imagen por la extension', () async {
+        expect(await cuerpoDeSubida('foto.png', [1, 2, 3]), contains('content-type: image/png'));
+        expect(await cuerpoDeSubida('foto.JPG', [1, 2, 3]), contains('content-type: image/jpeg'));
+      });
+
+      test('imagen por los primeros bytes cuando el nombre no tiene extension', () async {
+        final png = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0];
+        expect(await cuerpoDeSubida('captura', png), contains('content-type: image/png'));
+      });
+
+      test('si no se reconoce queda como application/octet-stream', () async {
+        expect(await cuerpoDeSubida('datos.zzz', [1, 2, 3]), contains('content-type: application/octet-stream'));
+      });
+    });
+
     test('usa timeoutSubida y no timeout', () async {
       final api = _api(_lento, timeout: const Duration(milliseconds: 50));
       expect(await api.postMultipart('/x', bytes: [1], filename: 'a.jpg'), {});

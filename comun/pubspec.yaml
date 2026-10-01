@@ -8,7 +8,9 @@ environment:
 
 dependencies:
   http: ^1.2.2
+  http_parser: ^4.0.0
   intl: ^0.20.3
+  mime: ^2.0.0
 
 dev_dependencies:
   test: ^1.25.0

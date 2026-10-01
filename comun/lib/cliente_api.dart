@@ -1,6 +1,8 @@
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' show MediaType;
+import 'package:mime/mime.dart' show lookupMimeType;
 
 /// Error HTTP del backend (cualquier respuesta fuera de 2xx). Los errores de red
 /// (`SocketException`, `TimeoutException`, `ClientException`) NO se envuelven en esta clase:
@@ -125,6 +127,15 @@ class ClienteApi {
   }) =>
       _enviarMultipart('PATCH', path, bytes: bytes, filename: filename, fields: fields);
 
+  /// `MultipartFile.fromBytes` declara `application/octet-stream` si no se le dice otra cosa, y el
+  /// backend filtra por el tipo que declara cada archivo (PDF o imagen): sin esto rechaza todas las
+  /// subidas con «El archivo debe ser un PDF / una imagen». Se deduce de la extension y de los
+  /// primeros bytes.
+  static MediaType _tipoDeArchivo(String filename, List<int> bytes) {
+    final tipo = lookupMimeType(filename, headerBytes: bytes.take(12).toList());
+    return MediaType.parse(tipo ?? 'application/octet-stream');
+  }
+
   Future<dynamic> _enviarMultipart(
     String metodo,
     String path, {
@@ -136,7 +147,12 @@ class ClienteApi {
     request.headers.addAll(await _headers(json: false));
     request.fields.addAll(fields);
     if (bytes != null && filename != null) {
-      request.files.add(http.MultipartFile.fromBytes('archivo', bytes, filename: filename));
+      request.files.add(http.MultipartFile.fromBytes(
+        'archivo',
+        bytes,
+        filename: filename,
+        contentType: _tipoDeArchivo(filename, bytes),
+      ));
     }
     final streamed = await (_cliente?.send(request) ?? request.send()).timeout(timeoutSubida);
     return _procesar(await http.Response.fromStream(streamed));
