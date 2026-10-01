@@ -1,4 +1,4 @@
-# Solo backend/, web/ y comun/ entran a la imagen; el resto no hace falta y hace mas lento el build.
+# Solo backend/, panel/ y comun/ entran a la imagen; el resto no hace falta y hace mas lento el build.
 .git
 **/node_modules
 **/.dart_tool
@@ -6,7 +6,7 @@
 **/.env
 backend/public
 backend/uploads
-mobile
+terreno
 INFORME
 docs
-web/android
+panel/android

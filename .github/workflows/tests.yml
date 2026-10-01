@@ -7,7 +7,7 @@
 #   - escritura: reintentos de la cola offline, anulacion de lineas, ciclo de vida de la OT
 #   - extremo a extremo: contra el backend levantado aca mismo, no contra produccion
 #
-# El job "panel" corre analyze y test de comun/ y web/ con la misma version de Flutter que el
+# El job "panel" corre analyze y test de comun/ y panel/ con la misma version de Flutter que el
 # Dockerfile. Va en este workflow (y no en uno aparte) porque Railway espera el resultado de cada
 # workflow: si el panel no pasa, no se despliega. La app del mecanico tiene el suyo, mobile.yml.
 #
@@ -101,7 +101,7 @@ jobs:
           channel: stable
           cache: true
 
-      # un solo pubspec.lock en la raiz para comun/ y web/; falla si no coincide con los pubspec
+      # un solo pubspec.lock en la raiz para comun/ y panel/; falla si no coincide con los pubspec
       - name: Dependencias del workspace
         run: flutter pub get --enforce-lockfile
 
@@ -115,9 +115,9 @@ jobs:
         run: dart test
 
       - name: Analizar el panel
-        working-directory: web
+        working-directory: panel
         run: flutter analyze --no-fatal-infos
 
       - name: Tests del panel
-        working-directory: web
+        working-directory: panel
         run: flutter test

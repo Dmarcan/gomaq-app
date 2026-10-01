@@ -19,19 +19,19 @@ RUN git clone --depth 1 --branch ${FLUTTER_VERSION} https://github.com/flutter/f
 ENV PATH="/opt/flutter/bin:${PATH}"
 RUN flutter config --no-analytics --enable-web && flutter precache --web
 
-# web/ y comun/ forman un workspace de Dart: el pubspec.lock es unico y vive en la raiz (el de
-# web/ ya no existe). mobile/ no es miembro y no entra a la imagen.
+# panel/ y comun/ forman un workspace de Dart: el pubspec.lock es unico y vive en la raiz (el de
+# panel/ ya no existe). terreno/ no es miembro y no entra a la imagen.
 WORKDIR /app
 # primero solo los pubspec: si no cambian, Docker reutiliza la capa de dependencias.
 # --enforce-lockfile hace fallar el build si el lock no coincide con los pubspec, en vez de
 # resolver versiones nuevas sin que nadie lo note
 COPY pubspec.yaml pubspec.lock ./
 COPY comun/pubspec.yaml comun/
-COPY web/pubspec.yaml web/
+COPY panel/pubspec.yaml panel/
 RUN flutter pub get --enforce-lockfile
 COPY comun/ comun/
-COPY web/ web/
-WORKDIR /app/web
+COPY panel/ panel/
+WORKDIR /app/panel
 # URL vacia = rutas relativas: el panel llama a la API en su mismo origen
 RUN flutter build web --release --dart-define=GOMAQ_API_URL=
 
@@ -45,7 +45,7 @@ COPY backend/package.json backend/package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY backend/ ./
-COPY --from=panel /app/web/build/web ./public
+COPY --from=panel /app/panel/build/web ./public
 # esquema y migraciones: scripts/migrar.js los aplica al arrancar (ver CMD)
 COPY db/ /db/
 

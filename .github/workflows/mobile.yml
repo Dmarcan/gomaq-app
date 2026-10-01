@@ -2,17 +2,17 @@
 #
 # Va en un workflow aparte de tests.yml porque Railway espera el resultado de cada workflow, no
 # de cada job: un rojo aqui bloquearia el despliegue del backend aunque nada de la app cambiara.
-# Con "paths" solo corre si cambia mobile/ o comun/ (que la app usa por path); si no corre, Railway
-# no lo espera. mobile/ no es miembro del workspace de Dart y conserva su propio pubspec.lock.
+# Con "paths" solo corre si cambia terreno/ o comun/ (que la app usa por path); si no corre, Railway
+# no lo espera. terreno/ no es miembro del workspace de Dart y conserva su propio pubspec.lock.
 
 name: Mobile
 
 on:
   push:
     branches: [main]
-    paths: ['mobile/**', 'comun/**', '.github/workflows/mobile.yml']
+    paths: ['terreno/**', 'comun/**', '.github/workflows/mobile.yml']
   pull_request:
-    paths: ['mobile/**', 'comun/**', '.github/workflows/mobile.yml']
+    paths: ['terreno/**', 'comun/**', '.github/workflows/mobile.yml']
 
 jobs:
   mobile:
@@ -20,7 +20,7 @@ jobs:
 
     defaults:
       run:
-        working-directory: mobile
+        working-directory: terreno
 
     steps:
       - uses: actions/checkout@v4

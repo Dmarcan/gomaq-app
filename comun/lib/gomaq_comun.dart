@@ -1,4 +1,4 @@
-/// Codigo compartido entre el panel (web/) y la app del mecanico (mobile/).
+/// Codigo compartido entre el panel (panel/) y la app del mecanico (terreno/).
 library;
 
 export 'cliente_api.dart';
