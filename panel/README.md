@@ -21,4 +21,4 @@ flutter build apk --release    # apunta por defecto al servidor de Railway
 ```
 
 El cliente HTTP y el formato de fechas y montos viven en `../comun`. Mas contexto: `../CLAUDE.md` y
-`../docs/PLAN_ARQUITECTURA_FRONTEND.md`.
+`../docs/tecnica/PLAN_ARQUITECTURA_FRONTEND.md`.
