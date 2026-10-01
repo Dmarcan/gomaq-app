@@ -17,13 +17,16 @@ Un sistema con 3 aplicaciones que comparten un mismo backend:
 Desde septiembre de 2026 el sistema corre en [Railway](https://railway.com), proyecto `gomaq`. Antes corría en un Dell OptiPlex GX520 en la oficina, detrás de un Quick Tunnel de Cloudflare cuya URL cambiaba en cada reinicio.
 
 - **URL pública (API y panel web):** https://gomaq-app-production.up.railway.app, con HTTPS. La misma URL sirve la API (`/api/*`) y el panel (`/`), porque el build de Flutter Web se sirve como estático desde el backend Node.
-- **Servicio `gomaq-app`:** se construye con el `Dockerfile` de la raíz, que compila el panel con Flutter 3.47.2 y arma el backend con Node 22. La configuración de despliegue está en `railway.json`. Al arrancar, el contenedor corre `node scripts/migrar.js` y después el servidor; Railway revisa `/api/health` antes de dar el despliegue por bueno.
+- **Servicio `gomaq-app`:** se construye con el `Dockerfile` de la raíz, que compila el panel con Flutter 3.47.2 y arma el backend con Node 22. Al arrancar, el contenedor corre `node scripts/migrar.js` y después el servidor; Railway revisa `/api/health` antes de dar el despliegue por bueno.
+- **Servicio `gomaq-worker`:** envía las notificaciones pendientes (patrón Outbox sobre `notificaciones_pendientes`). Misma base de código, pero se construye con `Dockerfile.worker` (solo Node, sin Flutter) y arranca `node scripts/worker.js`: sin HTTP, sin dominio, sin healthcheck, reinicio siempre. No migra la base (eso lo hace la API). Se separó para que un despliegue del panel o de la API no corte envíos a medias, y para que un proveedor lento o con límite de uso no comparta proceso con las peticiones de los usuarios. La API lleva `NOTIFICACIONES_EN_PROCESO=0` para no arrancar su propio worker; sin esa variable (desarrollo local y CI) el worker corre dentro de la API. Si por error corrieran los dos, `FOR UPDATE SKIP LOCKED` evita que un aviso salga dos veces. Ajustes por variable: `NOTIF_LOTE` (5) y `NOTIF_TIMEOUT_MS` (15000). Un límite del proveedor (429) se reprograma con su `Retry-After` sin gastar intentos (error con `reintentarEnSegundos`, ver `src/utils/reintentosNotificacion.js`).
+- **Configuración de Railway en código:** `.railway/railway.ts` define los servicios `gomaq-app`, `gomaq-worker` y `Postgres` (reemplaza a `railway.json`, que Railway da por obsoleto). Los secretos no están en el archivo (`preserve()`). Para revisar y aplicar cambios: `railway config plan` y `railway config apply`; necesita el paquete npm oficial `railway` instalado junto al archivo. En Windows hay que correrlo desde PowerShell con `$env:_` apuntando al `railway.exe` que está en `node_modules/@railway/cli/bin/` dentro de la carpeta global de npm (`npm root -g`), porque el SDK ejecuta `railway --version` y no puede lanzar el `.cmd`.
+- **Reposo (`sleepApplication`):** está activo en `gomaq-app` y en `Postgres`. El worker consulta la base cada 15 s, así que la mantiene despierta; revisar el costo en el panel de uso de Railway.
 - **Base de datos:** el servicio `Postgres` del mismo proyecto. `DATABASE_URL` del backend es una referencia (`${{Postgres.DATABASE_URL}}`), así que las credenciales no se copian a mano.
 - **Variables del servicio:** `DATABASE_URL`, `JWT_SECRET` (generado al azar al crear el proyecto), `TRUST_PROXY=1`, `SUPABASE_URL` y `SUPABASE_SERVICE_KEY`. Se ven con `railway variable list --service gomaq-app`.
 - **Todos los archivos pesados van a Supabase Storage**, en buckets privados con URLs firmadas temporales (1 h), nunca URLs públicas permanentes:
   - `evidencias-ot`: fotos de evidencia subidas por el mecánico desde terreno
   - `documentos-gomaq`: PDFs de guías y facturas subidos por el administrativo desde el panel web
-- **Logs y métricas:** `railway logs --service gomaq-app` y `railway metrics --service gomaq-app`, o el panel de Railway (`railway open`).
+- **Logs y métricas:** `railway logs --service gomaq-app` (o `gomaq-worker`) y `railway metrics --service gomaq-app`, o el panel de Railway (`railway open`).
 
 ## Migraciones de la base de datos
 
@@ -35,7 +38,7 @@ Una base creada a mano, sin registro, no se toca: el script no puede saber qué 
 
 ## Cómo desplegar un cambio
 
-**Backend y panel web**, que van juntos en el mismo servicio: **basta con `git push` a `main`.**
+**Backend y panel web**, que van juntos en el mismo servicio: **basta con `git push` a `main`.** El worker (`gomaq-worker`) se redespliega solo si cambia `backend/`, `db/` o `Dockerfile.worker`, también tras pasar el CI.
 
 1. GitHub Actions (`.github/workflows/tests.yml`) corre los tres niveles de tests sobre un Postgres temporal: reglas de negocio, escritura y extremo a extremo contra el backend levantado en el mismo job. Aplica las migraciones con el mismo script que Railway, así que una migración que no aplica sobre una base vacía también falla aquí.
 2. Railway está conectado al repositorio con "Wait for CI": despliega el commit solo si ese workflow pasa.
@@ -184,7 +187,7 @@ El mecánico trabaja sin señal y la app reintenta al volver la conexión. Regla
 6. **Dominio propio** — Railway entrega una URL fija (`*.up.railway.app`); un dominio propio (por ejemplo `app.gomaq.cl`) se agrega con `railway domain` sin cambiar nada del código.
 7. **Tarifa de arriendo por día** — Facturación muestra los días calculados de cada arriendo pero el monto se ingresa a mano (no existe una tarifa fija por equipo en ningún lado de la entrevista a la administrativa; el jefe la decide caso a caso, igual que en reparaciones).
 8. **Detección de datos desde PDF** — verificada contra los documentos reales de GOMAQ (guía de entrega, guía de retiro y factura): acierta fecha, tipo, folio, RUT, monto y horómetro, y está cubierta por tests con ese texto real como fixture. Sigue siendo heurística: si el PDF es una imagen escaneada sin capa de texto no detecta nada y el usuario llena a mano, y un facturador con otro formato requeriría ajustar las expresiones.
-9. **Migrar `railway.json` al formato nuevo** — Railway lo da por obsoleto y lo acepta hasta el 1 de diciembre de 2026. `railway config migrate` genera `.railway/railway.ts`, pero en su versión actual no traslada la política de reinicio ni la ruta del Dockerfile: revisar el resultado antes de aplicarlo.
+9. **Observar el worker** — el atajo "Avisos con problemas" del dashboard cuenta los avisos con error y los pendientes vencidos hace más de 10 min (señal de worker caído). Al conectar el proveedor real, agregar sus claves a `VARIABLES_REQUERIDAS` de `backend/scripts/worker.js` y a las variables de `gomaq-worker`.
 10. **Refresh token / renovación de sesión** — hoy el token JWT dura 12 h y al expirar la app cierra sesión limpiamente con aviso (tanto web como móvil, donde además el trabajo offline queda protegido en cola). La práctica completa de la industria es access token corto + refresh token; queda para cuando el sistema salga de la etapa de demo.
 11. Pulido menor: ver/descargar una factura ya subida directo desde la pantalla de Facturación (hoy solo permite subir).
 

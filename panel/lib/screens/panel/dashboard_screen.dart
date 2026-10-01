@@ -412,7 +412,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _tarjetaAtajo('${atajos['solicitudes_pendientes']}', 'Asistencias por atender', () => widget.onNavegar('/asistencias')),
       // la aprobación de cuentas vive en una pestaña de Clientes: sin este atajo no se veía
       _tarjetaAtajo('${atajos['cuentas_por_aprobar'] ?? 0}', 'Cuentas por aprobar', () => widget.onNavegar('/clientes')),
-      _tarjetaAtajo('${atajos['notificaciones_error']}', 'Avisos con error', () => widget.onNavegar('/notificaciones')),
+      // con error, o pendientes que llevan más de 10 min sin que el worker los tome (worker caído)
+      _tarjetaAtajo('${(atajos['notificaciones_error'] ?? 0) + (atajos['notificaciones_atrasadas'] ?? 0)}', 'Avisos con problemas', () => widget.onNavegar('/notificaciones')),
     ];
 
     final panelDona = _panelGrafico(titulo: 'ESTADO OPERATIVO', child: _donaEstadoFlota(flota));
