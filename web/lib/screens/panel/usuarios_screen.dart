@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import '../services/api_client.dart';
-import '../theme/gomaq_theme.dart';
-import '../widgets/dialogos.dart';
+import '../../services/api_client.dart';
+import '../../theme/gomaq_theme.dart';
+import '../../widgets/dialogos.dart';
 
 class UsuariosScreen extends StatefulWidget {
   const UsuariosScreen({super.key});

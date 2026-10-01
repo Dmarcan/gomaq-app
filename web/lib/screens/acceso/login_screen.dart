@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../services/auth_service.dart';
-import '../services/api_client.dart';
-import '../theme/gomaq_theme.dart';
+import '../../services/auth_service.dart';
+import '../../services/api_client.dart';
+import '../../theme/gomaq_theme.dart';
 import 'package:go_router/go_router.dart';
 
 class LoginScreen extends StatefulWidget {

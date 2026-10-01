@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import '../services/api_client.dart';
-import '../theme/gomaq_theme.dart';
+import '../../services/api_client.dart';
+import '../../theme/gomaq_theme.dart';
 
 class RegistroClienteScreen extends StatefulWidget {
   const RegistroClienteScreen({super.key});

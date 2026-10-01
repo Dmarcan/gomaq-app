@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import '../services/api_client.dart';
-import '../theme/gomaq_theme.dart';
-import '../widgets/dialogos.dart';
-import '../widgets/estado_chip.dart';
-import '../widgets/estado_vacio.dart';
+import '../../services/api_client.dart';
+import '../../theme/gomaq_theme.dart';
+import '../../widgets/dialogos.dart';
+import '../../widgets/estado_chip.dart';
+import '../../widgets/estado_vacio.dart';
 
 /// Lo que el cliente tiene abierto con GOMAQ: sus asistencias todavía sin orden de trabajo y
 /// todas sus órdenes en curso.

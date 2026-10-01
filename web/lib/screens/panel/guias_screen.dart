@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
-import '../services/api_client.dart';
-import '../services/auth_service.dart';
-import '../theme/gomaq_theme.dart';
-import '../utils/enlaces.dart';
-import '../utils/formato.dart';
+import '../../services/api_client.dart';
+import '../../services/auth_service.dart';
+import '../../theme/gomaq_theme.dart';
+import '../../utils/enlaces.dart';
+import '../../utils/formato.dart';
 
 /// Mismo tope que aplica el backend (middleware/upload.js).
 const _maxArchivoBytes = 10 * 1024 * 1024;

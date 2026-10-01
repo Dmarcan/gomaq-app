@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import '../services/api_client.dart';
-import '../utils/enlaces.dart';
-import '../utils/formato.dart';
-import '../widgets/estado_vacio.dart';
+import '../../services/api_client.dart';
+import '../../utils/enlaces.dart';
+import '../../utils/formato.dart';
+import '../../widgets/estado_vacio.dart';
 
 /// Trabajos terminados sobre los equipos del cliente. Los que siguen en curso están en
 /// Seguimiento: antes aparecían acá también, sin estado, y no se distinguían de los cerrados.

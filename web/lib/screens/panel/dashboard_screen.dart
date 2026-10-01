@@ -1,7 +1,7 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
-import '../services/api_client.dart';
-import '../theme/gomaq_theme.dart';
+import '../../services/api_client.dart';
+import '../../theme/gomaq_theme.dart';
 
 class DashboardScreen extends StatefulWidget {
   /// Navega a una ruta del panel. El filtro viaja como query en la URL, asi que el

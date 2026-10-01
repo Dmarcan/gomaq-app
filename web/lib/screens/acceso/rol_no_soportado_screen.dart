@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../services/auth_service.dart';
-import '../theme/gomaq_theme.dart';
+import '../../services/auth_service.dart';
+import '../../theme/gomaq_theme.dart';
 
 /// Pantalla para roles que no tienen interfaz en la web (hoy: mecanico).
 /// Antes un mecanico que entraba por navegador aterrizaba en el panel de

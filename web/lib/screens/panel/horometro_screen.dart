@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import '../services/api_client.dart';
-import '../theme/gomaq_theme.dart';
-import '../utils/formato.dart';
-import '../widgets/dialogos.dart';
-import '../utils/numeros.dart';
+import '../../services/api_client.dart';
+import '../../theme/gomaq_theme.dart';
+import '../../utils/formato.dart';
+import '../../widgets/dialogos.dart';
+import '../../utils/numeros.dart';
 
 /// Horometro y mantencion preventiva (entrevista el jefe de taller/la administrativa, 20-21 julio 2026).
 ///

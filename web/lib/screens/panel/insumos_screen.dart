@@ -1,11 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../services/api_client.dart';
-import '../services/auth_service.dart';
-import '../utils/formato.dart';
-import '../utils/numeros.dart';
-import '../widgets/dialogos.dart';
-import '../widgets/estado_vacio.dart';
+import '../../services/api_client.dart';
+import '../../services/auth_service.dart';
+import '../../utils/formato.dart';
+import '../../utils/numeros.dart';
+import '../../widgets/dialogos.dart';
+import '../../widgets/estado_vacio.dart';
 
 class InsumosScreen extends StatefulWidget {
   const InsumosScreen({super.key});

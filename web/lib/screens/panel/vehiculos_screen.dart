@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import '../services/api_client.dart';
-import '../widgets/dialogos.dart';
-import '../utils/numeros.dart';
+import '../../services/api_client.dart';
+import '../../widgets/dialogos.dart';
+import '../../utils/numeros.dart';
 
 /// Vehículos del personal. Asignar uno a un mecánico le crea además su ubicación de stock:
 /// ese furgón pasa a tener existencias propias, separadas de la bodega central.
