@@ -1,6 +1,6 @@
-import 'dart:html' as html;
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
+import '../utils/enlaces.dart';
 import '../utils/formato.dart';
 import '../widgets/estado_vacio.dart';
 
@@ -68,7 +68,7 @@ class _ClienteHistorialScreenState extends State<ClienteHistorialScreen> {
                   ? TextButton.icon(
                       // la API ya entrega una URL firmada completa; antes se le anteponía la
                       // dirección del servidor y el enlace quedaba roto fuera del mismo origen
-                      onPressed: () => html.window.open(facturaUrl, '_blank'),
+                      onPressed: () => abrirEnlace(facturaUrl),
                       icon: const Icon(Icons.picture_as_pdf, size: 18),
                       label: const Text('Factura'),
                     )

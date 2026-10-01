@@ -1,10 +1,10 @@
-import 'dart:html' as html;
 import 'package:flutter/material.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import '../services/api_client.dart';
 import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../utils/enlaces.dart';
 import '../utils/formato.dart';
 
 /// Mismo tope que aplica el backend (middleware/upload.js).
@@ -404,7 +404,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
                   trailing: g['url'] == null
                       ? null
                       : TextButton.icon(
-                          onPressed: () => html.window.open(g['url'], '_blank'),
+                          onPressed: () => abrirEnlace(g['url']),
                           icon: const Icon(Icons.picture_as_pdf, size: 18),
                           label: const Text('Ver PDF'),
                         ),

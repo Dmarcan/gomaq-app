@@ -1,0 +1,43 @@
+# Analisis y tests de la app del mecanico.
+#
+# Va en un workflow aparte de tests.yml porque Railway espera el resultado de cada workflow, no
+# de cada job: un rojo aqui bloquearia el despliegue del backend aunque nada de la app cambiara.
+# Con "paths" solo corre si cambia mobile/ o comun/ (que la app usa por path); si no corre, Railway
+# no lo espera. mobile/ no es miembro del workspace de Dart y conserva su propio pubspec.lock.
+
+name: Mobile
+
+on:
+  push:
+    branches: [main]
+    paths: ['mobile/**', 'comun/**', '.github/workflows/mobile.yml']
+  pull_request:
+    paths: ['mobile/**', 'comun/**', '.github/workflows/mobile.yml']
+
+jobs:
+  mobile:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: mobile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.47.2
+          channel: stable
+          cache: true
+
+      - name: Dependencias
+        run: flutter pub get --enforce-lockfile
+
+      # hoy hay 7 avisos de nivel info (use_null_aware_elements en sync_service.dart): no se
+      # tocan para no mover la cola offline sin necesidad
+      - name: Analizar
+        run: flutter analyze --no-fatal-infos
+
+      - name: Tests
+        run: flutter test

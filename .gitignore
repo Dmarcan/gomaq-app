@@ -5,3 +5,8 @@ build/
 .dart_tool/
 backend/uploads/
 backend/public/
+
+# Firmas de Android (nunca commitear)
+*.jks
+*.keystore
+**/android/key.properties

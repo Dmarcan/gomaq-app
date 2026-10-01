@@ -127,6 +127,38 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
     );
   }
 
+  /// Fila de equipo con sus acciones. Con ancho de escritorio las acciones van a la derecha; en un
+  /// teléfono (<600 px) iban también a la derecha y dejaban al título ~100 px (una palabra por
+  /// línea), así que pasan debajo.
+  Widget _filaConAcciones(
+    BuildContext context, {
+    required Widget leading,
+    required Widget title,
+    required Widget subtitle,
+    required List<Widget> acciones,
+  }) {
+    if (MediaQuery.sizeOf(context).width >= 600) {
+      return ListTile(
+        leading: leading,
+        title: title,
+        subtitle: subtitle,
+        trailing: Wrap(spacing: 8, children: acciones),
+      );
+    }
+    return Column(
+      children: [
+        ListTile(leading: leading, title: title, subtitle: subtitle),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+          child: Align(
+            alignment: Alignment.centerRight,
+            child: Wrap(spacing: 8, runSpacing: 8, children: acciones),
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _construirPendientes() {
     if (_pendientes.isEmpty) {
       return const _Vacio(
@@ -139,29 +171,27 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
       padding: const EdgeInsets.only(top: 12),
       itemCount: _pendientes.length,
       separatorBuilder: (_, _) => const Divider(height: 1),
-      itemBuilder: (_, i) {
+      itemBuilder: (context, i) {
         final e = _pendientes[i] as Map<String, dynamic>;
         final ultima = e['ultima_lectura'];
-        return ListTile(
+        return _filaConAcciones(
+          context,
           leading: const Icon(Icons.timer_outlined),
           title: Text('${e['codigo']} — ${e['tipo']}'),
           subtitle: Text(
             '${e['cliente_nombre'] ?? 'Sin cliente'}'
             '${ultima == null ? ' · sin lecturas previas' : ' · última: $ultima h'}',
           ),
-          trailing: Wrap(
-            spacing: 8,
-            children: [
-              TextButton(
-                onPressed: () => _verHistorial(e['id'], e['codigo']),
-                child: const Text('Historial'),
-              ),
-              ElevatedButton(
-                onPressed: () => _registrarLectura(e),
-                child: const Text('Registrar'),
-              ),
-            ],
-          ),
+          acciones: [
+            TextButton(
+              onPressed: () => _verHistorial(e['id'], e['codigo']),
+              child: const Text('Historial'),
+            ),
+            ElevatedButton(
+              onPressed: () => _registrarLectura(e),
+              child: const Text('Registrar'),
+            ),
+          ],
         );
       },
     );
@@ -179,11 +209,12 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
       padding: const EdgeInsets.only(top: 12),
       itemCount: _alertas.length,
       separatorBuilder: (_, _) => const Divider(height: 1),
-      itemBuilder: (_, i) {
+      itemBuilder: (context, i) {
         final e = _alertas[i] as Map<String, dynamic>;
         final vencida = e['vencida'] == true;
         final restantes = (e['horas_restantes'] as num?) ?? 0;
-        return ListTile(
+        return _filaConAcciones(
+          context,
           leading: Icon(
             vencida ? Icons.error : Icons.warning_amber,
             color: vencida ? GomaqColors.estadoNegativo : GomaqColors.estadoAdvertencia,
@@ -195,19 +226,16 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
                 : 'Faltan $restantes h · lleva ${e['horas_usadas']} h de ${e['intervalo_mantencion_horas']}',
             style: TextStyle(color: vencida ? GomaqColors.estadoNegativo : null),
           ),
-          trailing: Wrap(
-            spacing: 8,
-            children: [
-              TextButton(
-                onPressed: () => _verHistorial(e['id'], e['codigo']),
-                child: const Text('Historial'),
-              ),
-              OutlinedButton(
-                onPressed: () => _marcarMantencion(e),
-                child: const Text('Mantención hecha'),
-              ),
-            ],
-          ),
+          acciones: [
+            TextButton(
+              onPressed: () => _verHistorial(e['id'], e['codigo']),
+              child: const Text('Historial'),
+            ),
+            OutlinedButton(
+              onPressed: () => _marcarMantencion(e),
+              child: const Text('Mantención hecha'),
+            ),
+          ],
         );
       },
     );
