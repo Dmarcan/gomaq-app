@@ -189,7 +189,8 @@ El mecánico trabaja sin señal y la app reintenta al volver la conexión. Regla
 8. **Detección de datos desde PDF** — verificada contra los documentos reales de GOMAQ (guía de entrega, guía de retiro y factura): acierta fecha, tipo, folio, RUT, monto y horómetro, y está cubierta por tests con ese texto real como fixture. Sigue siendo heurística: si el PDF es una imagen escaneada sin capa de texto no detecta nada y el usuario llena a mano, y un facturador con otro formato requeriría ajustar las expresiones.
 9. **Observar el worker** — el atajo "Avisos con problemas" del dashboard cuenta los avisos con error y los pendientes vencidos hace más de 10 min (señal de worker caído). Al conectar el proveedor real, agregar sus claves a `VARIABLES_REQUERIDAS` de `backend/scripts/worker.js` y a las variables de `gomaq-worker`.
 10. **Refresh token / renovación de sesión** — hoy el token JWT dura 12 h y al expirar la app cierra sesión limpiamente con aviso (tanto web como móvil, donde además el trabajo offline queda protegido en cola). La práctica completa de la industria es access token corto + refresh token; queda para cuando el sistema salga de la etapa de demo.
-11. Pulido menor: ver/descargar una factura ya subida directo desde la pantalla de Facturación (hoy solo permite subir).
+11. **Quitar el inicio rápido antes de usar datos reales** — el panel (Administrativo y Cliente) y terreno (Mecánico) tienen botones de inicio rápido con credenciales de prueba escritas en `comun/lib/usuarios_demo.dart` (y en `backend/scripts/usuarios-demo.js`). Están en el repositorio y en la base de Railway. Antes de cargar datos reales: `railway ssh --service gomaq-worker "node scripts/usuarios-demo.js borrar"`, y borrar ese archivo, el script y los botones de `login_screen.dart` del panel y de terreno.
+12. Pulido menor: ver/descargar una factura ya subida directo desde la pantalla de Facturación (hoy solo permite subir).
 
 ## Notas para quien retome esto
 
