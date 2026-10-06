@@ -177,6 +177,23 @@ El mecánico trabaja sin señal y la app reintenta al volver la conexión. Regla
 - **Una línea de repuesto se anula, no se borra**, como una línea tachada en el talonario: el mecánico mientras la OT está abierta, el panel en cualquier momento. El repuesto vuelve a su ubicación y deja de contar como gasto.
 - **Una OT cerrada no se modifica** desde la app, ni se reasigna. Reasignar una en curso cambia el técnico sin hacerla retroceder (`utils/estadosOt.js`).
 
+## Flujo de la orden y app del mecánico (mejoras de octubre de 2026)
+
+Salen de la prueba de punta a punta del 5 y 6 de octubre (plan en `docs/tecnica/PLAN_PRUEBAS_E2E.md`). Las dudas de negocio que quedaron abiertas están en `docs/entrevistas/PREGUNTAS_PENDIENTES_GOMAQ.md`.
+
+- **Estados de la OT**: `pendiente` → `asignada` → `aceptada` → `en_camino` → `en_terreno` ↔ `en_reparacion` → `finalizada` (migración 018). El mecánico acepta, sale hacia el destino y al llegar pulsa Iniciar; cada paso guarda su hora (`aceptada_at`, `en_camino_at`, `llegada_at`) y la app envía la hora real del toque (`ocurrio_en`), aunque se sincronice después. Un reintento o un cambio atrasado responde bien sin retroceder el estado. Un APK anterior sigue pudiendo pasar de asignada a en_terreno. Reasignar una OT aceptada o en camino la deja asignada al nuevo técnico.
+- **Tiempo de trabajo automático**: Iniciar abre el tramo y Finalizar cierra el que siga abierto. El viaje no cuenta como trabajo.
+- **Órdenes sin asignar**: `GET /api/ordenes-trabajo?sin_asignar=1` y `PATCH /:id/tomar`, atómico (dos mecánicos a la vez, uno recibe 409). En la app: "Órdenes disponibles", solo con señal. El cliente recibe el mismo aviso de mecánico asignado.
+- **Nueva OT desde terreno**: botón en la lista, con buscador sobre la flota completa (usa el flujo de OT en terreno con id local y `uuid_cliente`).
+- **Flota en la app**: toda la flota con buscador; la ficha y el historial de un equipo ajeno se descargan al abrirlo (con señal).
+- **Horómetro**: el mecánico y el administrativo pueden registrar la lectura de cualquier equipo en cualquier momento, con o sin OT. En la cola offline una lectura sin orden va con `orden_trabajo_id = 0`. El mecánico solo puede reiniciar el contador de mantención de un equipo en el que tiene una orden suya.
+- **Cargar desde bodega**: el catálogo trae `stock_bodega` y `stock_furgon`; no deja pedir más de lo que hay y la transferencia es idempotente con `uuid_cliente` (reintentar no descuenta dos veces).
+- **Precio de un repuesto**: parte del costo del catálogo y el mecánico lo puede cambiar. Si la línea no es facturable no se pide precio, pero se guarda el costo (Costos por equipo cuenta todas las líneas). GOMAQ todavía no define un precio de venta (pregunta 1 del documento de preguntas).
+- **Secciones de la orden en amarillo o verde** según estén completas (tipo de servicio, sistemas intervenidos, tiempos, observaciones y fotos). Solo las fotos DESPUÉS bloquean el cierre.
+- **Sincronización**: rápida (cola, OT y furgón) tras cada acción y completa (catálogos, flota e historial) al abrir la app y cada 6 h. La lista se refresca al volver a primer plano y cada 3 minutos. Los cambios pendientes que fallan guardan y muestran el motivo.
+- **Despacho sin documento** (migración 019): una guía de despacho o recepción puede registrarse sin PDF con `sin_documento` explícito; el equipo se asigna o se libera igual, queda quién la registró, y el PDF se adjunta después (`POST /api/maquinarias/guias/:guiaId/archivo`). El panel lo ofrece en Guías y, desde el perfil del equipo, como "Asignar a cliente" y "Retirar del cliente". El dashboard avisa cuántas guías faltan.
+- **Base local del teléfono, versión 9**: la cabecera del talonario (tipo de servicio, observación final, folio) y el costo de cada repuesto se guardan también en el teléfono.
+
 ## Qué falta (en orden de importancia)
 
 1. **Gestión de Usuarios completa desde el panel** — la pantalla "Usuarios" hoy solo cubre la aprobación de solicitudes de cuenta de clientes (auto-registro); crear/editar mecánicos y administrativos sigue siendo por SSH con `create-user.js`.
