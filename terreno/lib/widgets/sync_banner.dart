@@ -39,6 +39,8 @@ class SyncBanner extends StatelessWidget {
   final bool sincronizando;
   final int pendientes;
   final int enError;
+  /// Motivo del ultimo fallo de un cambio que sigue pendiente (null si no hay).
+  final String? problema;
   final VoidCallback? onTapErrores;
 
   const SyncBanner({
@@ -47,17 +49,22 @@ class SyncBanner extends StatelessWidget {
     required this.sincronizando,
     required this.pendientes,
     required this.enError,
+    this.problema,
     this.onTapErrores,
   });
 
   @override
   Widget build(BuildContext context) {
+    // pendientes que ya fallaron al menos una vez: se muestran como aviso, con su motivo
+    final conProblema = enError == 0 && online && pendientes > 0 && problema != null;
     final color = enError > 0
         ? GomaqColors.estadoNegativo
-        : online
+        : conProblema
+            ? GomaqColors.estadoAdvertencia
+            : online
             ? GomaqColors.estadoPositivo
             : GomaqColors.estadoAdvertencia;
-    final icono = enError > 0
+    final icono = enError > 0 || conProblema
         ? Icons.sync_problem
         : online
             ? Icons.cloud_done
@@ -66,12 +73,14 @@ class SyncBanner extends StatelessWidget {
         ? 'Enviando cambios…'
         : enError > 0
             ? '${_cambios(enError)} no se ${enError == 1 ? 'pudo' : 'pudieron'} enviar. Toca para ver cuál y reintentar.'
-            : online
-                ? (pendientes > 0 ? '${_cambios(pendientes)} por enviar' : 'Todo enviado')
-                : 'Sin conexión. Tus cambios se guardan en el teléfono.';
+            : conProblema
+                ? '${_cambios(pendientes)} por enviar. $problema Toca para ver el detalle.'
+                : online
+                    ? (pendientes > 0 ? '${_cambios(pendientes)} por enviar' : 'Todo enviado')
+                    : 'Sin conexión. Tus cambios se guardan en el teléfono.';
 
     return InkWell(
-      onTap: enError > 0 ? onTapErrores : null,
+      onTap: enError > 0 || conProblema ? onTapErrores : null,
       child: Container(
         width: double.infinity,
         color: color.withValues(alpha: 0.15),
