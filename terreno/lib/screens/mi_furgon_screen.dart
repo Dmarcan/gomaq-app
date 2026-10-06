@@ -22,6 +22,8 @@ class _MiFurgonScreenState extends State<MiFurgonScreen> {
   List<Map<String, dynamic>> _items = [];
   Map<String, dynamic>? _vehiculo;
   bool _cargando = true;
+  // evita cargar dos veces lo mismo si se toca el boton de nuevo mientras responde el servidor
+  bool _enviando = false;
 
   @override
   void initState() {
@@ -95,19 +97,37 @@ class _MiFurgonScreenState extends State<MiFurgonScreen> {
 
     // se toma antes del await: despues del envio el context pudo quedar desmontado
     final sync = context.read<SyncService>();
+    setState(() => _enviando = true);
     try {
       await ApiClient.instance.post('/api/insumos/transferencia', {
         'insumo_id': insumoId,
         'cantidad': cantidad,
       });
-      // el stock local se refresca desde el servidor, que es la fuente de verdad de bodega
-      await sync.sincronizar();
+      // el stock local se refresca desde el servidor, que es la fuente de verdad de bodega. Solo el
+      // furgon: bajar de nuevo las OT, catalogos y flota hacia esperar al mecanico decenas de segundos.
+      await sync.actualizarFurgon();
       await _cargar();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cargado al furgón')));
       }
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    } catch (_) {
+      // sin respuesta (timeout o senal): la carga pudo haberse hecho igual. No se reintenta sola
+      // porque duplicaria el traslado; se actualiza el stock para que el mecanico lo vea.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('No hubo respuesta del servidor. Revisa tu stock antes de volver a cargar.'),
+          ),
+        );
+      }
+      try {
+        await sync.actualizarFurgon();
+        await _cargar();
+      } catch (_) {}
+    } finally {
+      if (mounted) setState(() => _enviando = false);
     }
   }
 
@@ -136,9 +156,11 @@ class _MiFurgonScreenState extends State<MiFurgonScreen> {
               SizedBox(
                 width: double.infinity,
                 child: FilledButton.icon(
-                  onPressed: online ? _cargarDesdeBodega : null,
-                  icon: const Icon(Icons.add_box_outlined),
-                  label: const Text('CARGAR DESDE BODEGA'),
+                  onPressed: online && !_enviando ? _cargarDesdeBodega : null,
+                  icon: _enviando
+                      ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.add_box_outlined),
+                  label: Text(_enviando ? 'CARGANDO…' : 'CARGAR DESDE BODEGA'),
                 ),
               ),
             ],
@@ -148,7 +170,14 @@ class _MiFurgonScreenState extends State<MiFurgonScreen> {
       body: _cargando
           ? const Center(child: CircularProgressIndicator())
           : RefreshIndicator(
-              onRefresh: _cargar,
+              onRefresh: () async {
+                try {
+                  await context.read<SyncService>().actualizarFurgon();
+                } catch (_) {
+                  // sin señal: se muestra lo que ya hay en el telefono
+                }
+                await _cargar();
+              },
               child: _items.isEmpty
               ? const Center(
                   child: Padding(

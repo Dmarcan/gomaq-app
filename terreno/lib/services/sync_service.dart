@@ -437,6 +437,14 @@ class SyncService extends ChangeNotifier {
     }
   }
 
+  /// Refresca solo el furgon (stock, vehiculo y perfil). Tras cargar repuestos desde la bodega no
+  /// hace falta una sincronizacion completa, y ademas `sincronizar()` no hace nada si ya hay una
+  /// en curso, con lo que el stock podia quedar sin actualizar.
+  Future<void> actualizarFurgon() async {
+    await _pullMiFurgon();
+    notifyListeners();
+  }
+
   /// Stock del furgon, vehiculo asignado y perfil propio. Se cachean para poder consultarlos
   /// en terreno; la carga del furgon en cambio es solo online (se hace en el taller).
   Future<void> _pullMiFurgon() async {
