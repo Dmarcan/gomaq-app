@@ -20,15 +20,24 @@ class OrdenesListScreen extends StatefulWidget {
   State<OrdenesListScreen> createState() => _OrdenesListScreenState();
 }
 
-class _OrdenesListScreenState extends State<OrdenesListScreen> {
+class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindingObserver {
+  // Sin esto la lista solo se actualizaba al abrir la app: un cambio hecho en la oficina no llegaba
+  // hasta cerrar y reabrir. Se refresca al volver a primer plano (si pasaron mas de
+  // _minimoEntreRefrescos) y cada _intervaloRefresco mientras la app esta abierta.
+  static const _minimoEntreRefrescos = Duration(seconds: 60);
+  static const _intervaloRefresco = Duration(minutes: 3);
+
   List<OrdenTrabajo> _ordenes = [];
   int _pendientes = 0;
   int _enError = 0;
+  String? _problemaEnvio;
   StreamSubscription<bool>? _conexionSub;
+  Timer? _temporizador;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _cargarLocal();
 
     // SyncService.notifyListeners() no puede dispararse de forma sincronica
@@ -39,13 +48,30 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
       _conexionSub = context.read<ConnectivityService>().onCambioConexion.listen((online) {
         if (online) _sincronizarConReintentos();
       });
+      _temporizador = Timer.periodic(_intervaloRefresco, (_) => _refrescarSiCorresponde());
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _temporizador?.cancel();
     _conexionSub?.cancel();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState estado) {
+    if (estado == AppLifecycleState.resumed) _refrescarSiCorresponde();
+  }
+
+  void _refrescarSiCorresponde() {
+    if (!mounted) return;
+    final sync = context.read<SyncService>();
+    if (sync.sincronizando) return;
+    final ultima = sync.ultimaSincronizacion;
+    if (ultima != null && DateTime.now().difference(ultima) < _minimoEntreRefrescos) return;
+    _sincronizarSiHayConexion();
   }
 
   Future<void> _cargarLocal() async {
@@ -55,11 +81,13 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
     final syncService = context.read<SyncService>();
     final pendientes = await syncService.contarPendientes();
     final enError = await syncService.contarEnError();
+    final problema = await syncService.ultimoProblemaPendiente();
     if (!mounted) return;
     setState(() {
       _ordenes = rows.map(OrdenTrabajo.fromLocalMap).toList();
       _pendientes = pendientes;
       _enError = enError;
+      _problemaEnvio = problema;
     });
   }
 
@@ -109,12 +137,12 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
 
   Future<void> _mostrarErroresDeSync() async {
     final syncService = context.read<SyncService>();
-    final tareas = await syncService.tareasEnError();
+    final tareas = await syncService.tareasConProblema();
     if (!mounted) return;
     await showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Cambios que no se pudieron enviar'),
+        title: const Text('Cambios que no se han enviado'),
         content: SizedBox(
           width: double.maxFinite,
           child: SingleChildScrollView(
@@ -238,6 +266,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> {
             sincronizando: sincronizando,
             pendientes: _pendientes,
             enError: _enError,
+            problema: _problemaEnvio,
             onTapErrores: _mostrarErroresDeSync,
           ),
           Expanded(

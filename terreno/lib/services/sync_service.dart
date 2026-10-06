@@ -37,6 +37,17 @@ class SyncService extends ChangeNotifier {
     }
   }
 
+  // Cuando termino la ultima sincronizacion completa de esta sesion de la app. Los catalogos
+  // (repuestos, checklist, flota) y el historial de equipos cambian poco y bajarlos cuesta decenas
+  // de peticiones: se refrescan al abrir la app y despues cada _vigenciaCompleta, no en cada
+  // toque. Vive en memoria: tras reiniciar la app la primera sincronizacion vuelve a ser completa.
+  DateTime? _ultimaCompleta;
+  static const _vigenciaCompleta = Duration(hours: 6);
+
+  DateTime? _ultimaSincronizacion;
+  /// Cuando se completo la ultima sincronizacion (null si aun no hubo ninguna en esta sesion).
+  DateTime? get ultimaSincronizacion => _ultimaSincronizacion;
+
   Future<Database> get _db async => LocalDatabase.instance.database;
 
   // ---------- Encolar acciones del mecanico (siempre escriben local primero) ----------
@@ -299,6 +310,37 @@ class SyncService extends ChangeNotifier {
     return db.query('cola_sincronizacion', where: "estado = 'error'", orderBy: 'creado_en ASC');
   }
 
+  /// Tareas que no se han podido enviar y por que: las que ya pasaron a error y las que siguen
+  /// pendientes pero fallaron en el ultimo intento (sin senal real, servidor lento o rechazo que
+  /// aun se reintenta). Antes estas ultimas eran invisibles: el aviso decia "5 cambios por
+  /// enviar" y al actualizar no cambiaba nada, sin explicar por que.
+  Future<List<Map<String, dynamic>>> tareasConProblema() async {
+    final db = await _db;
+    return db.query(
+      'cola_sincronizacion',
+      where: "estado = 'error' OR (estado = 'pendiente' AND ultimo_error IS NOT NULL)",
+      orderBy: 'creado_en ASC',
+    );
+  }
+
+  /// Motivo del ultimo fallo de una tarea que sigue pendiente, para mostrarlo en el aviso.
+  Future<String?> ultimoProblemaPendiente() async {
+    final db = await _db;
+    final filas = await db.query(
+      'cola_sincronizacion',
+      columns: ['ultimo_error'],
+      where: "estado = 'pendiente' AND ultimo_error IS NOT NULL",
+      orderBy: 'creado_en ASC',
+      limit: 1,
+    );
+    return filas.isEmpty ? null : filas.first['ultimo_error'] as String?;
+  }
+
+  Future<void> _anotarProblema(int tareaId, String mensaje) async {
+    final db = await _db;
+    await db.update('cola_sincronizacion', {'ultimo_error': mensaje}, where: 'id = ?', whereArgs: [tareaId]);
+  }
+
   /// Devuelve las tareas en error al estado pendiente (con reintentos en cero)
   /// y dispara una sincronizacion inmediata.
   Future<void> reintentarErrores() async {
@@ -314,7 +356,10 @@ class SyncService extends ChangeNotifier {
 
   // ---------- Sincronizacion ----------
 
-  Future<void> sincronizar() async {
+  /// Sincronizacion rapida: envia la cola, baja las OT y el furgon. Es lo que hace falta tras cada
+  /// accion del mecanico y al volver a la app. La completa agrega catalogos, flota e historial de
+  /// equipos; se hace sola al abrir la app y cada pocas horas, o con `completa: true`.
+  Future<void> sincronizar({bool completa = false}) async {
     if (_sincronizando) return;
     _sincronizando = true;
     notifyListeners();
@@ -323,11 +368,28 @@ class SyncService extends ChangeNotifier {
       await _pull();
       // el pull respondio autorizado: si habia un aviso de sesion expirada, ya no aplica
       reiniciarSesion();
-      await _pullCatalogoInsumos();
-      await _pullCatalogoChecklist();
-      await _pullMaquinarias();
-      await _pullHistorialEquipos();
       await _pullMiFurgon();
+
+      final vencida = _ultimaCompleta == null || DateTime.now().difference(_ultimaCompleta!) > _vigenciaCompleta;
+      if (completa || vencida) {
+        // cada bloque por separado: un catalogo lento o caido no debe impedir los demas ni
+        // dejar sin refrescar lo que ya se bajo
+        var todoOk = true;
+        for (final bloque in [
+          _pullCatalogoInsumos,
+          _pullCatalogoChecklist,
+          _pullMaquinarias,
+          _pullHistorialEquipos,
+        ]) {
+          try {
+            await bloque();
+          } catch (_) {
+            todoOk = false;
+          }
+        }
+        if (todoOk) _ultimaCompleta = DateTime.now();
+      }
+      _ultimaSincronizacion = DateTime.now();
     } finally {
       _sincronizando = false;
       notifyListeners();
@@ -346,12 +408,14 @@ class SyncService extends ChangeNotifier {
     final idsConPendientes = pendientesRows.map((r) => r['orden_trabajo_id'] as int).toSet();
 
     final idsDelServidor = <int>{};
+    final lote = db.batch();
     for (final item in (data as List)) {
       final orden = OrdenTrabajo.fromApiJson(item);
       idsDelServidor.add(orden.id);
       if (idsConPendientes.contains(orden.id)) continue;
-      await db.insert('ordenes_locales', orden.toLocalMap(), conflictAlgorithm: ConflictAlgorithm.replace);
+      lote.insert('ordenes_locales', orden.toLocalMap(), conflictAlgorithm: ConflictAlgorithm.replace);
     }
+    await lote.commit(noResult: true);
 
     // OT que el servidor ya no le entrega a este mecanico (reasignadas a otro tecnico o
     // eliminadas): antes quedaban para siempre en el telefono, y trabajar sobre ellas llenaba
@@ -421,8 +485,10 @@ class SyncService extends ChangeNotifier {
     // sin `limit` el endpoint devuelve la flota completa, que es lo que necesita el catalogo
     final data = (await ApiClient.instance.get('/api/maquinarias'))['items'];
     final db = await _db;
+    // un solo batch: son ~500 equipos y un insert por fila tardaba segundos
+    final batch = db.batch();
     for (final item in (data as List)) {
-      await db.insert(
+      batch.insert(
         'maquinarias_local',
         {
           'id': item['id'],
@@ -435,6 +501,7 @@ class SyncService extends ChangeNotifier {
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
+    await batch.commit(noResult: true);
   }
 
   /// Ficha completa, historial de OT y lecturas de horometro de los equipos que el mecanico
@@ -516,25 +583,29 @@ class SyncService extends ChangeNotifier {
   Future<void> _pullCatalogoChecklist() async {
     final data = await ApiClient.instance.get('/api/checklist');
     final db = await _db;
+    final batch = db.batch();
     for (final item in (data as List)) {
-      await db.insert(
+      batch.insert(
         'checklist_catalogo_local',
         {'id': item['id'], 'grupo': item['grupo'], 'nombre': item['nombre'], 'orden': item['orden']},
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
+    await batch.commit(noResult: true);
   }
 
   Future<void> _pullCatalogoInsumos() async {
     final data = await ApiClient.instance.get('/api/insumos');
     final db = await _db;
+    final batch = db.batch();
     for (final item in (data as List)) {
-      await db.insert(
+      batch.insert(
         'insumos_catalogo_local',
         {'id': item['id'], 'nombre': item['nombre'], 'unidad_medida': item['unidad_medida']},
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
+    await batch.commit(noResult: true);
   }
 
   // Clasificacion de errores (practica estandar de colas offline-first):
@@ -575,10 +646,14 @@ class SyncService extends ChangeNotifier {
           notifyListeners();
         }
       } on SocketException {
-        return; // sin red: abortar sin castigar la tarea
+        // sin red: abortar sin castigar la tarea, pero dejando el motivo visible
+        await _anotarProblema(tarea['id'] as int, 'Sin conexión con el servidor. Se reintentará al volver la señal.');
+        return;
       } on TimeoutException {
+        await _anotarProblema(tarea['id'] as int, 'El servidor no respondió a tiempo. Se reintentará en la próxima actualización.');
         return;
       } on http.ClientException {
+        await _anotarProblema(tarea['id'] as int, 'No se pudo conectar con el servidor. Se reintentará en la próxima actualización.');
         return;
       } on ErrorPermanenteSync catch (err) {
         // irrecuperable (ej. foto borrada del telefono): a error de inmediato,
