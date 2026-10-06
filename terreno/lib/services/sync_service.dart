@@ -136,6 +136,9 @@ class SyncService extends ChangeNotifier {
       'ordenes_locales',
       {
         'diagnostico': ?diagnostico,
+        'tipo_servicio': ?tipoServicio,
+        'observacion_final': ?observacionFinal,
+        'folio_papel': ?folioPapel,
         'actualizado_en': DateTime.now().toIso8601String(),
       },
       where: 'id = ?',

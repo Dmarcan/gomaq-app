@@ -8,6 +8,7 @@ import '../services/connectivity_service.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../widgets/orden_card.dart';
+import '../widgets/selector_equipo.dart';
 import '../widgets/sync_banner.dart';
 import 'mi_cuenta_screen.dart';
 import 'mi_furgon_screen.dart';
@@ -135,6 +136,43 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
     if (confirmado == true) await auth.logout();
   }
 
+  /// Orden nueva de cualquier equipo de la flota, sin esperar a que la oficina la cree. Nace con
+  /// un id local y la cola la crea en el servidor al haber senal (igual que "intervine otro equipo").
+  Future<void> _crearOrden() async {
+    final equipo = await elegirEquipo(context);
+    if (equipo == null || !mounted) return;
+    final motivoCtrl = TextEditingController();
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Nueva orden para ${equipo['codigo']}'),
+        content: TextField(
+          controller: motivoCtrl,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Motivo o qué se encontró'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Crear orden')),
+        ],
+      ),
+    );
+    final motivo = motivoCtrl.text.trim();
+    motivoCtrl.dispose();
+    if (confirmado != true || !mounted) return;
+    final sync = context.read<SyncService>();
+    final ordenId = await sync.encolarOtEnTerreno(
+      maquinariaId: equipo['id'] as int,
+      maquinariaCodigo: equipo['codigo'] as String,
+      motivo: motivo.isEmpty ? null : motivo,
+    );
+    await _cargarLocal();
+    if (!mounted) return;
+    _sincronizarSiHayConexion();
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => OrdenDetailScreen(ordenId: ordenId)));
+    _cargarLocal();
+  }
+
   Future<void> _mostrarErroresDeSync() async {
     final syncService = context.read<SyncService>();
     final tareas = await syncService.tareasConProblema();
@@ -257,6 +295,11 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
           ),
         ),
       ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _crearOrden,
+        icon: const Icon(Icons.add),
+        label: const Text('Nueva OT'),
+      ),
       body: Column(
         children: [
           if (sesionExpirada)
@@ -280,7 +323,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
                         Padding(
                           padding: EdgeInsets.symmetric(horizontal: 32),
                           child: Text(
-                            'No tienes órdenes asignadas. Cuando el administrativo te asigne una, aparecerá aquí.',
+                            'No tienes órdenes asignadas. Cuando el administrativo te asigne una, aparecerá aquí. También puedes crear una con el botón Nueva OT.',
                             textAlign: TextAlign.center,
                             style: TextStyle(color: GomaqColors.textoSecundario),
                           ),

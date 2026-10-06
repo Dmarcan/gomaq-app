@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
 import 'package:signature/signature.dart';
+import '../db/local_database.dart';
 import '../models/orden_trabajo.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
@@ -64,6 +65,16 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
           rutaFirma = '${dir.path}/ot${widget.orden.id}_firma_${DateTime.now().millisecondsSinceEpoch}.png';
           await File(rutaFirma).writeAsBytes(png);
         }
+      }
+
+      // el tiempo de trabajo parte solo al iniciar: si sigue abierto, se cierra al finalizar
+      final db = await LocalDatabase.instance.database;
+      final abiertos = await db.query('tramos_locales',
+          where: 'orden_trabajo_id = ? AND termino IS NULL', whereArgs: [widget.orden.id], orderBy: 'inicio ASC');
+      for (final tramo in abiertos) {
+        final inicio = DateTime.parse(tramo['inicio'] as String);
+        await db.delete('tramos_locales', where: 'id = ?', whereArgs: [tramo['id']]);
+        await syncService.encolarTramo(widget.orden.id, inicio: inicio, termino: DateTime.now());
       }
 
       await syncService.encolarFinalizar(
