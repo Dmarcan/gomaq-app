@@ -11,7 +11,9 @@ import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../widgets/estado_chip.dart';
 import '../widgets/foto_thumbnail.dart';
+import '../widgets/dialogo_horometro.dart';
 import '../widgets/seccion_bloqueada.dart';
+import '../widgets/selector_equipo.dart';
 import 'cerrar_orden_screen.dart';
 import 'maquinaria_historial_screen.dart';
 
@@ -40,6 +42,10 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   int? _insumoSeleccionadoId;
   String? _tipoServicio;
   String _facturableLinea = 'pendiente';
+  // true cuando el mecanico escribio el precio a mano: ya no se pisa con el costo del catalogo
+  bool _precioEditado = false;
+  // evita abrir dos tramos si se toca INICIAR dos veces seguidas
+  bool _iniciando = false;
 
   /// Los seis tipos del talonario, en el mismo orden que el papel.
   static const _tiposServicio = [
@@ -89,6 +95,10 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     setState(() {
       _orden = OrdenTrabajo.fromLocalMap(rows.first);
       _diagnosticoCtrl.text = _orden!.diagnostico ?? '';
+      // la cabecera del talonario ahora vive tambien en el telefono: al reabrir la orden se ve lo ya llenado
+      _tipoServicio = _orden!.tipoServicio;
+      if (_observacionFinalCtrl.text.isEmpty) _observacionFinalCtrl.text = _orden!.observacionFinal ?? '';
+      if (_folioPapelCtrl.text.isEmpty) _folioPapelCtrl.text = _orden!.folioPapel ?? '';
       _fotosLocales = fotos;
       _insumosLocales = insumos;
       _catalogoInsumos = catalogo;
@@ -98,6 +108,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
       if (_insumoSeleccionadoId == null && catalogo.isNotEmpty) {
         _insumoSeleccionadoId = catalogo.first['id'] as int;
       }
+      _precargarPrecio();
     });
   }
 
@@ -169,8 +180,67 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     }
   }
 
+  /// El mecanico acepta el trabajo: la oficina ve que lo recibio. No hace falta senal.
+  Future<void> _aceptarTrabajo() async {
+    await context.read<SyncService>().encolarDiagnostico(widget.ordenId, estado: 'aceptada');
+    await _cargar();
+    _intentarSincronizarAhora();
+  }
+
+  /// Sale hacia el destino: desde aqui corre el tiempo de viaje, separado del de trabajo, y el
+  /// cliente ve que el tecnico va en camino.
+  Future<void> _salirAlDestino() async {
+    await context.read<SyncService>().encolarDiagnostico(widget.ordenId, estado: 'en_camino');
+    await _cargar();
+    _intentarSincronizarAhora();
+  }
+
+  /// INICIAR TRABAJO se pulsa ya en el sitio: pasa la orden a en terreno y arranca el reloj de
+  /// trabajo (el INICIO del talonario), sin pedirle al mecanico que abra el tramo a mano.
   Future<void> _iniciarTrabajo() async {
-    await _guardarDiagnostico(estado: 'en_terreno');
+    if (_iniciando) return;
+    _iniciando = true;
+    try {
+      final sync = context.read<SyncService>();
+      await sync.encolarDiagnostico(widget.ordenId, diagnostico: _diagnosticoCtrl.text.trim(), estado: 'en_terreno');
+      // despues del cambio de estado: la cola corre en orden de creacion
+      if (!_tramosLocales.any((t) => t['termino'] == null)) {
+        await sync.encolarTramo(widget.ordenId, inicio: DateTime.now());
+      }
+      await _cargar();
+      _intentarSincronizarAhora();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Trabajo iniciado. El tiempo de trabajo ya está corriendo.')),
+        );
+      }
+    } finally {
+      _iniciando = false;
+    }
+  }
+
+  /// Lectura de horometro en cualquier momento de la visita, no solo al cerrar. Va a la cola como
+  /// una tarea mas (con su uuid), asi que funciona sin senal y un reintento no la duplica.
+  Future<void> _registrarHorometro() async {
+    final orden = _orden;
+    if (orden == null) return;
+    final valor = await pedirLecturaHorometro(
+      context,
+      codigo: orden.maquinariaCodigo ?? 'el equipo',
+      maquinariaId: orden.maquinariaId,
+    );
+    if (valor == null || !mounted) return;
+    await context.read<SyncService>().encolarHorometro(
+          widget.ordenId,
+          maquinariaId: orden.maquinariaId,
+          valor: valor,
+        );
+    _intentarSincronizarAhora();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Lectura de ${formatoHoras(valor)} h guardada')),
+      );
+    }
   }
 
   Future<void> _tomarFoto(String tipo) async {
@@ -191,6 +261,24 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
 
   List<Map<String, dynamic>> _fotosDeTipo(String tipo) =>
       _fotosLocales.where((f) => (f['tipo'] ?? 'antes') == tipo).toList();
+
+  /// Costo del repuesto elegido, en pesos enteros, o null si no tiene (o se escribe a mano).
+  double? _costoDelElegido() {
+    final id = _insumoSeleccionadoId;
+    if (id == null) return null;
+    final fila = _catalogoInsumos.where((i) => i['id'] == id);
+    if (fila.isEmpty) return null;
+    final costo = (fila.first['costo_unitario'] as num?)?.toDouble();
+    return (costo == null || costo <= 0) ? null : costo.roundToDouble();
+  }
+
+  /// El precio de una linea parte del que ya tiene el repuesto (por ahora su costo); el mecanico
+  /// puede cambiarlo. No pisa un precio que escribio a mano.
+  void _precargarPrecio() {
+    if (_precioEditado) return;
+    final costo = _costoDelElegido();
+    _precioInsumoCtrl.text = costo == null ? '' : costo.round().toString();
+  }
 
   Future<void> _agregarInsumo() async {
     final cantidad = double.tryParse(_cantidadInsumoCtrl.text.replaceAll(',', '.'));
@@ -218,13 +306,20 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
           insumoNombre: nombre,
           cantidad: cantidad,
           descripcion: descripcion.isEmpty ? null : descripcion,
-          precioUnitario: double.tryParse(_precioInsumoCtrl.text.replaceAll('.', '').replaceAll(',', '.')),
+          // si no es facturable el precio no se muestra, pero se guarda el costo del catalogo: el
+          // gasto por equipo cuenta todas las lineas, se cobren o no
+          precioUnitario: _facturableLinea == 'no'
+              ? _costoDelElegido()
+              : double.tryParse(_precioInsumoCtrl.text.replaceAll('.', '').replaceAll(',', '.')),
           facturable: _facturableLinea,
         );
     _cantidadInsumoCtrl.clear();
     _descripcionInsumoCtrl.clear();
-    _precioInsumoCtrl.clear();
-    setState(() => _facturableLinea = 'pendiente');
+    _precioEditado = false;
+    setState(() {
+      _facturableLinea = 'pendiente';
+      _precargarPrecio();
+    });
     await _cargar();
     _intentarSincronizarAhora();
   }
@@ -251,13 +346,46 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
 
   // ---------- Secciones de UI ----------
 
-  Widget _tituloSeccion(IconData icono, String texto) {
+  /// `completa`: true = listo (verde), false = falta completarlo (amarillo), null = sin estado
+  /// (seccion opcional o la orden ya esta cerrada). Ademas del color lleva texto e icono, para
+  /// que no dependa solo del color.
+  Widget _tituloSeccion(IconData icono, String texto, {bool? completa}) {
     return Row(
       children: [
         Icon(icono, size: 18, color: GomaqColors.primario),
         const SizedBox(width: 8),
-        Text(texto, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15)),
+        Expanded(child: Text(texto, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
+        if (completa != null) ...[
+          Icon(
+            completa ? Icons.check_circle : Icons.pending_outlined,
+            size: 16,
+            color: completa ? GomaqColors.estadoPositivo : GomaqColors.estadoAdvertencia,
+          ),
+          const SizedBox(width: 4),
+          Text(
+            completa ? 'Listo' : 'Falta',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: completa ? GomaqColors.estadoPositivo : GomaqColors.estadoAdvertencia,
+            ),
+          ),
+        ],
       ],
+    );
+  }
+
+  /// Tarjeta de seccion que se tine segun este completa (verde) o falte (amarillo).
+  Widget _tarjeta({required Widget child, bool? completa}) {
+    if (completa == null) return Card(child: child);
+    final color = completa ? GomaqColors.estadoPositivo : GomaqColors.estadoAdvertencia;
+    return Card(
+      color: color.withValues(alpha: 0.08),
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+        side: BorderSide(color: color.withValues(alpha: 0.6)),
+      ),
+      child: child,
     );
   }
 
@@ -317,6 +445,14 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                 ],
               ),
             ],
+            if (orden.estado != 'finalizada') ...[
+              const SizedBox(height: 10),
+              OutlinedButton.icon(
+                onPressed: _registrarHorometro,
+                icon: const Icon(Icons.speed, size: 18),
+                label: const Text('Agregar lectura de horómetro'),
+              ),
+            ],
           ],
         ),
       ),
@@ -330,13 +466,18 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     String? ayuda,
   }) {
     final fotos = _fotosDeTipo(tipo);
-    return Card(
+    // mientras la orden esta abierta: las de ANTES son recomendadas, las de DESPUES obligatorias
+    final completa = puedeAgregar
+        ? (tipo == 'despues' ? fotos.length >= ReglasNegocio.minFotosDespues : fotos.isNotEmpty)
+        : null;
+    return _tarjeta(
+      completa: completa,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion(Icons.photo_camera_outlined, titulo),
+            _tituloSeccion(Icons.photo_camera_outlined, titulo, completa: completa),
             if (ayuda != null) ...[
               const SizedBox(height: 4),
               Text(ayuda, style: const TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
@@ -383,7 +524,9 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   }
 
   Widget _seccionDiagnostico({required bool soloLectura, required bool enTerreno}) {
-    return Card(
+    final completa = soloLectura ? null : (_orden?.diagnostico ?? '').trim().isNotEmpty;
+    return _tarjeta(
+      completa: completa,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -391,7 +534,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
           children: [
             // El talonario separa OBSERVACIONES INICIALES de OBSERVACIONES FINALES:
             // qué se encontró al llegar y qué se hizo (entrevista el jefe de taller, punto 5).
-            _tituloSeccion(Icons.build_outlined, 'Observaciones'),
+            _tituloSeccion(Icons.build_outlined, 'Observaciones', completa: completa),
             const SizedBox(height: 12),
             const Text('INICIALES · qué se encontró al llegar',
                 style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario)),
@@ -458,13 +601,17 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   }
 
   Widget _seccionInsumos({required bool soloLectura}) {
-    return Card(
+    // opcional: sin repuestos la orden no se cobra, y eso es valido. Solo se marca cuando ya hay.
+    final hayRepuestos = _insumosLocales.any((l) => l['anulada'] != 1);
+    final bool? completa = soloLectura ? null : (hayRepuestos ? true : null);
+    return _tarjeta(
+      completa: completa,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion(Icons.inventory_2_outlined, 'Repuestos utilizados'),
+            _tituloSeccion(Icons.inventory_2_outlined, 'Repuestos utilizados', completa: completa),
             const SizedBox(height: 4),
             if (!soloLectura) ...[
               const Text(
@@ -488,7 +635,11 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                         ),
                       ),
                   ],
-                  onChanged: (v) => setState(() => _insumoSeleccionadoId = v),
+                  onChanged: (v) => setState(() {
+                    _insumoSeleccionadoId = v;
+                    _precioEditado = false;
+                    _precargarPrecio();
+                  }),
                 ),
               TextField(
                 controller: _descripcionInsumoCtrl,
@@ -507,11 +658,18 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: TextField(
-                      controller: _precioInsumoCtrl,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(isDense: true, labelText: 'Precio unitario'),
-                    ),
+                    // sin cobro no hace falta pedir un precio
+                    child: _facturableLinea == 'no'
+                        ? const Text(
+                            'No se cobra al cliente',
+                            style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario),
+                          )
+                        : TextField(
+                            controller: _precioInsumoCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(isDense: true, labelText: 'Precio unitario'),
+                            onChanged: (_) => _precioEditado = true,
+                          ),
                   ),
                   const SizedBox(width: 4),
                   IconButton(
@@ -638,63 +796,39 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   /// atiende una segunda máquina, su gasto tiene que quedar contra ESA máquina y no contra
   /// la de la orden en curso, o el costo por equipo queda mal atribuido.
   Future<void> _intervenirOtroEquipo() async {
-    final db = await LocalDatabase.instance.database;
-    final flota = await db.query('maquinarias_local', orderBy: 'codigo ASC');
-    if (!mounted) return;
-    if (flota.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Sin señal para cargar la lista de equipos todavía')),
-      );
-      return;
-    }
+    final equipo = await elegirEquipo(context, excluirId: _orden?.maquinariaId);
+    if (equipo == null || !mounted) return;
 
     final motivoCtrl = TextEditingController();
-    int? elegido;
     final confirmado = await showDialog<bool>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Intervine otro equipo'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const Text(
-                'Se abre una orden aparte para ese equipo, para que sus repuestos queden a su nombre.',
-                style: TextStyle(fontSize: 12),
-              ),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<int>(
-                isExpanded: true,
-                decoration: const InputDecoration(labelText: 'Equipo'),
-                items: [
-                  for (final m in flota.where((m) => m['id'] != _orden?.maquinariaId))
-                    DropdownMenuItem(
-                      value: m['id'] as int,
-                      child: Text('${m['codigo']} · ${m['tipo'] ?? ''}', overflow: TextOverflow.ellipsis),
-                    ),
-                ],
-                onChanged: (v) => setDialogState(() => elegido = v),
-              ),
-              TextField(
-                controller: motivoCtrl,
-                decoration: const InputDecoration(labelText: 'Qué se encontró'),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Crear orden')),
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Intervine ${equipo['codigo']}'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Text(
+              'Se abre una orden aparte para ese equipo, para que sus repuestos queden a su nombre.',
+              style: TextStyle(fontSize: 12),
+            ),
+            TextField(
+              controller: motivoCtrl,
+              decoration: const InputDecoration(labelText: 'Qué se encontró'),
+            ),
           ],
         ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Crear orden')),
+        ],
       ),
     );
     final motivo = motivoCtrl.text.trim();
     motivoCtrl.dispose();
-    if (confirmado != true || elegido == null || !mounted) return;
+    if (confirmado != true || !mounted) return;
 
-    final equipo = flota.firstWhere((m) => m['id'] == elegido);
     await context.read<SyncService>().encolarOtEnTerreno(
-          maquinariaId: elegido!,
+          maquinariaId: equipo['id'] as int,
           maquinariaCodigo: equipo['codigo'] as String,
           motivo: motivo.isEmpty ? null : motivo,
         );
@@ -706,15 +840,16 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     }
   }
 
-  /// TIPO DE SERVICIO del talonario. Lo marca el mecánico, que es quien sabe de qué se trató.
   Widget _seccionTipoServicio({required bool soloLectura}) {
-    return Card(
+    final completa = soloLectura ? null : _tipoServicio != null;
+    return _tarjeta(
+      completa: completa,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion(Icons.assignment_outlined, 'Tipo de servicio'),
+            _tituloSeccion(Icons.assignment_outlined, 'Tipo de servicio', completa: completa),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
@@ -756,13 +891,15 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     for (final item in _catalogoChecklist) {
       grupos.putIfAbsent(item['grupo'] as String, () => []).add(item);
     }
-    return Card(
+    final completa = soloLectura ? null : _serviciosMarcados.isNotEmpty;
+    return _tarjeta(
+      completa: completa,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion(Icons.checklist_outlined, 'Sistemas intervenidos'),
+            _tituloSeccion(Icons.checklist_outlined, 'Sistemas intervenidos', completa: completa),
             const Text(
               'Marca dónde se intervino en esta visita',
               style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario),
@@ -818,13 +955,15 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   /// retomar en otra visita; aquí se pueden registrar los que hagan falta.
   Widget _seccionTramos({required bool soloLectura}) {
     final abierto = _tramosLocales.where((t) => t['termino'] == null).toList();
-    return Card(
+    final completa = soloLectura ? null : _tramosLocales.isNotEmpty;
+    return _tarjeta(
+      completa: completa,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion(Icons.schedule_outlined, 'Tiempos de trabajo'),
+            _tituloSeccion(Icons.schedule_outlined, 'Tiempos de trabajo', completa: completa),
             const SizedBox(height: 8),
             if (_tramosLocales.isEmpty)
               const Text('Sin tramos registrados', style: TextStyle(color: GomaqColors.textoSecundario)),
@@ -873,10 +1012,25 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     VoidCallback? accion;
     String? notaFaltante;
 
+    // alternativa para quien ya esta en el lugar y no pasa por los pasos del viaje
+    VoidCallback? accionSecundaria;
+
     switch (orden.estado) {
       case 'asignada':
       case 'pendiente':
-        texto = 'INICIAR TRABAJO';
+        texto = 'ACEPTAR TRABAJO';
+        icono = Icons.check_circle_outline;
+        accion = _aceptarTrabajo;
+        accionSecundaria = _iniciarTrabajo;
+        break;
+      case 'aceptada':
+        texto = 'SALIR HACIA EL DESTINO';
+        icono = Icons.directions_car_outlined;
+        accion = _salirAlDestino;
+        accionSecundaria = _iniciarTrabajo;
+        break;
+      case 'en_camino':
+        texto = 'LLEGUÉ · INICIAR TRABAJO';
         icono = Icons.play_circle_outline;
         accion = _iniciarTrabajo;
         break;
@@ -925,6 +1079,11 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                 label: Text(texto),
               ),
             ),
+            if (accionSecundaria != null)
+              TextButton(
+                onPressed: accionSecundaria,
+                child: const Text('Ya estoy en el lugar: iniciar trabajo'),
+              ),
           ],
         ),
       ),
@@ -938,7 +1097,8 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    final asignada = orden.estado == 'asignada' || orden.estado == 'pendiente';
+    // antes de iniciar el trabajo: asignada, aceptada o en camino
+    final asignada = const ['pendiente', 'asignada', 'aceptada', 'en_camino'].contains(orden.estado);
     final enProgreso = orden.estado == 'en_terreno' || orden.estado == 'en_reparacion';
     final finalizada = orden.estado == 'finalizada';
 

@@ -9,7 +9,7 @@ class OrdenCard extends StatelessWidget {
 
   const OrdenCard({super.key, required this.orden, required this.onAbrir});
 
-  bool get _activa => orden.estado == 'asignada' || orden.estado == 'en_terreno' || orden.estado == 'en_reparacion';
+  bool get _activa => const ['asignada', 'aceptada', 'en_camino', 'en_terreno', 'en_reparacion'].contains(orden.estado);
 
   @override
   Widget build(BuildContext context) {

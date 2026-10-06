@@ -8,10 +8,13 @@ import '../services/connectivity_service.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../widgets/orden_card.dart';
+import '../widgets/selector_equipo.dart';
 import '../widgets/sync_banner.dart';
+import 'flota_screen.dart';
 import 'mi_cuenta_screen.dart';
 import 'mi_furgon_screen.dart';
 import 'orden_detail_screen.dart';
+import 'ordenes_disponibles_screen.dart';
 
 class OrdenesListScreen extends StatefulWidget {
   const OrdenesListScreen({super.key});
@@ -31,6 +34,8 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
   int _pendientes = 0;
   int _enError = 0;
   String? _problemaEnvio;
+  // ordenes sin mecanico que se pueden tomar; null = no se pudo consultar (sin senal)
+  int? _disponibles;
   StreamSubscription<bool>? _conexionSub;
   Timer? _temporizador;
 
@@ -107,7 +112,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
       'crear_ot': 'Orden nueva en terreno',
     };
     final id = tarea['orden_trabajo_id'] as int;
-    final orden = id < 0 ? 'orden creada sin señal' : 'OT-$id';
+    final orden = id == 0 ? 'sin orden' : id < 0 ? 'orden creada sin señal' : 'OT-$id';
     return '${nombres[tarea['tipo']] ?? tarea['tipo']} · $orden';
   }
 
@@ -133,6 +138,43 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
       ),
     );
     if (confirmado == true) await auth.logout();
+  }
+
+  /// Orden nueva de cualquier equipo de la flota, sin esperar a que la oficina la cree. Nace con
+  /// un id local y la cola la crea en el servidor al haber senal (igual que "intervine otro equipo").
+  Future<void> _crearOrden() async {
+    final equipo = await elegirEquipo(context);
+    if (equipo == null || !mounted) return;
+    final motivoCtrl = TextEditingController();
+    final confirmado = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text('Nueva orden para ${equipo['codigo']}'),
+        content: TextField(
+          controller: motivoCtrl,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Motivo o qué se encontró'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Crear orden')),
+        ],
+      ),
+    );
+    final motivo = motivoCtrl.text.trim();
+    motivoCtrl.dispose();
+    if (confirmado != true || !mounted) return;
+    final sync = context.read<SyncService>();
+    final ordenId = await sync.encolarOtEnTerreno(
+      maquinariaId: equipo['id'] as int,
+      maquinariaCodigo: equipo['codigo'] as String,
+      motivo: motivo.isEmpty ? null : motivo,
+    );
+    await _cargarLocal();
+    if (!mounted) return;
+    _sincronizarSiHayConexion();
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => OrdenDetailScreen(ordenId: ordenId)));
+    _cargarLocal();
   }
 
   Future<void> _mostrarErroresDeSync() async {
@@ -200,7 +242,24 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
       // sin conexion real o backend no disponible: se reintenta despues, no rompe la UI
     }
     await _cargarLocal();
+    _contarDisponibles();
     return exito;
+  }
+
+  Future<void> _contarDisponibles() async {
+    if (!context.read<ConnectivityService>().online) return;
+    final n = await OrdenesDisponiblesScreen.contar();
+    if (mounted && n != null) setState(() => _disponibles = n);
+  }
+
+  Future<void> _abrirDisponibles() async {
+    final tomo = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => const OrdenesDisponiblesScreen()),
+    );
+    await _cargarLocal();
+    _contarDisponibles();
+    if (tomo == true) _sincronizarSiHayConexion();
   }
 
   @override
@@ -214,6 +273,15 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
       appBar: AppBar(
         title: const Text('Mis órdenes de trabajo'),
         actions: [
+          IconButton(
+            tooltip: 'Órdenes disponibles',
+            icon: Badge(
+              isLabelVisible: (_disponibles ?? 0) > 0,
+              label: Text('${_disponibles ?? 0}'),
+              child: const Icon(Icons.inbox_outlined),
+            ),
+            onPressed: _abrirDisponibles,
+          ),
           IconButton(
             tooltip: 'Cerrar sesión',
             icon: const Icon(Icons.logout),
@@ -238,6 +306,22 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
                 onTap: () => Navigator.pop(context),
               ),
               ListTile(
+                leading: const Icon(Icons.inbox_outlined),
+                title: Text((_disponibles ?? 0) > 0 ? 'Órdenes disponibles ($_disponibles)' : 'Órdenes disponibles'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _abrirDisponibles();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.precision_manufacturing_outlined),
+                title: const Text('Flota'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const FlotaScreen()));
+                },
+              ),
+              ListTile(
                 leading: const Icon(Icons.person_outline),
                 title: const Text('Mi cuenta'),
                 onTap: () {
@@ -256,6 +340,11 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
             ],
           ),
         ),
+      ),
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _crearOrden,
+        icon: const Icon(Icons.add),
+        label: const Text('Nueva OT'),
       ),
       body: Column(
         children: [
@@ -280,7 +369,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
                         Padding(
                           padding: EdgeInsets.symmetric(horizontal: 32),
                           child: Text(
-                            'No tienes órdenes asignadas. Cuando el administrativo te asigne una, aparecerá aquí.',
+                            'No tienes órdenes asignadas. Cuando el administrativo te asigne una, aparecerá aquí. También puedes crear una con el botón Nueva OT.',
                             textAlign: TextAlign.center,
                             style: TextStyle(color: GomaqColors.textoSecundario),
                           ),

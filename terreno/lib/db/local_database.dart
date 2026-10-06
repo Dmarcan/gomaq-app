@@ -17,7 +17,7 @@ class LocalDatabase {
     final path = join(dbPath, 'gomaq_mecanico.db');
     return openDatabase(
       path,
-      version: 7,
+      version: 9,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE ordenes_locales (
@@ -64,6 +64,8 @@ class LocalDatabase {
         await _crearTablasEquipos(db);
         await _crearTablasFurgon(db);
         await _migrarV7(db);
+        await _migrarV8(db);
+        await _migrarV9(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -107,8 +109,30 @@ class LocalDatabase {
         if (oldVersion < 7) {
           await _migrarV7(db);
         }
+        if (oldVersion < 8) {
+          await _migrarV8(db);
+        }
+        if (oldVersion < 9) {
+          await _migrarV9(db);
+        }
       },
     );
+  }
+
+  /// v9: costo de cada repuesto del catalogo. Precarga el precio de una linea de repuesto (por ahora
+  /// se cobra al costo: GOMAQ aun no define un precio de venta) y se guarda aunque la linea no sea
+  /// facturable, porque "Costos por equipo" cuenta el gasto de todas las lineas.
+  Future<void> _migrarV9(Database db) async {
+    await db.execute('ALTER TABLE insumos_catalogo_local ADD COLUMN costo_unitario REAL');
+  }
+
+  /// v8: cabecera del talonario en la OT local. Hasta aqui el tipo de servicio, la observacion
+  /// final y el folio del papel solo se enviaban al servidor y no se guardaban en el telefono:
+  /// al reabrir la orden aparecian vacios (y no se podia saber que ya estaban completos).
+  Future<void> _migrarV8(Database db) async {
+    await db.execute('ALTER TABLE ordenes_locales ADD COLUMN tipo_servicio TEXT');
+    await db.execute('ALTER TABLE ordenes_locales ADD COLUMN observacion_final TEXT');
+    await db.execute('ALTER TABLE ordenes_locales ADD COLUMN folio_papel TEXT');
   }
 
   /// v7: anulacion de lineas de repuesto y dueño de la cola.

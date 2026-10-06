@@ -8,6 +8,9 @@ class OrdenTrabajo {
   final String estado;
   final bool facturable;
   final String? fechaCreacion;
+  final String? tipoServicio;
+  final String? observacionFinal;
+  final String? folioPapel;
 
   OrdenTrabajo({
     required this.id,
@@ -19,6 +22,9 @@ class OrdenTrabajo {
     required this.estado,
     required this.facturable,
     this.fechaCreacion,
+    this.tipoServicio,
+    this.observacionFinal,
+    this.folioPapel,
   });
 
   factory OrdenTrabajo.fromApiJson(Map<String, dynamic> json) {
@@ -32,6 +38,9 @@ class OrdenTrabajo {
       estado: json['estado'],
       facturable: json['facturable'] == true,
       fechaCreacion: json['fecha_creacion'],
+      tipoServicio: json['tipo_servicio'],
+      observacionFinal: json['observacion_final'],
+      folioPapel: json['folio_papel'],
     );
   }
 
@@ -46,6 +55,9 @@ class OrdenTrabajo {
       estado: map['estado'],
       facturable: map['facturable'] == 1,
       fechaCreacion: map['fecha_creacion'],
+      tipoServicio: map['tipo_servicio'],
+      observacionFinal: map['observacion_final'],
+      folioPapel: map['folio_papel'],
     );
   }
 
@@ -60,6 +72,9 @@ class OrdenTrabajo {
       'estado': estado,
       'facturable': facturable ? 1 : 0,
       'fecha_creacion': fechaCreacion,
+      'tipo_servicio': tipoServicio,
+      'observacion_final': observacionFinal,
+      'folio_papel': folioPapel,
       'actualizado_en': DateTime.now().toIso8601String(),
     };
   }
