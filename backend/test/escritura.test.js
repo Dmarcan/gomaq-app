@@ -24,7 +24,7 @@ const HABILITADO = process.env.GOMAQ_TEST_ESCRITURA === '1' && Boolean(process.e
 let servidor;
 let base;
 let pool;
-const datos = { ordenes: [], insumos: [], equipos: [] };
+const datos = { ordenes: [], insumos: [], equipos: [], ubicaciones: [] };
 const tokens = {};
 
 function requiereBase(t) {
@@ -60,6 +60,7 @@ before(async () => {
     app.use('/api/facturacion', require('../src/routes/facturacion'));
     app.use('/api/rentabilidad', require('../src/routes/rentabilidad'));
     app.use('/api/maquinarias', require('../src/routes/maquinarias'));
+    app.use('/api/maquinarias', require('../src/routes/guias'));
     await new Promise((resolve) => { servidor = app.listen(0, resolve); });
     base = `http://127.0.0.1:${servidor.address().port}`;
 
@@ -119,6 +120,10 @@ after(async () => {
         await pool.query('DELETE FROM stock_ubicacion WHERE insumo_id = ANY($1)', [datos.insumos]);
         await pool.query('DELETE FROM insumos WHERE id = ANY($1)', [datos.insumos]);
     }
+    if (datos.ubicaciones.length) {
+        await pool.query('DELETE FROM stock_ubicacion WHERE ubicacion_id = ANY($1)', [datos.ubicaciones]);
+        await pool.query('DELETE FROM ubicaciones_stock WHERE id = ANY($1)', [datos.ubicaciones]);
+    }
     await new Promise((resolve) => servidor.close(resolve));
     await pool.end();
 });
@@ -147,6 +152,16 @@ async function crearInsumoConStock(cantidad) {
     const ingreso = await pedir('POST', `/api/insumos/${id}/ingreso`, 'administrativo', { cantidad });
     assert.equal(ingreso.status, 200);
     return id;
+}
+
+/** Ubicacion de stock tipo furgon sin vehiculo, solo para recibir transferencias en las pruebas. */
+async function crearFurgonDePrueba() {
+    const r = await pool.query(
+        `INSERT INTO ubicaciones_stock (nombre, tipo) VALUES ($1, 'furgon') RETURNING id`,
+        [`Furgon de prueba ${crypto.randomUUID()}`]
+    );
+    datos.ubicaciones.push(r.rows[0].id);
+    return r.rows[0].id;
 }
 
 async function stockBodega(insumoId) {
@@ -191,6 +206,55 @@ describe('reintentos de la cola offline', () => {
         const lineas = await pool.query('SELECT id FROM movimientos_insumo WHERE orden_trabajo_id = $1', [ot]);
         assert.equal(lineas.rows.length, 1);
         assert.equal(await stockBodega(insumo), 8);
+    });
+
+    test('una carga de furgon reintentada descuenta la bodega una sola vez', async (t) => {
+        if (!requiereBase(t)) return;
+        const insumo = await crearInsumoConStock(10);
+        const destino = await crearFurgonDePrueba();
+        const cuerpo = { insumo_id: insumo, cantidad: 4, ubicacion_destino_id: destino, uuid_cliente: crypto.randomUUID() };
+
+        const primera = await pedir('POST', '/api/insumos/transferencia', 'administrativo', cuerpo);
+        const segunda = await pedir('POST', '/api/insumos/transferencia', 'administrativo', cuerpo);
+
+        assert.equal(primera.status, 201);
+        assert.equal(segunda.status, 200, 'el reintento responde lo ya hecho');
+        assert.equal(segunda.body.ya_registrada, true);
+        assert.equal(await stockBodega(insumo), 6, 'la bodega se descuenta una sola vez');
+        const movimientos = await pool.query(
+            'SELECT id FROM movimientos_insumo WHERE insumo_id = $1 AND ubicacion_destino_id = $2', [insumo, destino]);
+        assert.equal(movimientos.rows.length, 1);
+    });
+
+    test('tres cargas de furgon simultaneas con el mismo uuid no duplican', async (t) => {
+        if (!requiereBase(t)) return;
+        const insumo = await crearInsumoConStock(10);
+        const destino = await crearFurgonDePrueba();
+        const cuerpo = { insumo_id: insumo, cantidad: 2, ubicacion_destino_id: destino, uuid_cliente: crypto.randomUUID() };
+
+        const respuestas = await Promise.all([1, 2, 3].map(() =>
+            pedir('POST', '/api/insumos/transferencia', 'administrativo', cuerpo)));
+
+        assert.ok(respuestas.every((r) => r.status === 200 || r.status === 201), JSON.stringify(respuestas.map((r) => r.status)));
+        assert.equal(await stockBodega(insumo), 8);
+    });
+
+    test('una carga de furgon con uuid malformado se rechaza', async (t) => {
+        if (!requiereBase(t)) return;
+        const insumo = await crearInsumoConStock(5);
+        const r = await pedir('POST', '/api/insumos/transferencia', 'administrativo',
+            { insumo_id: insumo, cantidad: 1, ubicacion_destino_id: await crearFurgonDePrueba(), uuid_cliente: 'no-es-un-uuid' });
+        assert.equal(r.status, 400);
+    });
+
+    test('el catalogo de insumos trae el stock de bodega', async (t) => {
+        if (!requiereBase(t)) return;
+        const insumo = await crearInsumoConStock(7);
+        const r = await pedir('GET', '/api/insumos', 'mecanico');
+        assert.equal(r.status, 200);
+        const fila = r.body.find((i) => i.id === insumo);
+        assert.equal(fila.stock_bodega, 7);
+        assert.equal(fila.stock_furgon, 0);
     });
 
     test('rechaza un uuid_cliente malformado', async (t) => {
@@ -299,6 +363,222 @@ describe('anulacion de lineas de repuesto', () => {
         const ruta = `/api/insumos/orden/${ot}/linea/${linea.body.id}/anular`;
         assert.equal((await pedir('POST', ruta, 'mecanico')).status, 409);
         assert.equal((await pedir('POST', ruta, 'administrativo')).status, 200);
+    });
+});
+
+describe('horometro de cualquier equipo', () => {
+    test('el mecanico registra la lectura de un equipo que no es de ninguna orden suya', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const r = await pedir('POST', `/api/horometro/maquinaria/${equipo.id}`, 'mecanico',
+            { valor: 321, uuid_cliente: crypto.randomUUID() });
+        assert.equal(r.status, 201);
+        assert.equal(r.body.lectura.origen, 'movil');
+        assert.equal(r.body.lectura.orden_trabajo_id, null);
+    });
+
+    test('un reintento de la lectura sin orden no la duplica', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const cuerpo = { valor: 100, uuid_cliente: crypto.randomUUID() };
+        const primera = await pedir('POST', `/api/horometro/maquinaria/${equipo.id}`, 'mecanico', cuerpo);
+        const segunda = await pedir('POST', `/api/horometro/maquinaria/${equipo.id}`, 'mecanico', cuerpo);
+        assert.equal(primera.status, 201);
+        assert.equal(segunda.status, 200);
+        const filas = await pool.query('SELECT id FROM lecturas_horometro WHERE maquinaria_id = $1', [equipo.id]);
+        assert.equal(filas.rows.length, 1);
+    });
+
+    test('reiniciar el contador de mantencion exige una orden propia sobre el equipo', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const sinOrden = await pedir('POST', `/api/horometro/maquinaria/${equipo.id}`, 'mecanico',
+            { valor: 500, reiniciar_contador: true });
+        assert.equal(sinOrden.status, 403);
+
+        await crearOt('en_terreno', datos.mecanicoId, equipo.id);
+        const conOrden = await pedir('POST', `/api/horometro/maquinaria/${equipo.id}`, 'mecanico',
+            { valor: 500, reiniciar_contador: true });
+        assert.equal(conOrden.status, 201);
+    });
+});
+
+describe('despacho sin documento', () => {
+    test('un despacho sin PDF asigna el equipo al cliente y queda marcado como sin documento', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const cliente = await algunCliente();
+
+        const r = await pedir('POST', `/api/maquinarias/${equipo.id}/guias`, 'administrativo',
+            { tipo: 'despacho', cliente_id: cliente, sin_documento: true });
+
+        assert.equal(r.status, 201);
+        assert.equal(r.body.archivo_url, null);
+        assert.equal(r.body.falta_documento, true);
+        assert.ok(r.body.registrada_por, 'queda quien la registro');
+        const maq = await pool.query('SELECT cliente_id FROM maquinarias WHERE id = $1', [equipo.id]);
+        assert.equal(maq.rows[0].cliente_id, cliente, 'el equipo queda arrendado al cliente');
+    });
+
+    test('sin PDF y sin pedirlo expresamente se rechaza', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const r = await pedir('POST', `/api/maquinarias/${equipo.id}/guias`, 'administrativo',
+            { tipo: 'despacho', cliente_id: await algunCliente() });
+        assert.equal(r.status, 400);
+    });
+
+    test('el mecanico no puede despachar sin documento', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const r = await pedir('POST', `/api/maquinarias/${equipo.id}/guias`, 'mecanico',
+            { tipo: 'despacho', cliente_id: await algunCliente(), sin_documento: true });
+        assert.equal(r.status, 403);
+    });
+
+    test('una recepcion sin documento libera el equipo', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(cliente);
+        const r = await pedir('POST', `/api/maquinarias/${equipo.id}/guias`, 'administrativo',
+            { tipo: 'recepcion', sin_documento: true });
+        assert.equal(r.status, 201);
+        const maq = await pool.query('SELECT cliente_id FROM maquinarias WHERE id = $1', [equipo.id]);
+        assert.equal(maq.rows[0].cliente_id, null);
+    });
+
+    test('las guias sin documento se listan completas, sin tope', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const creada = await pedir('POST', `/api/maquinarias/${equipo.id}/guias`, 'administrativo',
+            { tipo: 'despacho', cliente_id: await algunCliente(), sin_documento: true });
+        assert.equal(creada.status, 201);
+
+        const lista = await pedir('GET', '/api/maquinarias/guias/recientes?sin_documento=1', 'administrativo');
+        assert.equal(lista.status, 200);
+        const fila = lista.body.find((g) => g.id === creada.body.id);
+        assert.ok(fila, 'aparece entre las que faltan');
+        assert.equal(fila.falta_documento, true);
+        assert.equal(fila.url, null);
+    });
+
+    test('adjuntar un documento a una guia que ya lo tiene, o que no existe, se rechaza', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const g = await pool.query(
+            `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha) VALUES ($1, 'despacho', 'guias/ya-tiene.pdf', now()) RETURNING id`,
+            [equipo.id]
+        );
+        const enviar = (id) => {
+            // un formulario por envio: el cuerpo se consume al enviarlo
+            const formulario = new FormData();
+            formulario.append('archivo', new Blob(['%PDF-1.4 prueba'], { type: 'application/pdf' }), 'g.pdf');
+            return fetch(`${base}/api/maquinarias/guias/${id}/archivo`, {
+                method: 'POST', headers: { Authorization: `Bearer ${tokens.administrativo}` }, body: formulario,
+            });
+        };
+        assert.equal((await enviar(g.rows[0].id)).status, 409);
+        assert.equal((await enviar(999999999)).status, 404);
+    });
+});
+
+describe('viaje del mecanico y ordenes sin asignar', () => {
+    async function estadoDe(ot) {
+        const r = await pool.query('SELECT estado, aceptada_at, en_camino_at, llegada_at FROM ordenes_trabajo WHERE id = $1', [ot]);
+        return r.rows[0];
+    }
+
+    test('aceptar, salir y llegar fijan el estado y su hora, una sola vez', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt('asignada');
+
+        const aceptada = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/diagnostico`, 'mecanico', { estado: 'aceptada' });
+        assert.equal(aceptada.status, 200);
+        const primeraHora = (await estadoDe(ot)).aceptada_at;
+        assert.ok(primeraHora, 'queda la hora de aceptacion');
+
+        const camino = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/diagnostico`, 'mecanico', { estado: 'en_camino' });
+        assert.equal(camino.status, 200);
+        const llegada = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/diagnostico`, 'mecanico', { estado: 'en_terreno' });
+        assert.equal(llegada.status, 200);
+
+        // reintentos atrasados de la cola: no retroceden el estado ni pisan las horas
+        const reintento = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/diagnostico`, 'mecanico', { estado: 'aceptada' });
+        assert.equal(reintento.status, 200);
+        const fila = await estadoDe(ot);
+        assert.equal(fila.estado, 'en_terreno');
+        assert.equal(fila.aceptada_at.getTime(), primeraHora.getTime());
+        assert.ok(fila.en_camino_at && fila.llegada_at);
+    });
+
+    test('la hora del toque en el telefono se respeta y nunca queda en el futuro', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt('asignada');
+        const hace2h = new Date(Date.now() - 2 * 3600 * 1000);
+        await pedir('PATCH', `/api/ordenes-trabajo/${ot}/diagnostico`, 'mecanico', { estado: 'aceptada', ocurrio_en: hace2h.toISOString() });
+        const fila = await estadoDe(ot);
+        assert.ok(Math.abs(fila.aceptada_at.getTime() - hace2h.getTime()) < 1000);
+
+        const ot2 = await crearOt('asignada');
+        const manana = new Date(Date.now() + 24 * 3600 * 1000);
+        await pedir('PATCH', `/api/ordenes-trabajo/${ot2}/diagnostico`, 'mecanico', { estado: 'en_camino', ocurrio_en: manana.toISOString() });
+        assert.ok((await estadoDe(ot2)).en_camino_at.getTime() <= Date.now() + 1000);
+    });
+
+    test('un APK anterior puede pasar de asignada directo a en_terreno', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt('asignada');
+        const r = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/diagnostico`, 'mecanico', { estado: 'en_terreno' });
+        assert.equal(r.status, 200);
+        assert.equal((await estadoDe(ot)).estado, 'en_terreno');
+    });
+
+    test('reasignar una OT aceptada la deja asignada al nuevo tecnico', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt('aceptada');
+        const r = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/asignar`, 'administrativo', { mecanico_id: datos.mecanicoDosId });
+        assert.equal(r.status, 200);
+        assert.equal(r.body.estado, 'asignada');
+    });
+
+    test('el mecanico ve las ordenes sin asignar y las puede tomar', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt('pendiente', null);
+
+        const lista = await pedir('GET', '/api/ordenes-trabajo?sin_asignar=1', 'mecanico');
+        assert.equal(lista.status, 200);
+        assert.ok(lista.body.items.some((o) => o.id === ot), 'aparece entre las sin asignar');
+        const suyas = await pedir('GET', '/api/ordenes-trabajo', 'mecanico');
+        assert.ok(!suyas.body.items.some((o) => o.id === ot), 'no aparece en sus ordenes mientras no la tome');
+
+        const tomada = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/tomar`, 'mecanico');
+        assert.equal(tomada.status, 200);
+        assert.equal(tomada.body.estado, 'asignada');
+        assert.equal(tomada.body.mecanico_id, datos.mecanicoId);
+
+        const reintento = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/tomar`, 'mecanico');
+        assert.equal(reintento.status, 200, 'reintentar la propia toma responde bien');
+        const otro = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/tomar`, 'mecanicoDos');
+        assert.equal(otro.status, 409, 'otro mecanico ya no puede tomarla');
+    });
+
+    test('dos mecanicos tomando la misma orden a la vez: solo uno la logra', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt('pendiente', null);
+        const [a, b] = await Promise.all([
+            pedir('PATCH', `/api/ordenes-trabajo/${ot}/tomar`, 'mecanico'),
+            pedir('PATCH', `/api/ordenes-trabajo/${ot}/tomar`, 'mecanicoDos'),
+        ]);
+        assert.deepEqual([a.status, b.status].sort(), [200, 409]);
+        const r = await pool.query('SELECT mecanico_id FROM ordenes_trabajo WHERE id = $1', [ot]);
+        assert.ok([datos.mecanicoId, datos.mecanicoDosId].includes(r.rows[0].mecanico_id));
+    });
+
+    test('no se puede tomar una orden que ya tiene mecanico ni una inexistente', async (t) => {
+        if (!requiereBase(t)) return;
+        const asignada = await crearOt('asignada', datos.mecanicoDosId);
+        assert.equal((await pedir('PATCH', `/api/ordenes-trabajo/${asignada}/tomar`, 'mecanico')).status, 409);
+        assert.equal((await pedir('PATCH', '/api/ordenes-trabajo/999999999/tomar', 'mecanico')).status, 404);
     });
 });
 

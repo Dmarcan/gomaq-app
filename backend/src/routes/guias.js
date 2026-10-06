@@ -51,18 +51,24 @@ router.post('/guias/detectar', verifyToken, requireRole('administrativo'), subid
 // GET /api/maquinarias/guias/recientes - las ultimas guias subidas, con su PDF.
 // La pantalla de Guias era solo un formulario: una vez subida, la guia no se podia volver a ver
 // desde ahi para confirmar que quedo bien.
+// Con ?sin_documento=1 lista solo las guias que aun no tienen PDF (sin tope de 20: no pueden
+// quedar olvidadas), de la mas antigua a la mas nueva.
 router.get('/guias/recientes', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
+        const soloSinDocumento = req.query.sin_documento === '1';
         const result = await pool.query(
             `SELECT g.id, g.tipo, g.fecha, g.fallido, g.archivo_url, g.created_at,
-                    m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre
+                    g.archivo_url IS NULL AS falta_documento,
+                    m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre,
+                    u.nombre AS registrada_por_nombre
              FROM guias g
              JOIN maquinarias m ON m.id = g.maquinaria_id
              LEFT JOIN clientes c ON c.id = g.cliente_id
-             ORDER BY g.created_at DESC
-             LIMIT 20`
+             LEFT JOIN usuarios u ON u.id = g.registrada_por
+             ${soloSinDocumento ? 'WHERE g.archivo_url IS NULL ORDER BY g.created_at ASC' : 'ORDER BY g.created_at DESC LIMIT 20'}`
         );
         const conUrl = await Promise.all(result.rows.map(async ({ archivo_url: ruta, ...fila }) => {
+            if (!ruta) return { ...fila, url: null };
             const { data, error } = await supabase.storage.from(BUCKET_DOCUMENTOS).createSignedUrl(ruta, 3600);
             return { ...fila, url: error ? null : data.signedUrl };
         }));
@@ -74,18 +80,23 @@ router.get('/guias/recientes', verifyToken, requireRole('administrativo', 'geren
 });
 
 // POST /api/maquinarias/:id/guias - subir guia de despacho o recepcion (PDF va a Supabase Storage)
+// El PDF es obligatorio salvo que se pida explicitamente `sin_documento` (el equipo salio antes de
+// tener la guia escaneada): la guia se crea igual, con quien la registro, y queda marcada como
+// "falta el documento" hasta adjuntarlo con POST /guias/:guiaId/archivo. Hay que pedirlo a
+// proposito para que olvidar el archivo no deje guias sin documento por accidente.
 // Ademas, si la guia no es fallida, refleja el arriendo en la ficha del equipo: un despacho
 // lo marca arrendado al cliente indicado, una recepcion lo libera - mismo cliente_id que ya
 // usan Dashboard/Flota para calcular disponibles vs arrendados, no hace falta un estado nuevo.
 router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
     const { id } = req.params;
     const { tipo, fecha_hora, fallido, cliente_id, horometro } = req.body;
+    const sinDocumento = req.body.sin_documento === 'true' || req.body.sin_documento === true;
     const validos = ['despacho', 'recepcion'];
     if (!validos.includes(tipo)) {
         return res.status(400).json({ error: `tipo debe ser uno de: ${validos.join(', ')}` });
     }
-    if (!req.file) {
-        return res.status(400).json({ error: 'archivo (PDF) es requerido' });
+    if (!req.file && !sinDocumento) {
+        return res.status(400).json({ error: 'archivo (PDF) es requerido, o indica que se despacha sin documento' });
     }
     const esFallido = fallido === 'true' || fallido === true;
     if (tipo === 'despacho' && !esFallido && !cliente_id) {
@@ -117,19 +128,21 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
             clienteGuia = maq.rows[0].cliente_id;
         }
 
-        rutaStorage = rutaArchivo(['guias', Number(id)], req.file.originalname);
-        const { error: errorSubida } = await supabase.storage
-            .from(BUCKET_DOCUMENTOS)
-            .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });
-        if (errorSubida) throw errorSubida;
+        if (req.file) {
+            rutaStorage = rutaArchivo(['guias', Number(id)], req.file.originalname);
+            const { error: errorSubida } = await supabase.storage
+                .from(BUCKET_DOCUMENTOS)
+                .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });
+            if (errorSubida) throw errorSubida;
+        }
 
         await client.query('BEGIN');
 
         const result = await client.query(
-            `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, fallido, cliente_id)
-             VALUES ($1, $2::tipo_guia, $3, COALESCE($4, now()), COALESCE($5, false), $6)
-             RETURNING *`,
-            [id, tipo, rutaStorage, fecha_hora || null, esFallido, clienteGuia]
+            `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, fallido, cliente_id, registrada_por)
+             VALUES ($1, $2::tipo_guia, $3, COALESCE($4, now()), COALESCE($5, false), $6, $7)
+             RETURNING *, archivo_url IS NULL AS falta_documento`,
+            [id, tipo, rutaStorage, fecha_hora || null, esFallido, clienteGuia, req.user.id]
         );
 
         if (!esFallido) {
@@ -187,6 +200,45 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
         res.status(500).json({ error: 'Error al subir guía' });
     } finally {
         client.release();
+    }
+});
+
+// POST /api/maquinarias/guias/:guiaId/archivo - adjunta el PDF a una guia que se registro sin
+// documento. Solo si todavia no lo tiene: reemplazar un documento ya cargado cambiaria la
+// evidencia de un despacho, y eso no se hace en silencio.
+router.post('/guias/:guiaId/archivo', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
+    if (!req.file) {
+        return res.status(400).json({ error: 'archivo (PDF) es requerido' });
+    }
+    let rutaStorage = null;
+    try {
+        const guia = await pool.query('SELECT id, maquinaria_id, archivo_url FROM guias WHERE id = $1', [req.params.guiaId]);
+        if (guia.rows.length === 0) return res.status(404).json({ error: 'Guía no encontrada' });
+        if (guia.rows[0].archivo_url) return res.status(409).json({ error: 'La guía ya tiene un documento adjunto' });
+
+        rutaStorage = rutaArchivo(['guias', guia.rows[0].maquinaria_id], req.file.originalname);
+        const { error: errorSubida } = await supabase.storage
+            .from(BUCKET_DOCUMENTOS)
+            .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });
+        if (errorSubida) throw errorSubida;
+
+        // la condicion cubre dos adjuntos simultaneos: solo el primero se queda
+        const result = await pool.query(
+            `UPDATE guias SET archivo_url = $1, documento_adjuntado_at = now()
+             WHERE id = $2 AND archivo_url IS NULL RETURNING *, archivo_url IS NULL AS falta_documento`,
+            [rutaStorage, req.params.guiaId]
+        );
+        if (result.rows.length === 0) {
+            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+            return res.status(409).json({ error: 'La guía ya tiene un documento adjunto' });
+        }
+        res.json(result.rows[0]);
+    } catch (err) {
+        if (rutaStorage) {
+            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+        }
+        console.error(err);
+        res.status(500).json({ error: 'Error al adjuntar el documento de la guía' });
     }
 });
 

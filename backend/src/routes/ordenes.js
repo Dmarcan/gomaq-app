@@ -2,7 +2,7 @@ const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { verificarDuenoOrden, contactoCliente, MENSAJE_OT_CERRADA } = require('../utils/ordenes');
-const { estadoTrasAsignar, puedeCambiarEstadoA, evaluarCierre } = require('../utils/estadosOt');
+const { estadoTrasAsignar, evaluarCambioEstado, evaluarCierre } = require('../utils/estadosOt');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
@@ -106,7 +106,11 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
     try {
         const condiciones = [];
         const params = [];
-        if (req.user.rol === 'mecanico') {
+        if (req.user.rol === 'mecanico' && req.query.sin_asignar === '1') {
+            // ordenes creadas por la oficina o por un cliente que todavia no tienen mecanico: el
+            // mecanico las ve para poder tomarlas (PATCH /:id/tomar)
+            condiciones.push(`(ot.mecanico_id IS NULL AND ot.estado = 'pendiente')`);
+        } else if (req.user.rol === 'mecanico') {
             params.push(req.user.id);
             condiciones.push(`ot.mecanico_id = $${params.length}`);
         }
@@ -217,6 +221,67 @@ router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecani
     }
 });
 
+/**
+ * Avisa al cliente quien va a intervenir su equipo. HU-07 promete avisar "quien llega a reparar su
+ * equipo Y CON QUE VEHICULO": el vehiculo y el RUT permiten que porteria reconozca el furgon y
+ * valide al tecnico al ingresar a la planta. Lo usan /asignar (la oficina elige al mecanico) y
+ * /tomar (el mecanico la toma). Si no hay forma de contactar al cliente no encola nada.
+ */
+async function encolarAvisoAsignacion(client, orden, mecanico) {
+    const contacto = await contactoCliente(client, orden.cliente_id);
+    if (!contacto) return;
+    const vehiculo = await client.query(
+        'SELECT marca, modelo, patente FROM vehiculos WHERE usuario_id = $1 AND activo = true',
+        [mecanico.id]
+    );
+    await client.query(
+        `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ($1, $2, $3)`,
+        [contacto.canal, contacto.destinatario, JSON.stringify({
+            tipo: 'mecanico_asignado',
+            orden_trabajo_id: orden.id,
+            maquinaria_codigo: orden.maquinaria_codigo,
+            mecanico_nombre: mecanico.nombre,
+            mecanico_rut: mecanico.rut,
+            vehiculo: vehiculo.rows[0] || null,
+        })]
+    );
+}
+
+// PATCH /api/ordenes-trabajo/:id/tomar - el mecanico toma una orden que nadie tiene asignada.
+//
+// Atomico: el UPDATE solo prospera si la orden sigue pendiente y sin mecanico, asi que dos
+// mecanicos tomando la misma a la vez no pueden quedar los dos. El perdedor recibe 409. Un
+// reintento del mismo mecanico (la respuesta se perdio) responde bien con la orden ya suya.
+router.patch('/:id/tomar', verifyToken, requireRole('mecanico'), async (req, res) => {
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const tomada = await client.query(
+            `UPDATE ordenes_trabajo SET mecanico_id = $1, estado = 'asignada'
+             WHERE id = $2 AND mecanico_id IS NULL AND estado = 'pendiente'
+             RETURNING *, (SELECT codigo FROM maquinarias WHERE id = ordenes_trabajo.maquinaria_id) AS maquinaria_codigo`,
+            [req.user.id, req.params.id]
+        );
+        if (tomada.rows.length === 0) {
+            await client.query('ROLLBACK');
+            const actual = await pool.query('SELECT * FROM ordenes_trabajo WHERE id = $1', [req.params.id]);
+            if (actual.rows.length === 0) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+            if (actual.rows[0].mecanico_id === req.user.id) return res.json(actual.rows[0]);
+            return res.status(409).json({ error: 'Otro técnico ya tomó esta orden o ya no está disponible' });
+        }
+        const mecanico = await client.query('SELECT id, nombre, rut FROM usuarios WHERE id = $1', [req.user.id]);
+        await encolarAvisoAsignacion(client, tomada.rows[0], mecanico.rows[0]);
+        await client.query('COMMIT');
+        res.json(tomada.rows[0]);
+    } catch (err) {
+        await client.query('ROLLBACK');
+        console.error(err);
+        res.status(500).json({ error: 'Error al tomar la orden' });
+    } finally {
+        client.release();
+    }
+});
+
 // PATCH /api/ordenes-trabajo/:id/asignar - asignar mecanico
 // Patron Outbox (informe 6.4.2): la misma transaccion que asigna el mecanico
 // inserta la notificacion pendiente (HU-07) para que nunca queden desincronizadas
@@ -262,27 +327,7 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
             return res.json(orden);
         }
 
-        const contacto = await contactoCliente(client, orden.cliente_id);
-        if (contacto) {
-            // HU-07 promete avisar "quien llega a reparar su equipo Y CON QUE VEHICULO":
-            // el vehiculo y el RUT permiten que porteria reconozca el furgon y valide al
-            // tecnico al ingresar a la planta.
-            const vehiculo = await client.query(
-                'SELECT marca, modelo, patente FROM vehiculos WHERE usuario_id = $1 AND activo = true',
-                [mecanico_id]
-            );
-            await client.query(
-                `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ($1, $2, $3)`,
-                [contacto.canal, contacto.destinatario, JSON.stringify({
-                    tipo: 'mecanico_asignado',
-                    orden_trabajo_id: orden.id,
-                    maquinaria_codigo: orden.maquinaria_codigo,
-                    mecanico_nombre: mecanico.rows[0].nombre,
-                    mecanico_rut: mecanico.rows[0].rut,
-                    vehiculo: vehiculo.rows[0] || null,
-                })]
-            );
-        }
+        await encolarAvisoAsignacion(client, orden, mecanico.rows[0]);
 
         await client.query('COMMIT');
         res.json(orden);
@@ -297,26 +342,40 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
 
 // PATCH /api/ordenes-trabajo/:id/diagnostico - mecanico registra diagnostico y avanza estado
 router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (req, res) => {
-    const { diagnostico, estado } = req.body;
-    const estadosValidos = ['en_terreno', 'en_reparacion'];
+    const { diagnostico, estado, ocurrio_en } = req.body;
+    const estadosValidos = ['aceptada', 'en_camino', 'en_terreno', 'en_reparacion'];
     if (estado && !estadosValidos.includes(estado)) {
         return res.status(400).json({ error: `estado debe ser uno de: ${estadosValidos.join(', ')}` });
     }
+    // hora real del toque en el telefono (la cola offline puede enviarlo mucho despues). Opcional;
+    // si falta o es invalida se usa la del servidor, y nunca queda en el futuro.
+    const momento = ocurrio_en && !Number.isNaN(Date.parse(ocurrio_en)) ? new Date(ocurrio_en).toISOString() : null;
     try {
         const check = await verificarDuenoOrden(req.params.id, req.user.id);
         if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
         if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
-        if (estado && !puedeCambiarEstadoA(check.estado, estado)) {
+        const cambio = estado ? evaluarCambioEstado(check.estado, estado) : 'sin_cambio';
+        if (cambio === 'rechazar') {
             return res.status(409).json({ error: `La orden no puede pasar de ${check.estado} a ${estado}` });
         }
+        // un cambio que ya estaba aplicado (reintento) o llego atrasado no toca el estado ni sus horas
+        const nuevoEstado = cambio === 'cambiar' ? estado : null;
 
-        // la condicion sobre el estado cubre que la OT se cierre entre la verificacion y el UPDATE
+        // la condicion sobre el estado cubre que la OT se cierre entre la verificacion y el UPDATE.
+        // Cada hora se fija una sola vez (COALESCE): la primera vez que la OT llega a ese estado.
         const result = await pool.query(
             `UPDATE ordenes_trabajo
-             SET diagnostico = COALESCE($1, diagnostico), estado = COALESCE($2, estado)
+             SET diagnostico = COALESCE($1, diagnostico),
+                 estado = COALESCE($2::estado_orden, estado),
+                 aceptada_at = CASE WHEN $4::text = 'aceptada'
+                                    THEN COALESCE(aceptada_at, LEAST(COALESCE($5::timestamptz, now()), now())) ELSE aceptada_at END,
+                 en_camino_at = CASE WHEN $4::text = 'en_camino'
+                                     THEN COALESCE(en_camino_at, LEAST(COALESCE($5::timestamptz, now()), now())) ELSE en_camino_at END,
+                 llegada_at = CASE WHEN $4::text = 'en_terreno'
+                                   THEN COALESCE(llegada_at, LEAST(COALESCE($5::timestamptz, now()), now())) ELSE llegada_at END
              WHERE id = $3 AND estado <> 'finalizada' RETURNING *`,
-            [diagnostico || null, estado || null, req.params.id]
+            [diagnostico || null, nuevoEstado, req.params.id, nuevoEstado, momento]
         );
         if (result.rows.length === 0) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
         res.json(result.rows[0]);

@@ -35,6 +35,8 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
             `SELECT COUNT(*) AS n FROM notificaciones_pendientes
              WHERE estado = 'pendiente' AND intentos < 5 AND proximo_intento < now() - interval '10 minutes'`
         );
+        // despachos registrados sin PDF: el equipo ya salio y falta el respaldo
+        const guiasSinDocumento = await pool.query(`SELECT COUNT(*) AS n FROM guias WHERE archivo_url IS NULL`);
         // la aprobacion de cuentas de clientes vive en una pestaña de Clientes: el atajo la hace visible
         const cuentasPorAprobar = await pool.query(
             `SELECT COUNT(*) AS n FROM solicitudes_cliente WHERE estado = 'pendiente'`
@@ -47,6 +49,7 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
                 solicitudes_pendientes: Number(solicitudesPendientes.rows[0].n),
                 notificaciones_error: Number(notificacionesError.rows[0].n),
                 notificaciones_atrasadas: Number(notificacionesAtrasadas.rows[0].n),
+                guias_sin_documento: Number(guiasSinDocumento.rows[0].n),
                 cuentas_por_aprobar: Number(cuentasPorAprobar.rows[0].n),
             },
         });

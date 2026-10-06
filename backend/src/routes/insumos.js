@@ -54,11 +54,24 @@ async function moverStock(client, { ubicacionId, insumoId, delta }) {
     );
 }
 
-// GET /api/insumos - catalogo completo (mecanico lo usa para el picker de consumo)
+// GET /api/insumos - catalogo completo (mecanico lo usa para el picker de consumo).
+// Ademas de stock_actual (el total) trae cuanto hay en la bodega central y, para un mecanico,
+// en su furgon: al cargar repuestos necesita ver "bodega: X / furgon: Y" antes de elegir.
 router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     try {
-        const result = await pool.query('SELECT * FROM insumos ORDER BY nombre ASC');
-        res.json(result.rows);
+        const bodega = await bodegaCentral(pool);
+        const furgon = req.user.rol === 'mecanico' ? await furgonDe(pool, req.user.id) : null;
+        const result = await pool.query(
+            `SELECT i.*,
+                    COALESCE(sb.cantidad, 0) AS stock_bodega,
+                    COALESCE(sf.cantidad, 0) AS stock_furgon
+             FROM insumos i
+             LEFT JOIN stock_ubicacion sb ON sb.insumo_id = i.id AND sb.ubicacion_id = $1
+             LEFT JOIN stock_ubicacion sf ON sf.insumo_id = i.id AND sf.ubicacion_id = $2
+             ORDER BY i.nombre ASC`,
+            [bodega, furgon]
+        );
+        res.json(result.rows.map((f) => ({ ...f, stock_bodega: num(f.stock_bodega), stock_furgon: num(f.stock_furgon) })));
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar insumos' });
@@ -139,13 +152,35 @@ router.get('/mi-furgon', verifyToken, requireRole('mecanico'), async (req, res) 
 // Solo con señal, a proposito: la carga se hace en el taller y validar contra la bodega en el
 // momento evita que dos mecanicos reclamen sin saberlo la misma pieza. Por eso aca SI se
 // rechaza sacar mas de lo que hay, a diferencia del consumo en terreno.
+//
+// Idempotente con `uuid_cliente` (opcional): si la respuesta se pierde y la app reintenta, la
+// segunda llamada devuelve la transferencia ya hecha en vez de descontar la bodega otra vez.
 router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrativo'), async (req, res) => {
     const { insumo_id, cantidad } = req.body;
     if (!insumo_id) {
         return res.status(400).json({ error: 'insumo_id es requerido' });
     }
+    const { valido: uuidValido, uuid } = leerUuidCliente(req.body);
+    if (!uuidValido) {
+        return res.status(400).json({ error: 'uuid_cliente no es un UUID valido' });
+    }
     const client = await pool.connect();
+    // la transferencia ya hecha con ese uuid, como respuesta de un reintento
+    const respuestaPrevia = async () => {
+        const previo = await buscarPorUuid(client, 'movimientos_insumo', uuid);
+        if (!previo) return null;
+        if (previo.usuario_id !== req.user.id) {
+            return { status: 409, body: { error: 'uuid_cliente ya fue usado por otra operacion' } };
+        }
+        return {
+            status: 200,
+            body: { ok: true, ya_registrada: true, ubicacion_destino_id: previo.ubicacion_destino_id, cantidad: Number(previo.cantidad) },
+        };
+    };
     try {
+        const previa = uuid ? await respuestaPrevia() : null;
+        if (previa) return res.status(previa.status).json(previa.body);
+
         await client.query('BEGIN');
         const bodega = await bodegaCentral(client);
         // un mecanico siempre carga a SU furgon: aceptar un destino del cuerpo le permitia
@@ -180,15 +215,20 @@ router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrati
         await moverStock(client, { ubicacionId: destino, insumoId: insumo_id, delta: cantidad });
         await client.query(
             `INSERT INTO movimientos_insumo
-                (insumo_id, cantidad, tipo, usuario_id, ubicacion_origen_id, ubicacion_destino_id, descripcion)
-             VALUES ($1, $2, 'salida', $3, $4, $5, 'Carga de furgon desde bodega')`,
-            [insumo_id, cantidad, req.user.id, bodega, destino]
+                (insumo_id, cantidad, tipo, usuario_id, ubicacion_origen_id, ubicacion_destino_id, descripcion, uuid_cliente)
+             VALUES ($1, $2, 'salida', $3, $4, $5, 'Carga de furgon desde bodega', $6)`,
+            [insumo_id, cantidad, req.user.id, bodega, destino, uuid]
         );
 
         await client.query('COMMIT');
         res.status(201).json({ ok: true, ubicacion_destino_id: destino, cantidad: Number(cantidad) });
     } catch (err) {
         await client.query('ROLLBACK');
+        // dos reintentos simultaneos: el segundo choca con el UNIQUE, y eso significa "ya estaba hecho"
+        if (esUuidDuplicado(err)) {
+            const previa = await respuestaPrevia();
+            if (previa) return res.status(previa.status).json(previa.body);
+        }
         console.error(err);
         res.status(500).json({ error: 'Error al cargar el furgón' });
     } finally {

@@ -3,13 +3,18 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const {
-    estadoTrasAsignar, mecanicoPuedeEditar, puedeCambiarEstadoA, evaluarCierre,
+    estadoTrasAsignar, mecanicoPuedeEditar, puedeCambiarEstadoA, evaluarCambioEstado, evaluarCierre,
 } = require('../src/utils/estadosOt');
 
 describe('estadoTrasAsignar', () => {
     test('una OT nueva o ya asignada queda asignada', () => {
         assert.equal(estadoTrasAsignar('pendiente'), 'asignada');
         assert.equal(estadoTrasAsignar('asignada'), 'asignada');
+    });
+
+    test('reasignar una OT que solo estaba aceptada o en camino la deja asignada al nuevo tecnico', () => {
+        assert.equal(estadoTrasAsignar('aceptada'), 'asignada');
+        assert.equal(estadoTrasAsignar('en_camino'), 'asignada');
     });
 
     test('reasignar una OT en curso cambia el tecnico sin hacerla retroceder', () => {
@@ -24,7 +29,7 @@ describe('estadoTrasAsignar', () => {
 
 describe('mecanicoPuedeEditar', () => {
     test('solo mientras la OT no este cerrada', () => {
-        for (const estado of ['asignada', 'en_terreno', 'en_reparacion']) {
+        for (const estado of ['asignada', 'aceptada', 'en_camino', 'en_terreno', 'en_reparacion']) {
             assert.equal(mecanicoPuedeEditar(estado), true, estado);
         }
         assert.equal(mecanicoPuedeEditar('finalizada'), false);
@@ -42,6 +47,34 @@ describe('puedeCambiarEstadoA', () => {
         assert.equal(puedeCambiarEstadoA('finalizada', 'en_terreno'), false);
         assert.equal(puedeCambiarEstadoA('en_terreno', 'finalizada'), false, 'cerrar es /finalizar, con firma');
         assert.equal(puedeCambiarEstadoA('en_terreno', 'asignada'), false);
+    });
+});
+
+describe('evaluarCambioEstado (el viaje del mecanico)', () => {
+    test('el viaje avanza en orden: aceptar, salir, llegar', () => {
+        assert.equal(evaluarCambioEstado('asignada', 'aceptada'), 'cambiar');
+        assert.equal(evaluarCambioEstado('aceptada', 'en_camino'), 'cambiar');
+        assert.equal(evaluarCambioEstado('en_camino', 'en_terreno'), 'cambiar');
+    });
+
+    test('se puede saltar pasos: salir sin aceptar, o llegar directo (APK anterior)', () => {
+        assert.equal(evaluarCambioEstado('asignada', 'en_camino'), 'cambiar');
+        assert.equal(evaluarCambioEstado('asignada', 'en_terreno'), 'cambiar');
+        assert.equal(evaluarCambioEstado('aceptada', 'en_terreno'), 'cambiar');
+    });
+
+    test('un reintento o un cambio atrasado no hace nada y no falla', () => {
+        assert.equal(evaluarCambioEstado('aceptada', 'aceptada'), 'sin_cambio');
+        assert.equal(evaluarCambioEstado('en_camino', 'aceptada'), 'sin_cambio');
+        assert.equal(evaluarCambioEstado('en_terreno', 'en_camino'), 'sin_cambio');
+        assert.equal(evaluarCambioEstado('en_terreno', 'en_terreno'), 'sin_cambio');
+    });
+
+    test('no se pueden fijar estados que no le tocan al mecanico ni mover una OT sin mecanico o cerrada', () => {
+        assert.equal(evaluarCambioEstado('pendiente', 'aceptada'), 'rechazar');
+        assert.equal(evaluarCambioEstado('finalizada', 'en_camino'), 'rechazar');
+        assert.equal(evaluarCambioEstado('asignada', 'pendiente'), 'rechazar');
+        assert.equal(evaluarCambioEstado('en_terreno', 'finalizada'), 'rechazar');
     });
 });
 
