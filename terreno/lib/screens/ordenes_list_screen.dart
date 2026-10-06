@@ -10,9 +10,11 @@ import '../theme/gomaq_theme.dart';
 import '../widgets/orden_card.dart';
 import '../widgets/selector_equipo.dart';
 import '../widgets/sync_banner.dart';
+import 'flota_screen.dart';
 import 'mi_cuenta_screen.dart';
 import 'mi_furgon_screen.dart';
 import 'orden_detail_screen.dart';
+import 'ordenes_disponibles_screen.dart';
 
 class OrdenesListScreen extends StatefulWidget {
   const OrdenesListScreen({super.key});
@@ -32,6 +34,8 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
   int _pendientes = 0;
   int _enError = 0;
   String? _problemaEnvio;
+  // ordenes sin mecanico que se pueden tomar; null = no se pudo consultar (sin senal)
+  int? _disponibles;
   StreamSubscription<bool>? _conexionSub;
   Timer? _temporizador;
 
@@ -108,7 +112,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
       'crear_ot': 'Orden nueva en terreno',
     };
     final id = tarea['orden_trabajo_id'] as int;
-    final orden = id < 0 ? 'orden creada sin señal' : 'OT-$id';
+    final orden = id == 0 ? 'sin orden' : id < 0 ? 'orden creada sin señal' : 'OT-$id';
     return '${nombres[tarea['tipo']] ?? tarea['tipo']} · $orden';
   }
 
@@ -238,7 +242,24 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
       // sin conexion real o backend no disponible: se reintenta despues, no rompe la UI
     }
     await _cargarLocal();
+    _contarDisponibles();
     return exito;
+  }
+
+  Future<void> _contarDisponibles() async {
+    if (!context.read<ConnectivityService>().online) return;
+    final n = await OrdenesDisponiblesScreen.contar();
+    if (mounted && n != null) setState(() => _disponibles = n);
+  }
+
+  Future<void> _abrirDisponibles() async {
+    final tomo = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(builder: (_) => const OrdenesDisponiblesScreen()),
+    );
+    await _cargarLocal();
+    _contarDisponibles();
+    if (tomo == true) _sincronizarSiHayConexion();
   }
 
   @override
@@ -252,6 +273,15 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
       appBar: AppBar(
         title: const Text('Mis órdenes de trabajo'),
         actions: [
+          IconButton(
+            tooltip: 'Órdenes disponibles',
+            icon: Badge(
+              isLabelVisible: (_disponibles ?? 0) > 0,
+              label: Text('${_disponibles ?? 0}'),
+              child: const Icon(Icons.inbox_outlined),
+            ),
+            onPressed: _abrirDisponibles,
+          ),
           IconButton(
             tooltip: 'Cerrar sesión',
             icon: const Icon(Icons.logout),
@@ -274,6 +304,22 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
                 leading: const Icon(Icons.assignment_outlined),
                 title: const Text('Mis órdenes'),
                 onTap: () => Navigator.pop(context),
+              ),
+              ListTile(
+                leading: const Icon(Icons.inbox_outlined),
+                title: Text((_disponibles ?? 0) > 0 ? 'Órdenes disponibles ($_disponibles)' : 'Órdenes disponibles'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _abrirDisponibles();
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.precision_manufacturing_outlined),
+                title: const Text('Flota'),
+                onTap: () {
+                  Navigator.pop(context);
+                  Navigator.push(context, MaterialPageRoute(builder: (_) => const FlotaScreen()));
+                },
               ),
               ListTile(
                 leading: const Icon(Icons.person_outline),

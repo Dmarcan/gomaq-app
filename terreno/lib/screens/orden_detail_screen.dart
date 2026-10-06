@@ -11,6 +11,7 @@ import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../widgets/estado_chip.dart';
 import '../widgets/foto_thumbnail.dart';
+import '../widgets/dialogo_horometro.dart';
 import '../widgets/seccion_bloqueada.dart';
 import '../widgets/selector_equipo.dart';
 import 'cerrar_orden_screen.dart';
@@ -176,6 +177,21 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     }
   }
 
+  /// El mecanico acepta el trabajo: la oficina ve que lo recibio. No hace falta senal.
+  Future<void> _aceptarTrabajo() async {
+    await context.read<SyncService>().encolarDiagnostico(widget.ordenId, estado: 'aceptada');
+    await _cargar();
+    _intentarSincronizarAhora();
+  }
+
+  /// Sale hacia el destino: desde aqui corre el tiempo de viaje, separado del de trabajo, y el
+  /// cliente ve que el tecnico va en camino.
+  Future<void> _salirAlDestino() async {
+    await context.read<SyncService>().encolarDiagnostico(widget.ordenId, estado: 'en_camino');
+    await _cargar();
+    _intentarSincronizarAhora();
+  }
+
   /// INICIAR TRABAJO se pulsa ya en el sitio: pasa la orden a en terreno y arranca el reloj de
   /// trabajo (el INICIO del talonario), sin pedirle al mecanico que abra el tramo a mano.
   Future<void> _iniciarTrabajo() async {
@@ -205,61 +221,12 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   Future<void> _registrarHorometro() async {
     final orden = _orden;
     if (orden == null) return;
-    final db = await LocalDatabase.instance.database;
-    final ultimas = await db.query('horometro_local',
-        where: 'maquinaria_id = ?', whereArgs: [orden.maquinariaId], orderBy: 'fecha DESC', limit: 1);
-    final ultima = ultimas.isEmpty ? null : (ultimas.first['valor'] as num?)?.toDouble();
-    if (!mounted) return;
-    String formato(double h) => h.toStringAsFixed(h % 1 == 0 ? 0 : 1);
-
-    final ctrl = TextEditingController();
-    final confirmado = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Horómetro de ${orden.maquinariaCodigo ?? 'el equipo'}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            if (ultima != null)
-              Padding(
-                padding: const EdgeInsets.only(bottom: 8),
-                child: Text('Última lectura registrada: ${formato(ultima)} h', style: const TextStyle(fontSize: 12)),
-              ),
-            TextField(
-              controller: ctrl,
-              autofocus: true,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true),
-              decoration: const InputDecoration(labelText: 'Lectura actual', suffixText: 'h'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Guardar')),
-        ],
-      ),
+    final valor = await pedirLecturaHorometro(
+      context,
+      codigo: orden.maquinariaCodigo ?? 'el equipo',
+      maquinariaId: orden.maquinariaId,
     );
-    final valor = double.tryParse(ctrl.text.trim().replaceAll(',', '.'));
-    ctrl.dispose();
-    if (confirmado != true || !mounted) return;
-    if (valor == null || valor < 0) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ingresa una lectura válida')));
-      return;
-    }
-    if (ultima != null && valor < ultima) {
-      final seguir = await showDialog<bool>(
-        context: context,
-        builder: (dialogContext) => AlertDialog(
-          title: const Text('La lectura es menor'),
-          content: Text('Es menor que la última registrada (${formato(ultima)} h). ¿Guardarla de todos modos?'),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Revisar')),
-            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Guardar igual')),
-          ],
-        ),
-      );
-      if (seguir != true || !mounted) return;
-    }
+    if (valor == null || !mounted) return;
     await context.read<SyncService>().encolarHorometro(
           widget.ordenId,
           maquinariaId: orden.maquinariaId,
@@ -268,7 +235,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     _intentarSincronizarAhora();
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Lectura de ${formato(valor)} h guardada')),
+        SnackBar(content: Text('Lectura de ${formatoHoras(valor)} h guardada')),
       );
     }
   }
@@ -1006,10 +973,25 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     VoidCallback? accion;
     String? notaFaltante;
 
+    // alternativa para quien ya esta en el lugar y no pasa por los pasos del viaje
+    VoidCallback? accionSecundaria;
+
     switch (orden.estado) {
       case 'asignada':
       case 'pendiente':
-        texto = 'INICIAR TRABAJO';
+        texto = 'ACEPTAR TRABAJO';
+        icono = Icons.check_circle_outline;
+        accion = _aceptarTrabajo;
+        accionSecundaria = _iniciarTrabajo;
+        break;
+      case 'aceptada':
+        texto = 'SALIR HACIA EL DESTINO';
+        icono = Icons.directions_car_outlined;
+        accion = _salirAlDestino;
+        accionSecundaria = _iniciarTrabajo;
+        break;
+      case 'en_camino':
+        texto = 'LLEGUÉ · INICIAR TRABAJO';
         icono = Icons.play_circle_outline;
         accion = _iniciarTrabajo;
         break;
@@ -1058,6 +1040,11 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                 label: Text(texto),
               ),
             ),
+            if (accionSecundaria != null)
+              TextButton(
+                onPressed: accionSecundaria,
+                child: const Text('Ya estoy en el lugar: iniciar trabajo'),
+              ),
           ],
         ),
       ),
@@ -1071,7 +1058,8 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
-    final asignada = orden.estado == 'asignada' || orden.estado == 'pendiente';
+    // antes de iniciar el trabajo: asignada, aceptada o en camino
+    final asignada = const ['pendiente', 'asignada', 'aceptada', 'en_camino'].contains(orden.estado);
     final enProgreso = orden.estado == 'en_terreno' || orden.estado == 'en_reparacion';
     final finalizada = orden.estado == 'finalizada';
 

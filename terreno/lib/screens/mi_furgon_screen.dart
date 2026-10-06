@@ -5,6 +5,7 @@ import '../services/api_client.dart';
 import '../services/connectivity_service.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../utils/uuid.dart';
 
 /// Stock del furgon del mecanico (patron "van stock").
 ///
@@ -43,9 +44,18 @@ class _MiFurgonScreenState extends State<MiFurgonScreen> {
     });
   }
 
+  /// Carga repuestos de la bodega al furgon. Solo con senal: se descuenta de la bodega en el momento.
   Future<void> _cargarDesdeBodega() async {
-    final db = await LocalDatabase.instance.database;
-    final catalogo = await db.query('insumos_catalogo_local', orderBy: 'nombre ASC');
+    // el catalogo se pide al servidor para ver el stock de bodega y del furgon antes de elegir; si
+    // no responde se usa el del telefono (sin stock, y el servidor igual valida al cargar)
+    List<Map<String, dynamic>> catalogo;
+    try {
+      final respuesta = await ApiClient.instance.get('/api/insumos');
+      catalogo = (respuesta as List).cast<Map<String, dynamic>>();
+    } catch (_) {
+      final db = await LocalDatabase.instance.database;
+      catalogo = await db.query('insumos_catalogo_local', orderBy: 'nombre ASC');
+    }
     if (!mounted) return;
     if (catalogo.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -54,78 +64,75 @@ class _MiFurgonScreenState extends State<MiFurgonScreen> {
       return;
     }
 
-    final cantidadCtrl = TextEditingController();
-    int? insumoId = catalogo.first['id'] as int;
-    final confirmado = await showDialog<bool>(
+    final eleccion = await showModalBottomSheet<_EleccionCarga>(
       context: context,
-      builder: (dialogContext) => StatefulBuilder(
-        builder: (context, setDialogState) => AlertDialog(
-          title: const Text('Cargar desde bodega'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              DropdownButtonFormField<int>(
-                initialValue: insumoId,
-                isExpanded: true,
-                decoration: const InputDecoration(labelText: 'Repuesto'),
-                items: [
-                  for (final i in catalogo)
-                    DropdownMenuItem(
-                      value: i['id'] as int,
-                      child: Text('${i['nombre']} (${i['unidad_medida']})', overflow: TextOverflow.ellipsis),
-                    ),
-                ],
-                onChanged: (v) => setDialogState(() => insumoId = v),
-              ),
-              TextField(
-                controller: cantidadCtrl,
-                keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                decoration: const InputDecoration(labelText: 'Cantidad'),
-              ),
-            ],
-          ),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-            FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Cargar')),
-          ],
-        ),
-      ),
+      isScrollControlled: true,
+      builder: (_) => _HojaCargaBodega(catalogo: catalogo),
     );
-    final cantidad = double.tryParse(cantidadCtrl.text.trim().replaceAll(',', '.'));
-    cantidadCtrl.dispose();
-    if (confirmado != true || insumoId == null || cantidad == null || cantidad <= 0 || !mounted) return;
+    if (eleccion == null || !mounted) return;
+    await _enviarCarga(eleccion);
+  }
 
-    // se toma antes del await: despues del envio el context pudo quedar desmontado
+  /// Envia la transferencia. Lleva un uuid generado una sola vez: si no hay respuesta (senal que
+  /// se corta) el reintento viaja con el mismo uuid y el servidor no descuenta la bodega dos
+  /// veces, asi que reintentar es seguro.
+  Future<void> _enviarCarga(_EleccionCarga eleccion) async {
     final sync = context.read<SyncService>();
+    final uuid = generarUuid();
     setState(() => _enviando = true);
     try {
-      await ApiClient.instance.post('/api/insumos/transferencia', {
-        'insumo_id': insumoId,
-        'cantidad': cantidad,
-      });
+      while (true) {
+        try {
+          await ApiClient.instance.post('/api/insumos/transferencia', {
+            'insumo_id': eleccion.insumoId,
+            'cantidad': eleccion.cantidad,
+            'uuid_cliente': uuid,
+          });
+          break;
+        } on ApiException {
+          rethrow;
+        } catch (_) {
+          // sin respuesta (timeout o senal): la carga pudo haberse hecho igual
+          if (!mounted) return;
+          final reintentar = await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('No hubo respuesta del servidor'),
+              content: const Text('La carga pudo haberse hecho. Reintentar es seguro: no se cargará dos veces.'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
+                FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Reintentar')),
+              ],
+            ),
+          );
+          if (reintentar != true) {
+            // se actualiza el stock para que vea si la carga alcanzo a hacerse
+            try {
+              await sync.actualizarFurgon();
+              await _cargar();
+            } catch (_) {}
+            return;
+          }
+        }
+      }
       // el stock local se refresca desde el servidor, que es la fuente de verdad de bodega. Solo el
       // furgon: bajar de nuevo las OT, catalogos y flota hacia esperar al mecanico decenas de segundos.
       await sync.actualizarFurgon();
       await _cargar();
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cargado al furgón')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Cargado al furgón: ${eleccion.nombre}')),
+        );
       }
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
     } catch (_) {
-      // sin respuesta (timeout o senal): la carga pudo haberse hecho igual. No se reintenta sola
-      // porque duplicaria el traslado; se actualiza el stock para que el mecanico lo vea.
+      // el stock se pudo cargar pero no refrescar: se avisa sin culpar a la carga
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('No hubo respuesta del servidor. Revisa tu stock antes de volver a cargar.'),
-          ),
+          const SnackBar(content: Text('Cargado, pero no se pudo actualizar el stock. Desliza para actualizar.')),
         );
       }
-      try {
-        await sync.actualizarFurgon();
-        await _cargar();
-      } catch (_) {}
     } finally {
       if (mounted) setState(() => _enviando = false);
     }
@@ -220,6 +227,155 @@ class _MiFurgonScreenState extends State<MiFurgonScreen> {
                   },
                 ),
             ),
+    );
+  }
+}
+
+class _EleccionCarga {
+  final int insumoId;
+  final String nombre;
+  final double cantidad;
+  const _EleccionCarga(this.insumoId, this.nombre, this.cantidad);
+}
+
+/// Hoja para elegir el repuesto (con buscador) y la cantidad. Muestra cuanto hay en la bodega y en
+/// el furgon de quien carga, y no deja pedir mas de lo que hay en bodega.
+class _HojaCargaBodega extends StatefulWidget {
+  final List<Map<String, dynamic>> catalogo;
+  const _HojaCargaBodega({required this.catalogo});
+
+  @override
+  State<_HojaCargaBodega> createState() => _HojaCargaBodegaState();
+}
+
+class _HojaCargaBodegaState extends State<_HojaCargaBodega> {
+  String _filtro = '';
+  Map<String, dynamic>? _elegido;
+  final _cantidadCtrl = TextEditingController();
+  String? _error;
+
+  @override
+  void dispose() {
+    _cantidadCtrl.dispose();
+    super.dispose();
+  }
+
+  static double? _num(dynamic v) => v == null ? null : (v as num).toDouble();
+  static String _fmt(double v) => v.toStringAsFixed(v % 1 == 0 ? 0 : 1);
+
+  void _confirmar() {
+    final item = _elegido!;
+    final cantidad = double.tryParse(_cantidadCtrl.text.trim().replaceAll(',', '.'));
+    final bodega = _num(item['stock_bodega']);
+    if (cantidad == null || cantidad <= 0) {
+      setState(() => _error = 'Ingresa una cantidad válida');
+      return;
+    }
+    if (bodega != null && cantidad > bodega) {
+      setState(() => _error = 'En bodega solo hay ${_fmt(bodega)}');
+      return;
+    }
+    Navigator.pop(context, _EleccionCarga(item['id'] as int, '${item['nombre']}', cantidad));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final filtro = _filtro.trim().toLowerCase();
+    final visibles = filtro.isEmpty
+        ? widget.catalogo
+        : widget.catalogo.where((i) => '${i['nombre']}'.toLowerCase().contains(filtro)).toList();
+
+    return SafeArea(
+      child: Padding(
+        padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
+        child: SizedBox(
+          height: MediaQuery.of(context).size.height * 0.8,
+          child: _elegido == null ? _lista(visibles) : _cantidad(_elegido!),
+        ),
+      ),
+    );
+  }
+
+  Widget _lista(List<Map<String, dynamic>> visibles) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 8),
+          child: TextField(
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'Buscar repuesto', prefixIcon: Icon(Icons.search)),
+            onChanged: (v) => setState(() => _filtro = v),
+          ),
+        ),
+        Expanded(
+          child: visibles.isEmpty
+              ? const Center(child: Text('Ningún repuesto coincide', style: TextStyle(color: GomaqColors.textoSecundario)))
+              : ListView.builder(
+                  itemCount: visibles.length,
+                  itemBuilder: (context, i) {
+                    final item = visibles[i];
+                    final bodega = _num(item['stock_bodega']);
+                    final furgon = _num(item['stock_furgon']);
+                    final sinStock = bodega != null && bodega <= 0;
+                    return ListTile(
+                      enabled: !sinStock,
+                      title: Text('${item['nombre']}'),
+                      subtitle: Text(
+                        bodega == null
+                            ? 'Unidad: ${item['unidad_medida']}'
+                            : sinStock
+                                ? 'Sin stock en bodega'
+                                : 'Bodega: ${_fmt(bodega)} · Tu furgón: ${_fmt(furgon ?? 0)} ${item['unidad_medida'] ?? ''}',
+                      ),
+                      onTap: () => setState(() {
+                        _elegido = item;
+                        _error = null;
+                      }),
+                    );
+                  },
+                ),
+        ),
+      ],
+    );
+  }
+
+  Widget _cantidad(Map<String, dynamic> item) {
+    final bodega = _num(item['stock_bodega']);
+    final furgon = _num(item['stock_furgon']);
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              IconButton(onPressed: () => setState(() => _elegido = null), icon: const Icon(Icons.arrow_back)),
+              Expanded(child: Text('${item['nombre']}', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold))),
+            ],
+          ),
+          if (bodega != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
+              child: Text('En bodega: ${_fmt(bodega)} · En tu furgón: ${_fmt(furgon ?? 0)} ${item['unidad_medida'] ?? ''}'),
+            ),
+          TextField(
+            controller: _cantidadCtrl,
+            autofocus: true,
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+            decoration: InputDecoration(
+              labelText: 'Cantidad a cargar',
+              suffixText: '${item['unidad_medida'] ?? ''}',
+              errorText: _error,
+            ),
+            onSubmitted: (_) => _confirmar(),
+          ),
+          const SizedBox(height: 16),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton(onPressed: _confirmar, child: const Text('Cargar al furgón')),
+          ),
+        ],
+      ),
     );
   }
 }

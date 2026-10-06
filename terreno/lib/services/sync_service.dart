@@ -67,6 +67,9 @@ class SyncService extends ChangeNotifier {
     await _encolar(ordenId, 'diagnostico', {
       if (diagnostico != null) 'diagnostico': diagnostico,
       if (estado != null) 'estado': estado,
+      // hora real del toque: la cola puede enviarlo mucho despues, y el servidor registra cuando
+      // se acepto, salio o llego (no cuando por fin hubo senal)
+      if (estado != null) 'ocurrio_en': DateTime.now().toUtc().toIso8601String(),
     });
     notifyListeners();
   }
@@ -523,63 +526,71 @@ class SyncService extends ChangeNotifier {
       'SELECT DISTINCT maquinaria_id FROM ordenes_locales WHERE maquinaria_id IS NOT NULL',
     );
     for (final fila in filas) {
-      final maquinariaId = fila['maquinaria_id'] as int;
       try {
-        final ficha = await ApiClient.instance.get('/api/maquinarias/$maquinariaId');
-        await db.insert(
-          'maquinarias_local',
-          {
-            'id': ficha['id'],
-            'codigo': ficha['codigo'],
-            'tipo': ficha['tipo'],
-            'estado': ficha['estado'],
-            'categoria_equipo': ficha['categoria_equipo'],
-            'marca': ficha['marca'],
-            'modelo': ficha['modelo'],
-            'anio': ficha['anio'],
-            'numero_serie': ficha['numero_serie'],
-            'numero_motor': ficha['numero_motor'],
-            'numero_chasis': ficha['numero_chasis'],
-            'numero_mastil': ficha['numero_mastil'],
-            'capacidad_carga': _aDouble(ficha['capacidad_carga']),
-            'altura_trabajo': _aDouble(ficha['altura_trabajo']),
-            'tipo_combustible': ficha['tipo_combustible'],
-            'ubicacion': ficha['ubicacion'],
-            'ficha_completa': 1,
-          },
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-
-        final historial = await ApiClient.instance.get('/api/maquinarias/$maquinariaId/ordenes-trabajo');
-        await db.delete('historial_ot_local', where: 'maquinaria_id = ?', whereArgs: [maquinariaId]);
-        for (final ot in (historial as List)) {
-          await db.insert('historial_ot_local', {
-            'id': ot['id'],
-            'maquinaria_id': maquinariaId,
-            'motivo': ot['motivo'],
-            'diagnostico': ot['diagnostico'],
-            'observacion_final': ot['observacion_final'],
-            'estado': ot['estado'],
-            'fecha_creacion': ot['fecha_creacion'],
-            'fecha_cierre': ot['fecha_cierre'],
-          }, conflictAlgorithm: ConflictAlgorithm.replace);
-        }
-
-        final horometro = await ApiClient.instance.get('/api/horometro/maquinaria/$maquinariaId');
-        await db.delete('horometro_local', where: 'maquinaria_id = ?', whereArgs: [maquinariaId]);
-        for (final l in (horometro['lecturas'] as List? ?? [])) {
-          await db.insert('horometro_local', {
-            'id': l['id'],
-            'maquinaria_id': maquinariaId,
-            'valor': _aDouble(l['valor']) ?? 0,
-            'origen': l['origen'],
-            'fecha': l['fecha'],
-          }, conflictAlgorithm: ConflictAlgorithm.replace);
-        }
+        await _pullEquipo(fila['maquinaria_id'] as int);
       } on ApiException catch (_) {
         // un equipo que ya no existe o al que perdio acceso no debe abortar el resto del pull
         continue;
       }
+    }
+  }
+
+  /// Baja la ficha completa, el historial de OT y las lecturas de horometro de UN equipo. Lo usa
+  /// la sincronizacion para los equipos de sus ordenes y la pantalla Flota para abrir cualquier otro.
+  Future<void> descargarEquipo(int maquinariaId) => _pullEquipo(maquinariaId);
+
+  Future<void> _pullEquipo(int maquinariaId) async {
+    final db = await _db;
+    final ficha = await ApiClient.instance.get('/api/maquinarias/$maquinariaId');
+    await db.insert(
+      'maquinarias_local',
+      {
+        'id': ficha['id'],
+        'codigo': ficha['codigo'],
+        'tipo': ficha['tipo'],
+        'estado': ficha['estado'],
+        'categoria_equipo': ficha['categoria_equipo'],
+        'marca': ficha['marca'],
+        'modelo': ficha['modelo'],
+        'anio': ficha['anio'],
+        'numero_serie': ficha['numero_serie'],
+        'numero_motor': ficha['numero_motor'],
+        'numero_chasis': ficha['numero_chasis'],
+        'numero_mastil': ficha['numero_mastil'],
+        'capacidad_carga': _aDouble(ficha['capacidad_carga']),
+        'altura_trabajo': _aDouble(ficha['altura_trabajo']),
+        'tipo_combustible': ficha['tipo_combustible'],
+        'ubicacion': ficha['ubicacion'],
+        'ficha_completa': 1,
+      },
+      conflictAlgorithm: ConflictAlgorithm.replace,
+    );
+
+    final historial = await ApiClient.instance.get('/api/maquinarias/$maquinariaId/ordenes-trabajo');
+    await db.delete('historial_ot_local', where: 'maquinaria_id = ?', whereArgs: [maquinariaId]);
+    for (final ot in (historial as List)) {
+      await db.insert('historial_ot_local', {
+        'id': ot['id'],
+        'maquinaria_id': maquinariaId,
+        'motivo': ot['motivo'],
+        'diagnostico': ot['diagnostico'],
+        'observacion_final': ot['observacion_final'],
+        'estado': ot['estado'],
+        'fecha_creacion': ot['fecha_creacion'],
+        'fecha_cierre': ot['fecha_cierre'],
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
+    }
+
+    final horometro = await ApiClient.instance.get('/api/horometro/maquinaria/$maquinariaId');
+    await db.delete('horometro_local', where: 'maquinaria_id = ?', whereArgs: [maquinariaId]);
+    for (final l in (horometro['lecturas'] as List? ?? [])) {
+      await db.insert('horometro_local', {
+        'id': l['id'],
+        'maquinaria_id': maquinariaId,
+        'valor': _aDouble(l['valor']) ?? 0,
+        'origen': l['origen'],
+        'fecha': l['fecha'],
+      }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
   }
 
@@ -938,7 +949,8 @@ class SyncService extends ChangeNotifier {
   Future<void> _registrarHorometro(int ordenId, Map<String, dynamic> payload) async {
     await ApiClient.instance.post('/api/horometro/maquinaria/${payload['maquinaria_id']}', {
       'valor': payload['valor'],
-      'orden_trabajo_id': ordenId,
+      // orden 0 = lectura de un equipo sin orden de trabajo (desde Flota)
+      if (ordenId > 0) 'orden_trabajo_id': ordenId,
       'reiniciar_contador': payload['reiniciar_contador'] ?? false,
       if (payload['observacion'] != null) 'observacion': payload['observacion'],
       'uuid_cliente': payload['uuid'],
