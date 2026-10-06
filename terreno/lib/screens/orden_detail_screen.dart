@@ -42,6 +42,8 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   int? _insumoSeleccionadoId;
   String? _tipoServicio;
   String _facturableLinea = 'pendiente';
+  // true cuando el mecanico escribio el precio a mano: ya no se pisa con el costo del catalogo
+  bool _precioEditado = false;
   // evita abrir dos tramos si se toca INICIAR dos veces seguidas
   bool _iniciando = false;
 
@@ -106,6 +108,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
       if (_insumoSeleccionadoId == null && catalogo.isNotEmpty) {
         _insumoSeleccionadoId = catalogo.first['id'] as int;
       }
+      _precargarPrecio();
     });
   }
 
@@ -259,6 +262,24 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   List<Map<String, dynamic>> _fotosDeTipo(String tipo) =>
       _fotosLocales.where((f) => (f['tipo'] ?? 'antes') == tipo).toList();
 
+  /// Costo del repuesto elegido, en pesos enteros, o null si no tiene (o se escribe a mano).
+  double? _costoDelElegido() {
+    final id = _insumoSeleccionadoId;
+    if (id == null) return null;
+    final fila = _catalogoInsumos.where((i) => i['id'] == id);
+    if (fila.isEmpty) return null;
+    final costo = (fila.first['costo_unitario'] as num?)?.toDouble();
+    return (costo == null || costo <= 0) ? null : costo.roundToDouble();
+  }
+
+  /// El precio de una linea parte del que ya tiene el repuesto (por ahora su costo); el mecanico
+  /// puede cambiarlo. No pisa un precio que escribio a mano.
+  void _precargarPrecio() {
+    if (_precioEditado) return;
+    final costo = _costoDelElegido();
+    _precioInsumoCtrl.text = costo == null ? '' : costo.round().toString();
+  }
+
   Future<void> _agregarInsumo() async {
     final cantidad = double.tryParse(_cantidadInsumoCtrl.text.replaceAll(',', '.'));
     final descripcion = _descripcionInsumoCtrl.text.trim();
@@ -285,13 +306,20 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
           insumoNombre: nombre,
           cantidad: cantidad,
           descripcion: descripcion.isEmpty ? null : descripcion,
-          precioUnitario: double.tryParse(_precioInsumoCtrl.text.replaceAll('.', '').replaceAll(',', '.')),
+          // si no es facturable el precio no se muestra, pero se guarda el costo del catalogo: el
+          // gasto por equipo cuenta todas las lineas, se cobren o no
+          precioUnitario: _facturableLinea == 'no'
+              ? _costoDelElegido()
+              : double.tryParse(_precioInsumoCtrl.text.replaceAll('.', '').replaceAll(',', '.')),
           facturable: _facturableLinea,
         );
     _cantidadInsumoCtrl.clear();
     _descripcionInsumoCtrl.clear();
-    _precioInsumoCtrl.clear();
-    setState(() => _facturableLinea = 'pendiente');
+    _precioEditado = false;
+    setState(() {
+      _facturableLinea = 'pendiente';
+      _precargarPrecio();
+    });
     await _cargar();
     _intentarSincronizarAhora();
   }
@@ -607,7 +635,11 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                         ),
                       ),
                   ],
-                  onChanged: (v) => setState(() => _insumoSeleccionadoId = v),
+                  onChanged: (v) => setState(() {
+                    _insumoSeleccionadoId = v;
+                    _precioEditado = false;
+                    _precargarPrecio();
+                  }),
                 ),
               TextField(
                 controller: _descripcionInsumoCtrl,
@@ -626,11 +658,18 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                   ),
                   const SizedBox(width: 8),
                   Expanded(
-                    child: TextField(
-                      controller: _precioInsumoCtrl,
-                      keyboardType: TextInputType.number,
-                      decoration: const InputDecoration(isDense: true, labelText: 'Precio unitario'),
-                    ),
+                    // sin cobro no hace falta pedir un precio
+                    child: _facturableLinea == 'no'
+                        ? const Text(
+                            'No se cobra al cliente',
+                            style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario),
+                          )
+                        : TextField(
+                            controller: _precioInsumoCtrl,
+                            keyboardType: TextInputType.number,
+                            decoration: const InputDecoration(isDense: true, labelText: 'Precio unitario'),
+                            onChanged: (_) => _precioEditado = true,
+                          ),
                   ),
                   const SizedBox(width: 4),
                   IconButton(

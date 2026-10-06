@@ -623,7 +623,12 @@ class SyncService extends ChangeNotifier {
     for (final item in (data as List)) {
       batch.insert(
         'insumos_catalogo_local',
-        {'id': item['id'], 'nombre': item['nombre'], 'unidad_medida': item['unidad_medida']},
+        {
+          'id': item['id'],
+          'nombre': item['nombre'],
+          'unidad_medida': item['unidad_medida'],
+          'costo_unitario': _aDouble(item['costo_unitario']),
+        },
         conflictAlgorithm: ConflictAlgorithm.replace,
       );
     }
