@@ -11,6 +11,7 @@ import '../../widgets/ficha_tecnica_campos.dart';
 import '../../widgets/pestanas.dart';
 import '../../utils/formato.dart';
 import '../../utils/numeros.dart';
+import '../../widgets/asignar_cliente.dart';
 import '../../widgets/dialogos.dart';
 
 /// Perfil de un equipo: quién es, en qué estado está y qué hacer con él.
@@ -249,6 +250,16 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
   }
 
   // ---- acciones ------------------------------------------------------------------------------
+
+  Future<void> _asignarACliente(Map<String, dynamic> m) async {
+    final hecho = await asignarEquipoACliente(context, maquinariaId: widget.maquinariaId, codigo: '${m['codigo']}');
+    if (hecho && mounted) _cargar(silencioso: true);
+  }
+
+  Future<void> _retirarDeCliente(Map<String, dynamic> m) async {
+    final hecho = await retirarEquipoDeCliente(context, maquinariaId: widget.maquinariaId, codigo: '${m['codigo']}');
+    if (hecho && mounted) _cargar(silencioso: true);
+  }
 
   Future<void> _cambiarEstado() async {
     final actual = _maquinaria!['estado'] as String?;
@@ -499,6 +510,18 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
               children: [
                 OutlinedButton.icon(onPressed: _cambiarEstado, icon: const Icon(Icons.swap_horiz, size: 18), label: const Text('Cambiar estado')),
                 OutlinedButton.icon(onPressed: _crearOrden, icon: const Icon(Icons.assignment_add, size: 18), label: const Text('Crear orden de trabajo')),
+                if (_vacio(m['cliente']))
+                  OutlinedButton.icon(
+                    onPressed: () => _asignarACliente(m),
+                    icon: const Icon(Icons.business_center_outlined, size: 18),
+                    label: const Text('Asignar a cliente'),
+                  )
+                else
+                  OutlinedButton.icon(
+                    onPressed: () => _retirarDeCliente(m),
+                    icon: const Icon(Icons.undo, size: 18),
+                    label: const Text('Retirar del cliente'),
+                  ),
               ],
             ),
         ],

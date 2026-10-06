@@ -34,7 +34,7 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
   String? _estadoFiltro;
   Timer? _esperaBusqueda;
 
-  static const _estados = ['pendiente', 'asignada', 'en_terreno', 'en_reparacion', 'finalizada'];
+  static const _estados = ['pendiente', 'asignada', 'aceptada', 'en_camino', 'en_terreno', 'en_reparacion', 'finalizada'];
 
   @override
   void initState() {

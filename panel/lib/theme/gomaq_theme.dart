@@ -39,8 +39,10 @@ class GomaqColors {
         return estadoPositivo;
       case 'pendiente':
       case 'asignada':
+      case 'aceptada':
         return estadoNeutro;
       case 'en_mantencion':
+      case 'en_camino':
       case 'en_terreno':
       case 'en_reparacion':
         return estadoAdvertencia;
@@ -75,6 +77,10 @@ class GomaqColors {
         return 'Pendiente';
       case 'asignada':
         return 'Asignada';
+      case 'aceptada':
+        return 'Aceptada';
+      case 'en_camino':
+        return 'En camino';
       case 'en_terreno':
         return 'En terreno';
       case 'en_reparacion':

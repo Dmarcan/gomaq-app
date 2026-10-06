@@ -34,6 +34,9 @@ class _GuiasScreenState extends State<GuiasScreen> {
   DateTime _fecha = DateTime.now();
   TimeOfDay _hora = TimeOfDay.now();
   bool _fallido = false;
+  // el equipo salio antes de tener la guia en PDF: se registra igual y el PDF se adjunta despues
+  bool _sinDocumento = false;
+  List<dynamic> _faltaDocumento = [];
 
   @override
   void initState() {
@@ -54,7 +57,13 @@ class _GuiasScreenState extends State<GuiasScreen> {
   Future<void> _cargarRecientes() async {
     try {
       final data = await ApiClient.instance.get('/api/maquinarias/guias/recientes');
-      if (mounted) setState(() => _recientes = data);
+      final faltan = await ApiClient.instance.get('/api/maquinarias/guias/recientes?sin_documento=1');
+      if (mounted) {
+        setState(() {
+          _recientes = data;
+          _faltaDocumento = faltan;
+        });
+      }
     } on ApiException catch (_) {
       // la lista es de apoyo: si falla, el formulario sigue sirviendo
     }
@@ -154,8 +163,32 @@ class _GuiasScreenState extends State<GuiasScreen> {
     if (elegida != null) setState(() => _hora = elegida);
   }
 
+  /// Adjunta el PDF a una guia que se registro sin documento.
+  Future<void> _adjuntarDocumento(Map<String, dynamic> guia) async {
+    final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
+    if (resultado == null || resultado.files.single.bytes == null) return;
+    if (resultado.files.single.bytes!.length > _maxArchivoBytes) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('El PDF supera los 10 MB')));
+      return;
+    }
+    try {
+      await ApiClient.instance.postMultipart(
+        '/api/maquinarias/guias/${guia['id']}/archivo',
+        bytes: resultado.files.single.bytes!,
+        filename: resultado.files.single.name,
+      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Documento adjuntado')));
+        _cargarRecientes();
+      }
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    }
+  }
+
   Future<void> _guardar() async {
-    if (_seleccionada == null || _archivo == null) return;
+    if (_seleccionada == null || (_archivo == null && !_sinDocumento)) return;
     if (_tipo == 'despacho' && !_fallido && _clienteId == null) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Selecciona el cliente al que se despacha el equipo')),
@@ -167,9 +200,10 @@ class _GuiasScreenState extends State<GuiasScreen> {
       final fechaHora = DateTime(_fecha.year, _fecha.month, _fecha.day, _hora.hour, _hora.minute);
       await ApiClient.instance.postMultipart(
         '/api/maquinarias/${_seleccionada!['id']}/guias',
-        bytes: _archivo!.bytes!,
-        filename: _archivo!.name,
+        bytes: _archivo?.bytes,
+        filename: _archivo?.name,
         fields: {
+          if (_archivo == null && _sinDocumento) 'sin_documento': 'true',
           'tipo': _tipo,
           'fecha_hora': fechaHora.toIso8601String(),
           'fallido': _fallido.toString(),
@@ -182,6 +216,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
         _cargarRecientes();
         setState(() {
           _archivo = null;
+          _sinDocumento = false;
           _fallido = false;
           _huboDeteccion = false;
           _clienteId = null;
@@ -267,6 +302,15 @@ class _GuiasScreenState extends State<GuiasScreen> {
                 ),
               ),
             ),
+            // el equipo a veces sale antes de tener la guia escaneada
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              controlAffinity: ListTileControlAffinity.leading,
+              title: const Text('Todavía no tengo el PDF: registrar sin documento'),
+              subtitle: const Text('La guía queda registrada (el equipo se asigna o se libera igual) y el PDF se adjunta después'),
+              value: _sinDocumento && _archivo == null,
+              onChanged: _archivo != null ? null : (v) => setState(() => _sinDocumento = v ?? false),
+            ),
             if (_detectando) ...[
               const SizedBox(height: 12),
               const Row(
@@ -277,7 +321,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
                 ],
               ),
             ],
-            if (_archivo != null && !_detectando) ...[
+            if ((_archivo != null || _sinDocumento) && !_detectando) ...[
               const SizedBox(height: 20),
               if (_huboDeteccion)
                 const Padding(
@@ -367,24 +411,49 @@ class _GuiasScreenState extends State<GuiasScreen> {
             ],
             const SizedBox(height: 24),
             FilledButton(
-              onPressed: (_seleccionada != null && _archivo != null && !_subiendo && !_detectando) ? _guardar : null,
+              onPressed: (_seleccionada != null && (_archivo != null || _sinDocumento) && !_subiendo && !_detectando) ? _guardar : null,
               child: _subiendo
                   ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                   : const Text('Guardar guía'),
             ),
             // el botón deshabilitado no decía qué faltaba
-            if (_seleccionada == null || _archivo == null)
+            if (_seleccionada == null || (_archivo == null && !_sinDocumento))
               Padding(
                 padding: const EdgeInsets.only(top: 8),
                 child: Text(
-                  _seleccionada == null && _archivo == null
-                      ? 'Elige el equipo y el PDF de la guía para poder guardar.'
+                  _seleccionada == null && _archivo == null && !_sinDocumento
+                      ? 'Elige el equipo y el PDF de la guía (o marca que todavía no lo tienes) para poder guardar.'
                       : _seleccionada == null
                           ? 'Falta elegir el equipo.'
                           : 'Falta elegir el PDF de la guía.',
                   style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
                 ),
               ),
+            if (_faltaDocumento.isNotEmpty) ...[
+              const SizedBox(height: 32),
+              Text('FALTA EL DOCUMENTO (${_faltaDocumento.length})',
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: GomaqColors.estadoAdvertencia)),
+              const SizedBox(height: 4),
+              Text('Estas guías ya asignaron o liberaron el equipo, pero no tienen el PDF.',
+                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+              const SizedBox(height: 8),
+              for (final g in _faltaDocumento)
+                ListTile(
+                  dense: true,
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(g['tipo'] == 'despacho' ? Icons.north_east : Icons.south_west, color: GomaqColors.estadoAdvertencia),
+                  title: Text('${g['tipo'] == 'despacho' ? 'Despacho' : 'Recepción'} · ${g['maquinaria_codigo']}'),
+                  subtitle: Text(
+                    '${g['cliente_nombre'] ?? 'Sin cliente'} · ${Formato.fechaHora(g['fecha'])}'
+                    '${g['registrada_por_nombre'] != null ? ' · registró ${g['registrada_por_nombre']}' : ''}',
+                  ),
+                  trailing: TextButton.icon(
+                    onPressed: () => _adjuntarDocumento(Map<String, dynamic>.from(g as Map)),
+                    icon: const Icon(Icons.attach_file, size: 18),
+                    label: const Text('Adjuntar PDF'),
+                  ),
+                ),
+            ],
             const SizedBox(height: 32),
             const Text('GUÍAS RECIENTES', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
@@ -398,7 +467,8 @@ class _GuiasScreenState extends State<GuiasScreen> {
                   leading: Icon(g['tipo'] == 'despacho' ? Icons.north_east : Icons.south_west),
                   title: Text(
                     '${g['tipo'] == 'despacho' ? 'Despacho' : 'Recepción'} · ${g['maquinaria_codigo']}'
-                    '${g['fallido'] == true ? ' · fallido' : ''}',
+                    '${g['fallido'] == true ? ' · fallido' : ''}'
+                    '${g['falta_documento'] == true ? ' · sin documento' : ''}',
                   ),
                   subtitle: Text('${g['cliente_nombre'] ?? 'Sin cliente'} · ${Formato.fechaHora(g['fecha'])}'),
                   trailing: g['url'] == null

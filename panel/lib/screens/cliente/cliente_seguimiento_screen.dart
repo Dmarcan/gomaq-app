@@ -105,6 +105,8 @@ String etiquetaParaCliente(String? estado) => switch (estado) {
       null => 'Recibida',
       'pendiente' => 'Recibida',
       'asignada' => 'Técnico asignado',
+      'aceptada' => 'Técnico asignado',
+      'en_camino' => 'Técnico en camino',
       'en_terreno' => 'Técnico en terreno',
       'en_reparacion' => 'En reparación',
       'finalizada' => 'Finalizada',
@@ -118,16 +120,18 @@ class _SeguimientoDialog extends StatelessWidget {
   static const _pasos = [
     'Asistencia recibida',
     'Técnico asignado',
+    'Técnico en camino',
     'Técnico en terreno',
     'En reparación',
     'Finalizada',
   ];
 
   int _pasoActual() => switch (item['estado']) {
-        'asignada' => 1,
-        'en_terreno' => 2,
-        'en_reparacion' => 3,
-        'finalizada' => 4,
+        'asignada' || 'aceptada' => 1,
+        'en_camino' => 2,
+        'en_terreno' => 3,
+        'en_reparacion' => 4,
+        'finalizada' => 5,
         _ => 0,
       };
 

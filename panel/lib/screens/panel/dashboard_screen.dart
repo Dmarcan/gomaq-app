@@ -497,6 +497,20 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 ],
               ],
             ),
+          if (((atajos['guias_sin_documento'] ?? 0) as num) > 0) ...[
+            const SizedBox(height: 12),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => widget.onNavegar('/guias'),
+                icon: const Icon(Icons.description_outlined, size: 18),
+                label: Text(
+                  '${atajos['guias_sin_documento']} '
+                  '${atajos['guias_sin_documento'] == 1 ? 'guía sin documento' : 'guías sin documento'}: falta adjuntar el PDF',
+                ),
+              ),
+            ),
+          ],
           const SizedBox(height: 24),
 
           if (ejecutivos.isNotEmpty) ...[
