@@ -11,7 +11,9 @@ import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../widgets/estado_chip.dart';
 import '../widgets/foto_thumbnail.dart';
+import '../utils/formato.dart';
 import '../widgets/dialogo_horometro.dart';
+import '../widgets/dialogo_texto.dart';
 import '../widgets/seccion_bloqueada.dart';
 import '../widgets/selector_equipo.dart';
 import 'cerrar_orden_screen.dart';
@@ -26,6 +28,10 @@ class OrdenDetailScreen extends StatefulWidget {
 }
 
 class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
+  /// Id con el que se opera la OT (el real si una creada en terreno ya se sincronizo).
+  late final SyncService _sincronizador;
+  int get _id => _sincronizador.resolverIdOrden(widget.ordenId);
+
   OrdenTrabajo? _orden;
   final _diagnosticoCtrl = TextEditingController();
   final _observacionFinalCtrl = TextEditingController();
@@ -68,6 +74,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   @override
   void initState() {
     super.initState();
+    _sincronizador = context.read<SyncService>();
     _cargar();
   }
 
@@ -84,13 +91,13 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
 
   Future<void> _cargar() async {
     final db = await LocalDatabase.instance.database;
-    final rows = await db.query('ordenes_locales', where: 'id = ?', whereArgs: [widget.ordenId]);
-    final fotos = await db.query('evidencias_locales', where: 'orden_trabajo_id = ?', whereArgs: [widget.ordenId]);
-    final insumos = await db.query('insumos_locales', where: 'orden_trabajo_id = ?', whereArgs: [widget.ordenId]);
+    final rows = await db.query('ordenes_locales', where: 'id = ?', whereArgs: [_id]);
+    final fotos = await db.query('evidencias_locales', where: 'orden_trabajo_id = ?', whereArgs: [_id]);
+    final insumos = await db.query('insumos_locales', where: 'orden_trabajo_id = ?', whereArgs: [_id]);
     final catalogo = await db.query('insumos_catalogo_local', orderBy: 'nombre ASC');
     final checklist = await db.query('checklist_catalogo_local', orderBy: 'orden ASC');
-    final marcados = await db.query('ot_servicios_locales', where: 'orden_trabajo_id = ?', whereArgs: [widget.ordenId]);
-    final tramos = await db.query('tramos_locales', where: 'orden_trabajo_id = ?', whereArgs: [widget.ordenId], orderBy: 'inicio ASC');
+    final marcados = await db.query('ot_servicios_locales', where: 'orden_trabajo_id = ?', whereArgs: [_id]);
+    final tramos = await db.query('tramos_locales', where: 'orden_trabajo_id = ?', whereArgs: [_id], orderBy: 'inicio ASC');
     if (!mounted || rows.isEmpty) return;
     setState(() {
       _orden = OrdenTrabajo.fromLocalMap(rows.first);
@@ -115,7 +122,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   /// Guarda la cabecera del talonario: tipo de servicio, observación final y folio del papel.
   Future<void> _guardarDatosOt() async {
     await context.read<SyncService>().encolarDatosOt(
-          widget.ordenId,
+          _id,
           tipoServicio: _tipoServicio,
           observacionFinal: _observacionFinalCtrl.text.trim().isEmpty ? null : _observacionFinalCtrl.text.trim(),
           folioPapel: _folioPapelCtrl.text.trim().isEmpty ? null : _folioPapelCtrl.text.trim(),
@@ -133,7 +140,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     final nuevos = Set<int>.from(_serviciosMarcados);
     if (!nuevos.remove(servicioId)) nuevos.add(servicioId);
     setState(() => _serviciosMarcados = nuevos);
-    await context.read<SyncService>().encolarChecklist(widget.ordenId, nuevos.toList());
+    await context.read<SyncService>().encolarChecklist(_id, nuevos.toList());
     _intentarSincronizarAhora();
   }
 
@@ -144,12 +151,12 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     final sync = context.read<SyncService>();
     final db = await LocalDatabase.instance.database;
     if (abierto.isEmpty) {
-      await sync.encolarTramo(widget.ordenId, inicio: DateTime.now());
+      await sync.encolarTramo(_id, inicio: DateTime.now());
     } else {
       final tramo = abierto.last;
       final inicio = DateTime.parse(tramo['inicio'] as String);
       await db.delete('tramos_locales', where: 'id = ?', whereArgs: [tramo['id']]);
-      await sync.encolarTramo(widget.ordenId, inicio: inicio, termino: DateTime.now());
+      await sync.encolarTramo(_id, inicio: inicio, termino: DateTime.now());
     }
     await _cargar();
     _intentarSincronizarAhora();
@@ -167,7 +174,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
 
   Future<void> _guardarDiagnostico({String? estado}) async {
     await context.read<SyncService>().encolarDiagnostico(
-          widget.ordenId,
+          _id,
           diagnostico: _diagnosticoCtrl.text.trim(),
           estado: estado,
         );
@@ -182,7 +189,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
 
   /// El mecanico acepta el trabajo: la oficina ve que lo recibio. No hace falta senal.
   Future<void> _aceptarTrabajo() async {
-    await context.read<SyncService>().encolarDiagnostico(widget.ordenId, estado: 'aceptada');
+    await context.read<SyncService>().encolarDiagnostico(_id, estado: 'aceptada');
     await _cargar();
     _intentarSincronizarAhora();
   }
@@ -190,7 +197,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   /// Sale hacia el destino: desde aqui corre el tiempo de viaje, separado del de trabajo, y el
   /// cliente ve que el tecnico va en camino.
   Future<void> _salirAlDestino() async {
-    await context.read<SyncService>().encolarDiagnostico(widget.ordenId, estado: 'en_camino');
+    await context.read<SyncService>().encolarDiagnostico(_id, estado: 'en_camino');
     await _cargar();
     _intentarSincronizarAhora();
   }
@@ -202,10 +209,10 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     _iniciando = true;
     try {
       final sync = context.read<SyncService>();
-      await sync.encolarDiagnostico(widget.ordenId, diagnostico: _diagnosticoCtrl.text.trim(), estado: 'en_terreno');
+      await sync.encolarDiagnostico(_id, diagnostico: _diagnosticoCtrl.text.trim(), estado: 'en_terreno');
       // despues del cambio de estado: la cola corre en orden de creacion
       if (!_tramosLocales.any((t) => t['termino'] == null)) {
-        await sync.encolarTramo(widget.ordenId, inicio: DateTime.now());
+        await sync.encolarTramo(_id, inicio: DateTime.now());
       }
       await _cargar();
       _intentarSincronizarAhora();
@@ -231,7 +238,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     );
     if (valor == null || !mounted) return;
     await context.read<SyncService>().encolarHorometro(
-          widget.ordenId,
+          _id,
           maquinariaId: orden.maquinariaId,
           valor: valor,
         );
@@ -250,11 +257,11 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     if (foto == null) return;
 
     final dir = await getApplicationDocumentsDirectory();
-    final nombreArchivo = 'ot${widget.ordenId}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+    final nombreArchivo = 'ot${_id}_${DateTime.now().millisecondsSinceEpoch}.jpg';
     final rutaLocal = '${dir.path}/$nombreArchivo';
     await File(foto.path).copy(rutaLocal);
 
-    await syncService.encolarEvidencia(widget.ordenId, rutaLocal, tipo: tipo);
+    await syncService.encolarEvidencia(_id, rutaLocal, tipo: tipo);
     await _cargar();
     _intentarSincronizarAhora();
   }
@@ -301,7 +308,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
         ? _catalogoInsumos.firstWhere((i) => i['id'] == insumoId)['nombre'] as String
         : descripcion;
     await context.read<SyncService>().encolarInsumo(
-          widget.ordenId,
+          _id,
           insumoId: insumoId,
           insumoNombre: nombre,
           cantidad: cantidad,
@@ -401,7 +408,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
               children: [
                 EstadoChip(estado: orden.estado),
                 Text(
-                  'OT-${orden.id}',
+                  etiquetaOt(orden.id),
                   style: const TextStyle(color: GomaqColors.textoSecundario, fontSize: 12),
                 ),
               ],
@@ -726,7 +733,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
       leading: Icon(Icons.build_circle_outlined,
           color: anulada ? GomaqColors.textoSecundario : null),
       title: Text(
-        '${insumo['insumo_nombre']} · ${insumo['cantidad']}',
+        '${insumo['insumo_nombre']} · ${_cantidadLimpia(insumo['cantidad'])}',
         style: anulada
             ? const TextStyle(decoration: TextDecoration.lineThrough, color: GomaqColors.textoSecundario)
             : null,
@@ -781,9 +788,15 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
 
   static const _etiquetaFacturable = {'si': 'Se cobra', 'no': 'No se cobra', 'pendiente': 'Por decidir'};
 
+  /// 2.0 -> 2 (las cantidades enteras no llevan decimal).
+  static String _cantidadLimpia(dynamic v) {
+    if (v is num && v == v.roundToDouble()) return v.round().toString();
+    return '$v';
+  }
+
   String _resumenLinea(Map<String, dynamic> linea) {
     final partes = <String>[_etiquetaFacturable[linea['facturable']] ?? 'Por decidir'];
-    if (linea['precio_unitario'] != null) partes.add('\$${linea['precio_unitario']}');
+    if (linea['precio_unitario'] != null) partes.add(Formato.clp(linea['precio_unitario'] as num));
     if (linea['descripcion'] != null && (linea['descripcion'] as String).isNotEmpty) {
       partes.add(linea['descripcion'] as String);
     }
@@ -799,38 +812,19 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     final equipo = await elegirEquipo(context, excluirId: _orden?.maquinariaId);
     if (equipo == null || !mounted) return;
 
-    final motivoCtrl = TextEditingController();
-    final confirmado = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Intervine ${equipo['codigo']}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Text(
-              'Se abre una orden aparte para ese equipo, para que sus repuestos queden a su nombre.',
-              style: TextStyle(fontSize: 12),
-            ),
-            TextField(
-              controller: motivoCtrl,
-              decoration: const InputDecoration(labelText: 'Qué se encontró'),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Crear orden')),
-        ],
-      ),
+    final motivo = await pedirTexto(
+      context,
+      titulo: 'Intervine ${equipo['codigo']}',
+      etiqueta: 'Qué se encontró',
+      ayuda: 'Se abre una orden aparte para ese equipo, para que sus repuestos queden a su nombre.',
+      confirmar: 'Crear orden',
     );
-    final motivo = motivoCtrl.text.trim();
-    motivoCtrl.dispose();
-    if (confirmado != true || !mounted) return;
+    if (motivo == null || !mounted) return;
 
     await context.read<SyncService>().encolarOtEnTerreno(
           maquinariaId: equipo['id'] as int,
           maquinariaCodigo: equipo['codigo'] as String,
-          motivo: motivo.isEmpty ? null : motivo,
+          motivo: motivo.trim().isEmpty ? null : motivo.trim(),
         );
     _intentarSincronizarAhora();
     if (mounted) {
@@ -1103,7 +1097,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     final finalizada = orden.estado == 'finalizada';
 
     return Scaffold(
-      appBar: AppBar(title: Text('OT-${orden.id}')),
+      appBar: AppBar(title: Text(etiquetaOt(orden.id))),
       bottomNavigationBar: _botonInferior(orden),
       body: ListView(
         padding: const EdgeInsets.all(16),

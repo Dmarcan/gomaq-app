@@ -7,6 +7,7 @@ import '../services/auth_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/dialogo_texto.dart';
 import '../widgets/orden_card.dart';
 import '../widgets/selector_equipo.dart';
 import '../widgets/sync_banner.dart';
@@ -38,12 +39,16 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
   int? _disponibles;
   StreamSubscription<bool>? _conexionSub;
   Timer? _temporizador;
+  bool _syncEnCurso = false;
+  late final SyncService _sync;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _cargarLocal();
+    _sync = context.read<SyncService>();
+    _sync.addListener(_alCambiarSync);
 
     // SyncService.notifyListeners() no puede dispararse de forma sincronica
     // durante initState (todavia en fase de build) - se difiere al primer frame.
@@ -57,8 +62,18 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
     });
   }
 
+  /// Sin esto la lista solo se recargaba cuando ella misma lanzaba la sincronizacion: una orden
+  /// tomada desde Disponibles (cuya sincronizacion corre aparte) no aparecia hasta tirar para actualizar.
+  void _alCambiarSync() {
+    if (!mounted) return;
+    final termino = _syncEnCurso && !_sync.sincronizando;
+    _syncEnCurso = _sync.sincronizando;
+    if (termino) _cargarLocal();
+  }
+
   @override
   void dispose() {
+    _sync.removeListener(_alCambiarSync);
     WidgetsBinding.instance.removeObserver(this);
     _temporizador?.cancel();
     _conexionSub?.cancel();
@@ -145,30 +160,18 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
   Future<void> _crearOrden() async {
     final equipo = await elegirEquipo(context);
     if (equipo == null || !mounted) return;
-    final motivoCtrl = TextEditingController();
-    final confirmado = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: Text('Nueva orden para ${equipo['codigo']}'),
-        content: TextField(
-          controller: motivoCtrl,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Motivo o qué se encontró'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Crear orden')),
-        ],
-      ),
+    final motivo = await pedirTexto(
+      context,
+      titulo: 'Nueva orden para ${equipo['codigo']}',
+      etiqueta: 'Motivo o qué se encontró',
+      confirmar: 'Crear orden',
     );
-    final motivo = motivoCtrl.text.trim();
-    motivoCtrl.dispose();
-    if (confirmado != true || !mounted) return;
+    if (motivo == null || !mounted) return;
     final sync = context.read<SyncService>();
     final ordenId = await sync.encolarOtEnTerreno(
       maquinariaId: equipo['id'] as int,
       maquinariaCodigo: equipo['codigo'] as String,
-      motivo: motivo.isEmpty ? null : motivo,
+      motivo: motivo.trim().isEmpty ? null : motivo.trim(),
     );
     await _cargarLocal();
     if (!mounted) return;

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../db/local_database.dart';
+import 'dialogo_texto.dart';
 
 /// Ultima lectura de horometro que el telefono conoce de un equipo, o null si no hay ninguna.
 Future<double?> ultimaLecturaLocal(int maquinariaId) async {
@@ -27,36 +28,16 @@ Future<double?> pedirLecturaHorometro(
   final ultima = await ultimaLecturaLocal(maquinariaId);
   if (!context.mounted) return null;
 
-  final ctrl = TextEditingController();
-  final confirmado = await showDialog<bool>(
-    context: context,
-    builder: (dialogContext) => AlertDialog(
-      title: Text('Horómetro de $codigo'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          if (ultima != null)
-            Padding(
-              padding: const EdgeInsets.only(bottom: 8),
-              child: Text('Última lectura registrada: ${_formatoHoras(ultima)} h', style: const TextStyle(fontSize: 12)),
-            ),
-          TextField(
-            controller: ctrl,
-            autofocus: true,
-            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-            decoration: const InputDecoration(labelText: 'Lectura actual', suffixText: 'h'),
-          ),
-        ],
-      ),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
-        FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Guardar')),
-      ],
-    ),
+  final texto = await pedirTexto(
+    context,
+    titulo: 'Horómetro de $codigo',
+    etiqueta: 'Lectura actual',
+    sufijo: 'h',
+    numerico: true,
+    ayuda: ultima == null ? null : 'Última lectura registrada: ${_formatoHoras(ultima)} h',
   );
-  final valor = double.tryParse(ctrl.text.trim().replaceAll(',', '.'));
-  ctrl.dispose();
-  if (confirmado != true || !context.mounted) return null;
+  if (texto == null || !context.mounted) return null;
+  final valor = double.tryParse(texto.trim().replaceAll(',', '.'));
   if (valor == null || valor < 0) {
     ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ingresa una lectura válida')));
     return null;

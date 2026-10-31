@@ -26,7 +26,7 @@ class OrdenCard extends StatelessWidget {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   Text(
-                    'OT-${orden.id}',
+                    etiquetaOt(orden.id),
                     style: const TextStyle(
                       color: GomaqColors.primario,
                       fontSize: 18,

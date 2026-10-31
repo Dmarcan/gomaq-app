@@ -155,7 +155,17 @@ class _FlotaScreenState extends State<FlotaScreen> {
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
-                                leading: estado == null ? null : EstadoChip(estado: estado),
+                                // ancho fijo: con el del chip de cada estado, los codigos quedaban desalineados
+                                leading: estado == null
+                                    ? null
+                                    : SizedBox(
+                                        width: 128,
+                                        child: FittedBox(
+                                          fit: BoxFit.scaleDown,
+                                          alignment: Alignment.centerLeft,
+                                          child: EstadoChip(estado: estado),
+                                        ),
+                                      ),
                                 trailing: IconButton(
                                   tooltip: 'Registrar horómetro',
                                   icon: const Icon(Icons.speed),

@@ -53,6 +53,12 @@ class GomaqColors {
 
   static String etiquetaEstado(String estado) {
     switch (estado) {
+      case 'operativa':
+        return 'Operativa';
+      case 'en_mantencion':
+        return 'En mantención';
+      case 'fuera_de_servicio':
+        return 'Fuera de servicio';
       case 'pendiente':
         return 'Pendiente';
       case 'asignada':

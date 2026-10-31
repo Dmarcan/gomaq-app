@@ -90,7 +90,7 @@ class _MaquinariaHistorialScreenState extends State<MaquinariaHistorialScreen> {
                 style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario)),
             const SizedBox(height: 8),
             _dato('Tipo', f['tipo']),
-            _dato('Estado', f['estado']),
+            _dato('Estado', f['estado'] == null ? null : GomaqColors.etiquetaEstado('${f['estado']}')),
             _dato('Marca', f['marca']),
             _dato('Modelo', f['modelo']),
             _dato('Año', f['anio']),

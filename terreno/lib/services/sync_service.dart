@@ -48,6 +48,14 @@ class SyncService extends ChangeNotifier {
   /// Cuando se completo la ultima sincronizacion (null si aun no hubo ninguna en esta sesion).
   DateTime? get ultimaSincronizacion => _ultimaSincronizacion;
 
+  // id local (negativo) -> id real de las OT creadas en terreno que ya se sincronizaron. La pantalla de una
+  // OT recien creada sigue abierta cuando la cola le asigna su id real: sin esto seguia operando con el
+  // id local, que ya no existe, y todo lo que el mecanico hacia ahi quedaba huerfano en la cola.
+  final Map<int, int> _remapeos = {};
+
+  /// El id con el que hay que operar una OT: el real si la creada en terreno ya se sincronizo.
+  int resolverIdOrden(int id) => _remapeos[id] ?? id;
+
   Future<Database> get _db async => LocalDatabase.instance.database;
 
   // ---------- Encolar acciones del mecanico (siempre escriben local primero) ----------
@@ -173,14 +181,16 @@ class SyncService extends ChangeNotifier {
     final db = await _db;
     final tramoLocalId = await db.insert('tramos_locales', {
       'orden_trabajo_id': ordenId,
-      'inicio': inicio.toIso8601String(),
-      'termino': termino?.toIso8601String(),
+      'inicio': inicio.toUtc().toIso8601String(),
+      'termino': termino?.toUtc().toIso8601String(),
       'sincronizado': 0,
     });
+    // En UTC (con la Z): una hora local sin zona la interpretaba el servidor en la suya, y con un
+    // telefono en otra zona horaria (o con la hora mal puesta) el tramo salia corrido varias horas.
     await _encolar(ordenId, 'tramo', {
       'tramo_local_id': tramoLocalId,
-      'inicio': inicio.toIso8601String(),
-      if (termino != null) 'termino': termino.toIso8601String(),
+      'inicio': inicio.toUtc().toIso8601String(),
+      if (termino != null) 'termino': termino.toUtc().toIso8601String(),
     });
     notifyListeners();
   }
@@ -931,6 +941,7 @@ class SyncService extends ChangeNotifier {
       await txn.update('ordenes_locales', {'id': idReal}, where: 'id = ?', whereArgs: [idLocal]);
     });
     remapeo?[idLocal] = idReal;
+    _remapeos[idLocal] = idReal;
   }
 
   Future<void> _registrarTramo(int ordenId, Map<String, dynamic> payload) async {

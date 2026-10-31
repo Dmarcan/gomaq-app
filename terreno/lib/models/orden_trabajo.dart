@@ -1,3 +1,7 @@
+/// Nombre de una OT para mostrar. Las creadas en terreno sin senal tienen un id local negativo
+/// hasta sincronizar: mostrarlo ("OT--1793400428992") no le dice nada al mecanico.
+String etiquetaOt(int id) => id < 0 ? 'OT nueva' : 'OT-$id';
+
 class OrdenTrabajo {
   final int id;
   final int maquinariaId;

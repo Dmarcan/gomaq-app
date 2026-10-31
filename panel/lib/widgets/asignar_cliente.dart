@@ -67,7 +67,8 @@ Future<bool> asignarEquipoACliente(BuildContext context, {required int maquinari
     ),
   );
   final horometro = horometroCtrl.text.trim().replaceAll(',', '.');
-  horometroCtrl.dispose();
+  // no se libera aqui: el dialogo todavia se esta animando hacia afuera y su campo sigue usando el
+  // controlador; liberarlo en este punto rompe en depuracion (sin oyentes, dejarlo para el GC es inocuo)
   if (confirmado != true || clienteId == null) return false;
 
   try {
