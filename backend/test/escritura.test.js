@@ -322,6 +322,7 @@ describe('reintentos de la cola offline', () => {
         assert.equal(primera.status, 201);
         assert.equal(segunda.status, 200);
         assert.equal(segunda.body.id, primera.body.id);
+        assert.ok(primera.body.llegada_at, 'una OT abierta en terreno ya tiene su hora de llegada');
     });
 });
 
@@ -389,17 +390,13 @@ describe('horometro de cualquier equipo', () => {
         assert.equal(filas.rows.length, 1);
     });
 
-    test('reiniciar el contador de mantencion exige una orden propia sobre el equipo', async (t) => {
+    test('el mecanico puede reiniciar el contador de un equipo sin tener una orden', async (t) => {
         if (!requiereBase(t)) return;
         const equipo = await crearEquipo(null);
-        const sinOrden = await pedir('POST', `/api/horometro/maquinaria/${equipo.id}`, 'mecanico',
+        const r = await pedir('POST', `/api/horometro/maquinaria/${equipo.id}`, 'mecanico',
             { valor: 500, reiniciar_contador: true });
-        assert.equal(sinOrden.status, 403);
-
-        await crearOt('en_terreno', datos.mecanicoId, equipo.id);
-        const conOrden = await pedir('POST', `/api/horometro/maquinaria/${equipo.id}`, 'mecanico',
-            { valor: 500, reiniciar_contador: true });
-        assert.equal(conOrden.status, 201);
+        assert.equal(r.status, 201);
+        assert.equal(r.body.contador_reiniciado, true);
     });
 });
 
@@ -514,6 +511,7 @@ describe('viaje del mecanico y ordenes sin asignar', () => {
     test('la hora del toque en el telefono se respeta y nunca queda en el futuro', async (t) => {
         if (!requiereBase(t)) return;
         const ot = await crearOt('asignada');
+        await pool.query("UPDATE ordenes_trabajo SET fecha_creacion = now() - interval '1 day' WHERE id = $1", [ot]);
         const hace2h = new Date(Date.now() - 2 * 3600 * 1000);
         await pedir('PATCH', `/api/ordenes-trabajo/${ot}/diagnostico`, 'mecanico', { estado: 'aceptada', ocurrio_en: hace2h.toISOString() });
         const fila = await estadoDe(ot);
@@ -533,12 +531,48 @@ describe('viaje del mecanico y ordenes sin asignar', () => {
         assert.equal((await estadoDe(ot)).estado, 'en_terreno');
     });
 
-    test('reasignar una OT aceptada la deja asignada al nuevo tecnico', async (t) => {
+    test('reasignar una OT del viaje a otro tecnico la deja asignada y borra las horas del anterior', async (t) => {
         if (!requiereBase(t)) return;
-        const ot = await crearOt('aceptada');
+        const ot = await crearOt('asignada');
+        await pedir('PATCH', `/api/ordenes-trabajo/${ot}/diagnostico`, 'mecanico', { estado: 'aceptada' });
+        await pedir('PATCH', `/api/ordenes-trabajo/${ot}/diagnostico`, 'mecanico', { estado: 'en_camino' });
+        const antes = await estadoDe(ot);
+        assert.ok(antes.aceptada_at && antes.en_camino_at);
+
         const r = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/asignar`, 'administrativo', { mecanico_id: datos.mecanicoDosId });
         assert.equal(r.status, 200);
-        assert.equal(r.body.estado, 'asignada');
+        const fila = await estadoDe(ot);
+        assert.equal(fila.estado, 'asignada');
+        assert.equal(fila.aceptada_at, null);
+        assert.equal(fila.en_camino_at, null);
+    });
+
+    test('asignar otra vez al mismo tecnico una OT en camino no la hace retroceder', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt('asignada');
+        await pedir('PATCH', `/api/ordenes-trabajo/${ot}/diagnostico`, 'mecanico', { estado: 'en_camino' });
+        const antes = await estadoDe(ot);
+
+        const r = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/asignar`, 'administrativo', { mecanico_id: datos.mecanicoId });
+        assert.equal(r.status, 200);
+        const fila = await estadoDe(ot);
+        assert.equal(fila.estado, 'en_camino');
+        assert.equal(fila.en_camino_at.getTime(), antes.en_camino_at.getTime());
+    });
+
+    test('la hora del telefono no puede quedar antes de que existiera la orden', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt('asignada');
+        const antiguo = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+        await pedir('PATCH', `/api/ordenes-trabajo/${ot}/diagnostico`, 'mecanico', { estado: 'aceptada', ocurrio_en: antiguo.toISOString() });
+        const creada = (await pool.query('SELECT fecha_creacion FROM ordenes_trabajo WHERE id = $1', [ot])).rows[0].fecha_creacion;
+        assert.ok((await estadoDe(ot)).aceptada_at.getTime() >= creada.getTime());
+    });
+
+    test('un id no numerico al tomar una orden responde 400', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedir('PATCH', '/api/ordenes-trabajo/abc/tomar', 'mecanico');
+        assert.equal(r.status, 400);
     });
 
     test('el mecanico ve las ordenes sin asignar y las puede tomar', async (t) => {

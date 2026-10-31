@@ -83,8 +83,8 @@ router.post('/en-terreno', verifyToken, requireRole('mecanico'), async (req, res
             return res.status(404).json({ error: 'Maquinaria no encontrada' });
         }
         const result = await pool.query(
-            `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, mecanico_id, origen, motivo, estado, uuid_cliente)
-             VALUES ($1, $2, $3, 'directo', $4, 'en_terreno', $5)
+            `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, mecanico_id, origen, motivo, estado, uuid_cliente, llegada_at)
+             VALUES ($1, $2, $3, 'directo', $4, 'en_terreno', $5, now())
              RETURNING *`,
             [maquinaria_id, maquinaria.rows[0].cliente_id, req.user.id, motivo || 'Equipo intervenido durante otra visita', uuid]
         );
@@ -253,6 +253,7 @@ async function encolarAvisoAsignacion(client, orden, mecanico) {
 // mecanicos tomando la misma a la vez no pueden quedar los dos. El perdedor recibe 409. Un
 // reintento del mismo mecanico (la respuesta se perdio) responde bien con la orden ya suya.
 router.patch('/:id/tomar', verifyToken, requireRole('mecanico'), async (req, res) => {
+    if (!Number.isInteger(Number(req.params.id))) return res.status(400).json({ error: 'Id de orden inválido' });
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -307,19 +308,24 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
             await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         }
+        // asignar al mismo tecnico otra vez (doble clic) no debe mandarle un segundo aviso al cliente
+        const mismoTecnico = actual.rows[0].mecanico_id === Number(mecanico_id);
         // una OT finalizada no vuelve a "asignada"; una en curso cambia de tecnico sin retroceder
-        const nuevoEstado = estadoTrasAsignar(actual.rows[0].estado);
+        const nuevoEstado = estadoTrasAsignar(actual.rows[0].estado, mismoTecnico);
         if (!nuevoEstado) {
             await client.query('ROLLBACK');
             return res.status(409).json({ error: 'La orden ya está finalizada y no se puede reasignar' });
         }
-        // asignar al mismo tecnico otra vez (doble clic) no debe mandarle un segundo aviso al cliente
-        const mismoTecnico = actual.rows[0].mecanico_id === Number(mecanico_id);
+        // si el viaje lo hizo otro tecnico, sus horas de aceptado y en camino no son del nuevo
+        const reinicioViaje = nuevoEstado === 'asignada' && ['aceptada', 'en_camino'].includes(actual.rows[0].estado);
 
         const otResult = await client.query(
-            `UPDATE ordenes_trabajo SET mecanico_id = $1, estado = $2 WHERE id = $3
+            `UPDATE ordenes_trabajo SET mecanico_id = $1, estado = $2,
+                    aceptada_at = CASE WHEN $4 THEN NULL ELSE aceptada_at END,
+                    en_camino_at = CASE WHEN $4 THEN NULL ELSE en_camino_at END
+             WHERE id = $3
              RETURNING *, (SELECT codigo FROM maquinarias WHERE id = ordenes_trabajo.maquinaria_id) AS maquinaria_codigo`,
-            [mecanico_id, nuevoEstado, req.params.id]
+            [mecanico_id, nuevoEstado, req.params.id, reinicioViaje]
         );
         const orden = otResult.rows[0];
         if (mismoTecnico) {
@@ -369,11 +375,11 @@ router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (re
              SET diagnostico = COALESCE($1, diagnostico),
                  estado = COALESCE($2::estado_orden, estado),
                  aceptada_at = CASE WHEN $4::text = 'aceptada'
-                                    THEN COALESCE(aceptada_at, LEAST(COALESCE($5::timestamptz, now()), now())) ELSE aceptada_at END,
+                                    THEN COALESCE(aceptada_at, GREATEST(LEAST(COALESCE($5::timestamptz, now()), now()), fecha_creacion)) ELSE aceptada_at END,
                  en_camino_at = CASE WHEN $4::text = 'en_camino'
-                                     THEN COALESCE(en_camino_at, LEAST(COALESCE($5::timestamptz, now()), now())) ELSE en_camino_at END,
+                                     THEN COALESCE(en_camino_at, GREATEST(LEAST(COALESCE($5::timestamptz, now()), now()), fecha_creacion)) ELSE en_camino_at END,
                  llegada_at = CASE WHEN $4::text = 'en_terreno'
-                                   THEN COALESCE(llegada_at, LEAST(COALESCE($5::timestamptz, now()), now())) ELSE llegada_at END
+                                   THEN COALESCE(llegada_at, GREATEST(LEAST(COALESCE($5::timestamptz, now()), now()), fecha_creacion)) ELSE llegada_at END
              WHERE id = $3 AND estado <> 'finalizada' RETURNING *`,
             [diagnostico || null, nuevoEstado, req.params.id, nuevoEstado, momento]
         );

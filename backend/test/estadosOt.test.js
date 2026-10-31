@@ -12,9 +12,15 @@ describe('estadoTrasAsignar', () => {
         assert.equal(estadoTrasAsignar('asignada'), 'asignada');
     });
 
-    test('reasignar una OT que solo estaba aceptada o en camino la deja asignada al nuevo tecnico', () => {
-        assert.equal(estadoTrasAsignar('aceptada'), 'asignada');
+    test('reasignar una OT del viaje a otro tecnico la deja asignada', () => {
+        assert.equal(estadoTrasAsignar('aceptada', false), 'asignada');
+        assert.equal(estadoTrasAsignar('en_camino', false), 'asignada');
         assert.equal(estadoTrasAsignar('en_camino'), 'asignada');
+    });
+
+    test('asignar al mismo tecnico una OT del viaje no la hace retroceder', () => {
+        assert.equal(estadoTrasAsignar('aceptada', true), 'aceptada');
+        assert.equal(estadoTrasAsignar('en_camino', true), 'en_camino');
     });
 
     test('reasignar una OT en curso cambia el tecnico sin hacerla retroceder', () => {

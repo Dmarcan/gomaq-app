@@ -61,6 +61,7 @@ class SyncService extends ChangeNotifier {
   // ---------- Encolar acciones del mecanico (siempre escriben local primero) ----------
 
   Future<void> encolarDiagnostico(int ordenId, {String? diagnostico, String? estado}) async {
+    ordenId = resolverIdOrden(ordenId);
     final db = await _db;
     await db.update(
       'ordenes_locales',
@@ -90,6 +91,7 @@ class SyncService extends ChangeNotifier {
     bool sinPersona = false,
     String? rutaFirmaLocal,
   }) async {
+    ordenId = resolverIdOrden(ordenId);
     final db = await _db;
     await db.update(
       'ordenes_locales',
@@ -142,6 +144,7 @@ class SyncService extends ChangeNotifier {
     String? observacionFinal,
     String? folioPapel,
   }) async {
+    ordenId = resolverIdOrden(ordenId);
     final db = await _db;
     await db.update(
       'ordenes_locales',
@@ -167,6 +170,7 @@ class SyncService extends ChangeNotifier {
   /// Sistemas donde se intervino. Se manda la lista completa, no incrementos: asi un reintento
   /// de la cola deja el mismo resultado en vez de acumular marcas.
   Future<void> encolarChecklist(int ordenId, List<int> servicioIds) async {
+    ordenId = resolverIdOrden(ordenId);
     final db = await _db;
     await db.delete('ot_servicios_locales', where: 'orden_trabajo_id = ?', whereArgs: [ordenId]);
     for (final id in servicioIds) {
@@ -178,6 +182,7 @@ class SyncService extends ChangeNotifier {
 
   /// Tramo de trabajo (una visita). El papel trae dos bloques; aca puede haber varios.
   Future<void> encolarTramo(int ordenId, {required DateTime inicio, DateTime? termino}) async {
+    ordenId = resolverIdOrden(ordenId);
     final db = await _db;
     final tramoLocalId = await db.insert('tramos_locales', {
       'orden_trabajo_id': ordenId,
@@ -205,6 +210,7 @@ class SyncService extends ChangeNotifier {
     bool reiniciarContador = false,
     String? observacion,
   }) async {
+    ordenId = resolverIdOrden(ordenId);
     await _encolar(ordenId, 'horometro', {
       'maquinaria_id': maquinariaId,
       'valor': valor,
@@ -215,6 +221,7 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> encolarEvidencia(int ordenId, String rutaLocal, {String tipo = 'antes'}) async {
+    ordenId = resolverIdOrden(ordenId);
     final db = await _db;
     final evidenciaId = await db.insert('evidencias_locales', {
       'orden_trabajo_id': ordenId,
@@ -242,6 +249,7 @@ class SyncService extends ChangeNotifier {
     double? precioUnitario,
     String facturable = 'pendiente',
   }) async {
+    ordenId = resolverIdOrden(ordenId);
     final db = await _db;
     final insumoLocalId = await db.insert('insumos_locales', {
       'orden_trabajo_id': ordenId,
@@ -277,7 +285,7 @@ class SyncService extends ChangeNotifier {
   Future<String?> anularInsumo(Map<String, dynamic> linea) async {
     final db = await _db;
     final lineaLocalId = linea['id'] as int;
-    final ordenId = linea['orden_trabajo_id'] as int;
+    final ordenId = resolverIdOrden(linea['orden_trabajo_id'] as int);
 
     if (linea['sincronizado'] == 1 && linea['servidor_id'] == null) {
       // lineas enviadas antes de esta version: el telefono no guardo su id en el servidor
@@ -292,6 +300,7 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> _encolar(int ordenId, String tipo, Map<String, dynamic> payload) async {
+    ordenId = resolverIdOrden(ordenId);
     final db = await _db;
     await db.insert('cola_sincronizacion', {
       'tipo': tipo,
@@ -659,7 +668,8 @@ class SyncService extends ChangeNotifier {
       'cola_sincronizacion',
       where: 'estado = ? AND intentos < ?',
       whereArgs: ['pendiente', maxIntentos],
-      orderBy: 'creado_en ASC',
+      // por id (autoincremental) y no por hora: la hora local sin zona se desordena si cambia el reloj
+      orderBy: 'id ASC',
     );
 
     // OTs con una tarea rechazada en ESTE ciclo: sus tareas posteriores se saltan
@@ -673,7 +683,8 @@ class SyncService extends ChangeNotifier {
     final remapeo = <int, int>{};
 
     for (final tarea in pendientes) {
-      final otId = remapeo[tarea['orden_trabajo_id'] as int] ?? tarea['orden_trabajo_id'] as int;
+      final idTarea = tarea['orden_trabajo_id'] as int;
+      final otId = remapeo[idTarea] ?? _remapeos[idTarea] ?? idTarea;
       if (otsConFallo.contains(otId)) continue;
       try {
         await _ejecutarTarea({...tarea, 'orden_trabajo_id': otId}, remapeo);
@@ -695,7 +706,7 @@ class SyncService extends ChangeNotifier {
       } on ErrorPermanenteSync catch (err) {
         // irrecuperable (ej. foto borrada del telefono): a error de inmediato,
         // con mensaje entendible, sin quemar reintentos que no sirven
-        otsConFallo.add(otId);
+        if (otId != 0) otsConFallo.add(otId);
         await db.update(
           'cola_sincronizacion',
           {'intentos': maxIntentos, 'ultimo_error': err.mensaje, 'estado': 'error'},
@@ -713,7 +724,7 @@ class SyncService extends ChangeNotifier {
           // reasigno a otro tecnico. Antes se trataba como sesion expirada y pausaba la cola
           // entera para siempre: volver a iniciar sesion no lo arreglaba, porque la misma
           // tarea volvia a dar 403. Ahora solo esa tarea pasa a error, con su motivo.
-          otsConFallo.add(otId);
+          if (otId != 0) otsConFallo.add(otId);
           await db.update(
             'cola_sincronizacion',
             {
@@ -727,7 +738,7 @@ class SyncService extends ChangeNotifier {
           );
           continue;
         }
-        otsConFallo.add(otId);
+        if (otId != 0) otsConFallo.add(otId);
         final intentos = (tarea['intentos'] as int) + 1;
         await db.update(
           'cola_sincronizacion',
@@ -740,7 +751,7 @@ class SyncService extends ChangeNotifier {
           whereArgs: [tarea['id']],
         );
       } catch (err) {
-        otsConFallo.add(otId);
+        if (otId != 0) otsConFallo.add(otId);
         final intentos = (tarea['intentos'] as int) + 1;
         await db.update(
           'cola_sincronizacion',
@@ -938,6 +949,9 @@ class SyncService extends ChangeNotifier {
         await txn.update(tabla, {'orden_trabajo_id': idReal},
             where: 'orden_trabajo_id = ?', whereArgs: [idLocal]);
       }
+      // si la respuesta de la creacion se perdio, el pull ya trajo la OT con su id real: gana la copia
+      // local, que tiene el trabajo todavia sin enviar, y sin esto el UPDATE choca con la clave primaria
+      await txn.delete('ordenes_locales', where: 'id = ?', whereArgs: [idReal]);
       await txn.update('ordenes_locales', {'id': idReal}, where: 'id = ?', whereArgs: [idLocal]);
     });
     remapeo?[idLocal] = idReal;

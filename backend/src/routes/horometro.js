@@ -105,20 +105,8 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
             return res.status(404).json({ error: 'Maquinaria no encontrada' });
         }
 
-        // El mecanico puede registrar la lectura de cualquier equipo, en cualquier momento (se
-        // anota cuando pasa por uno y ve el horometro). Lo que NO puede es reiniciar el contador de
-        // mantencion de un equipo en el que no tiene una orden suya: eso confirma que se hizo la
-        // mantencion preventiva y le corresponde a quien la hizo, o a la oficina.
-        if (req.user.rol === 'mecanico' && (reiniciar_contador === true || reiniciar_contador === 'true')) {
-            const suya = await client.query(
-                `SELECT 1 FROM ordenes_trabajo WHERE maquinaria_id = $1 AND mecanico_id = $2 LIMIT 1`,
-                [id, req.user.id]
-            );
-            if (suya.rows.length === 0) {
-                await client.query('ROLLBACK');
-                return res.status(403).json({ error: 'Solo puedes reiniciar el contador de un equipo con una orden tuya' });
-            }
-        }
+        // El mecanico puede registrar la lectura de cualquier equipo, en cualquier momento, y tambien
+        // reiniciar su contador de mantencion sin una orden (decision de David): no se exige orden.
 
         const origen = req.user.rol === 'mecanico' ? 'movil' : 'panel';
         const insercion = await client.query(

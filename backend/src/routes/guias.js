@@ -207,6 +207,7 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
 // documento. Solo si todavia no lo tiene: reemplazar un documento ya cargado cambiaria la
 // evidencia de un despacho, y eso no se hace en silencio.
 router.post('/guias/:guiaId/archivo', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
+    if (!Number.isInteger(Number(req.params.guiaId))) return res.status(400).json({ error: 'Id de guía inválido' });
     if (!req.file) {
         return res.status(400).json({ error: 'archivo (PDF) es requerido' });
     }

@@ -56,13 +56,15 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
     setState(() => _cerrando = true);
     try {
       final syncService = context.read<SyncService>();
+      // una OT creada en terreno pudo sincronizarse (y cambiar de id) con esta pantalla abierta
+      final ordenId = syncService.resolverIdOrden(widget.orden.id);
 
       String? rutaFirma;
       if (!_sinPersona && _firmaCtrl.isNotEmpty) {
         final png = await _firmaCtrl.toPngBytes();
         if (png != null) {
           final dir = await getApplicationDocumentsDirectory();
-          rutaFirma = '${dir.path}/ot${widget.orden.id}_firma_${DateTime.now().millisecondsSinceEpoch}.png';
+          rutaFirma = '${dir.path}/ot${ordenId}_firma_${DateTime.now().millisecondsSinceEpoch}.png';
           await File(rutaFirma).writeAsBytes(png);
         }
       }
@@ -70,15 +72,15 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
       // el tiempo de trabajo parte solo al iniciar: si sigue abierto, se cierra al finalizar
       final db = await LocalDatabase.instance.database;
       final abiertos = await db.query('tramos_locales',
-          where: 'orden_trabajo_id = ? AND termino IS NULL', whereArgs: [widget.orden.id], orderBy: 'inicio ASC');
+          where: 'orden_trabajo_id = ? AND termino IS NULL', whereArgs: [ordenId], orderBy: 'inicio ASC');
       for (final tramo in abiertos) {
         final inicio = DateTime.parse(tramo['inicio'] as String);
         await db.delete('tramos_locales', where: 'id = ?', whereArgs: [tramo['id']]);
-        await syncService.encolarTramo(widget.orden.id, inicio: inicio, termino: DateTime.now());
+        await syncService.encolarTramo(ordenId, inicio: inicio, termino: DateTime.now());
       }
 
       await syncService.encolarFinalizar(
-        widget.orden.id,
+        ordenId,
         personaRecibe: _sinPersona ? null : _personaCtrl.text.trim(),
         sinPersona: _sinPersona,
         rutaFirmaLocal: rutaFirma,
@@ -89,7 +91,7 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
       final horometro = double.tryParse(_horometroCtrl.text.trim().replaceAll(',', '.'));
       if (horometro != null && horometro >= 0) {
         await syncService.encolarHorometro(
-          widget.orden.id,
+          ordenId,
           maquinariaId: widget.orden.maquinariaId,
           valor: horometro,
           reiniciarContador: _reiniciarContador,

@@ -24,11 +24,14 @@ const POSICION = { pendiente: 0, asignada: 1, aceptada: 2, en_camino: 3, en_terr
  * Estado que queda al asignar (o reasignar) un mecanico, o null si ya no se puede.
  *
  * Reasignar una OT en curso es valido (el mecanico se enfermo, se cambia de turno): cambia el
- * tecnico pero la OT no retrocede a "asignada", porque el trabajo ya empezo.
+ * tecnico pero la OT no retrocede a "asignada", porque el trabajo ya empezo. Una OT en el viaje
+ * (aceptada o en camino) conserva su estado si el tecnico es el mismo (un doble clic no debe
+ * hacerla retroceder); con otro tecnico vuelve a "asignada", porque el nuevo aun no la acepto.
  */
-function estadoTrasAsignar(actual) {
+function estadoTrasAsignar(actual, mismoTecnico = false) {
     if (actual === FINALIZADA) return null;
     if (EN_CURSO.includes(actual)) return actual;
+    if (VIAJE.includes(actual) && mismoTecnico) return actual;
     return 'asignada';
 }
 
