@@ -34,6 +34,8 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
 
   OrdenTrabajo? _orden;
   final _diagnosticoCtrl = TextEditingController();
+  // ultimo texto de observaciones iniciales que vino de la base: sirve para no pisar lo que se esta escribiendo
+  String _diagnosticoGuardado = '';
   final _observacionFinalCtrl = TextEditingController();
   final _folioPapelCtrl = TextEditingController();
   final _cantidadInsumoCtrl = TextEditingController();
@@ -75,6 +77,8 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   void initState() {
     super.initState();
     _sincronizador = context.read<SyncService>();
+    // la cantidad parte en 1: lo comun es poner una unidad
+    _cantidadInsumoCtrl.text = '1';
     _cargar();
   }
 
@@ -101,7 +105,11 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     if (!mounted || rows.isEmpty) return;
     setState(() {
       _orden = OrdenTrabajo.fromLocalMap(rows.first);
-      _diagnosticoCtrl.text = _orden!.diagnostico ?? '';
+      // recargar (al tocar un tipo de servicio, sacar una foto o agregar un repuesto) no debe borrar lo
+      // que el mecanico esta escribiendo y aun no guardo
+      final diagnosticoBase = _orden!.diagnostico ?? '';
+      if (_diagnosticoCtrl.text == _diagnosticoGuardado) _diagnosticoCtrl.text = diagnosticoBase;
+      _diagnosticoGuardado = diagnosticoBase;
       // la cabecera del talonario ahora vive tambien en el telefono: al reabrir la orden se ve lo ya llenado
       _tipoServicio = _orden!.tipoServicio;
       if (_observacionFinalCtrl.text.isEmpty) _observacionFinalCtrl.text = _orden!.observacionFinal ?? '';
@@ -112,9 +120,6 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
       _catalogoChecklist = checklist;
       _serviciosMarcados = marcados.map((m) => m['servicio_id'] as int).toSet();
       _tramosLocales = tramos;
-      if (_insumoSeleccionadoId == null && catalogo.isNotEmpty) {
-        _insumoSeleccionadoId = catalogo.first['id'] as int;
-      }
       _precargarPrecio();
     });
   }
@@ -170,6 +175,15 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     } catch (_) {
       // queda encolado para reintentar despues
     }
+  }
+
+  /// Guarda las observaciones iniciales si cambiaron, sin aviso ni recarga. Se usa al salir del campo y
+  /// de la pantalla; usa el sincronizador guardado porque al salir ya no hay `context`.
+  Future<void> _guardarObservacionesIniciales() async {
+    final texto = _diagnosticoCtrl.text.trim();
+    if (texto == _diagnosticoGuardado || _orden?.estado == 'finalizada') return;
+    _diagnosticoGuardado = texto;
+    await _sincronizador.encolarDiagnostico(_id, diagnostico: texto);
   }
 
   Future<void> _guardarDiagnostico({String? estado}) async {
@@ -320,7 +334,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
               : double.tryParse(_precioInsumoCtrl.text.replaceAll('.', '').replaceAll(',', '.')),
           facturable: _facturableLinea,
         );
-    _cantidadInsumoCtrl.clear();
+    _cantidadInsumoCtrl.text = '1';
     _descripcionInsumoCtrl.clear();
     _precioEditado = false;
     setState(() {
@@ -546,11 +560,17 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
             const Text('INICIALES · qué se encontró al llegar',
                 style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario)),
             const SizedBox(height: 4),
-            TextField(
-              controller: _diagnosticoCtrl,
-              maxLines: 3,
-              readOnly: soloLectura,
-              decoration: const InputDecoration(hintText: 'Ej: cliente solicita llave de contacto por pérdida'),
+            Focus(
+              // al salir del campo se guarda solo: antes se perdia si no se pulsaba Guardar
+              onFocusChange: (tieneFoco) {
+                if (!tieneFoco && !soloLectura) _guardarObservacionesIniciales();
+              },
+              child: TextField(
+                controller: _diagnosticoCtrl,
+                maxLines: 3,
+                readOnly: soloLectura,
+                decoration: const InputDecoration(hintText: 'Ej: cliente solicita llave de contacto por pérdida'),
+              ),
             ),
             const SizedBox(height: 12),
             const Text('FINALES · qué se hizo',
@@ -632,7 +652,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                   isExpanded: true,
                   decoration: const InputDecoration(isDense: true, labelText: 'Repuesto del catálogo'),
                   items: [
-                    const DropdownMenuItem<int?>(value: null, child: Text('— escribir a mano —')),
+                    const DropdownMenuItem<int?>(value: null, child: Text('— elige uno o escribe a mano —')),
                     for (final insumo in _catalogoInsumos)
                       DropdownMenuItem<int?>(
                         value: insumo['id'] as int,
@@ -674,7 +694,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                         : TextField(
                             controller: _precioInsumoCtrl,
                             keyboardType: TextInputType.number,
-                            decoration: const InputDecoration(isDense: true, labelText: 'Precio unitario'),
+                            decoration: const InputDecoration(isDense: true, labelText: 'Precio unitario', prefixText: r'$ '),
                             onChanged: (_) => _precioEditado = true,
                           ),
                   ),
@@ -1096,7 +1116,12 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     final enProgreso = orden.estado == 'en_terreno' || orden.estado == 'en_reparacion';
     final finalizada = orden.estado == 'finalizada';
 
-    return Scaffold(
+    return PopScope(
+      // salir con "atras" no debe perder lo escrito en observaciones iniciales
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop) _guardarObservacionesIniciales();
+      },
+      child: Scaffold(
       appBar: AppBar(title: Text(etiquetaOt(orden.id))),
       bottomNavigationBar: _botonInferior(orden),
       body: ListView(
@@ -1150,6 +1175,6 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
           ],
         ],
       ),
-    );
+    ));
   }
 }

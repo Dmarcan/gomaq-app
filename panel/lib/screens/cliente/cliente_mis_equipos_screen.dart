@@ -35,8 +35,9 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
       final data = await ApiClient.instance.get('/api/maquinarias/mias');
       if (!mounted) return;
       setState(() => _maquinarias = data);
-    } on ApiException catch (e) {
-      setState(() => _error = e.message);
+    } catch (e) {
+      // no solo ApiException: sin red ClienteApi deja pasar el error de socket o de timeout
+      if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -57,6 +58,7 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
+    final nombre = (auth.nombre ?? '').trim();
     return RefreshIndicator(
       onRefresh: _cargar,
       child: ListView(
@@ -78,7 +80,7 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
                 ),
                 CircleAvatar(
                   backgroundColor: Colors.white24,
-                  child: Text((auth.nombre ?? '?').substring(0, 1).toUpperCase(), style: const TextStyle(color: Colors.white)),
+                  child: Text((nombre.isEmpty ? '?' : nombre.substring(0, 1)).toUpperCase(), style: const TextStyle(color: Colors.white)),
                 ),
               ],
             ),
@@ -87,7 +89,10 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
           if (_cargando)
             const Center(child: Padding(padding: EdgeInsets.all(32), child: CircularProgressIndicator()))
           else if (_error != null)
-            Center(child: Text('Error: $_error'))
+            Padding(
+              padding: const EdgeInsets.only(top: 16),
+              child: EstadoError(titulo: 'No se pudieron cargar tus equipos', mensaje: _error!, onReintentar: _cargar),
+            )
           else if (_maquinarias.isEmpty)
             const Padding(
               padding: EdgeInsets.only(top: 32),

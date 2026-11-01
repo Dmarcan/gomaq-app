@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../services/api_client.dart';
 
 /// Pantalla o lista sin datos: qué es, por qué está vacía y cómo empezar.
 ///
@@ -43,6 +44,53 @@ class EstadoVacio extends StatelessWidget {
               ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Texto para mostrar cuando una carga falla. ClienteApi deja pasar sin envolver los errores de
+/// red (SocketException, TimeoutException, ClientException): sin esto se leían como lista vacía.
+String mensajeErrorCarga(Object error) =>
+    error is ApiException ? error.message : 'Sin conexión. Revisa tu internet y vuelve a intentar.';
+
+/// Estado de error de una carga, con botón Reintentar.
+class EstadoError extends StatelessWidget {
+  final String titulo;
+  final String mensaje;
+  final VoidCallback onReintentar;
+
+  const EstadoError({super.key, required this.titulo, required this.mensaje, required this.onReintentar});
+
+  @override
+  Widget build(BuildContext context) {
+    return EstadoVacio(
+      icono: Icons.cloud_off,
+      titulo: titulo,
+      mensaje: mensaje,
+      textoAccion: 'Reintentar',
+      onAccion: onReintentar,
+    );
+  }
+}
+
+/// Deja un estado vacío o de error dentro de un [RefreshIndicator]: ocupa todo el alto y se
+/// puede tirar hacia abajo para recargar.
+class EstadoRefrescable extends StatelessWidget {
+  final Future<void> Function() onRefresh;
+  final Widget child;
+
+  const EstadoRefrescable({super.key, required this.onRefresh, required this.child});
+
+  @override
+  Widget build(BuildContext context) {
+    return RefreshIndicator(
+      onRefresh: onRefresh,
+      child: LayoutBuilder(
+        builder: (context, c) => ListView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          children: [SizedBox(height: c.maxHeight, child: child)],
         ),
       ),
     );

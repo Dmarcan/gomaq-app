@@ -81,8 +81,8 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
       final data = (await ApiClient.instance.get('/api/ordenes-trabajo$query'))['items'];
       if (!mounted) return;
       setState(() => _ordenes = data);
-    } on ApiException catch (e) {
-      setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -213,7 +213,7 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
         child: _cargando
             ? const Center(child: CircularProgressIndicator())
             : _error != null
-                ? Center(child: Text('Error: $_error'))
+                ? EstadoError(titulo: 'No se pudieron cargar las órdenes', mensaje: _error!, onReintentar: _cargar)
                 : _ordenes.isEmpty
                     ? EstadoVacio(
                         icono: Icons.assignment_outlined,
@@ -245,6 +245,25 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
       ),
     );
   }
+}
+
+/// Abre el detalle de una orden por su id (con el campo para aprobar la valorización si
+/// corresponde). Lo usa Facturación, cuyas filas no traen todos los datos de la orden.
+Future<void> abrirDetalleOrden(BuildContext context, int id, {VoidCallback? onCambio}) async {
+  final Map<String, dynamic> orden;
+  try {
+    orden = (await ApiClient.instance.get('/api/ordenes-trabajo/$id')) as Map<String, dynamic>;
+  } catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo abrir la orden. ${mensajeErrorCarga(e)}')));
+    }
+    return;
+  }
+  if (!context.mounted) return;
+  await showDialog(
+    context: context,
+    builder: (_) => _DetalleOrdenDialog(orden: orden, onCambio: onCambio ?? () {}),
+  );
 }
 
 class _DetalleOrdenDialog extends StatefulWidget {
@@ -280,7 +299,15 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
     try {
       final data = await ApiClient.instance.get('/api/usuarios?rol=mecanico');
       if (mounted) setState(() => _mecanicos = data);
-    } catch (_) {}
+    } catch (_) {
+      // antes se tragaba el error y el selector de mecánico quedaba vacío sin explicación
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: const Text('No se pudo cargar la lista de mecánicos.'),
+          action: SnackBarAction(label: 'Reintentar', onPressed: _cargarMecanicos),
+        ));
+      }
+    }
   }
 
   Future<void> _cargarLineas() async {
@@ -440,7 +467,7 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
               contentPadding: EdgeInsets.zero,
               title: Text('${l['insumo_nombre'] ?? l['descripcion'] ?? 'Repuesto'} · ${l['cantidad']}'),
               subtitle: Text(
-                l['precio_unitario'] == null ? 'Sin precio' : '\$${l['precio_unitario']}',
+                Formato.clp(num.tryParse('${l['precio_unitario']}'), siVacio: 'Sin precio'),
                 style: const TextStyle(fontSize: 12),
               ),
               trailing: puedeResolver

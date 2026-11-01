@@ -59,8 +59,9 @@ class _ClienteSeguimientoScreenState extends State<ClienteSeguimientoScreen> {
               },
         ];
       });
-    } on ApiException catch (e) {
-      setState(() => _error = e.message);
+    } catch (e) {
+      // no solo ApiException: sin red ClienteApi deja pasar el error de socket o de timeout
+      if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -69,13 +70,21 @@ class _ClienteSeguimientoScreenState extends State<ClienteSeguimientoScreen> {
   @override
   Widget build(BuildContext context) {
     if (_cargando) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return Center(child: Text('No se pudo cargar el seguimiento: $_error'));
+    if (_error != null) {
+      return EstadoRefrescable(
+        onRefresh: _cargar,
+        child: EstadoError(titulo: 'No se pudo cargar el seguimiento', mensaje: _error!, onReintentar: _cargar),
+      );
+    }
     if (_abiertos.isEmpty) {
-      return const EstadoVacio(
-        icono: Icons.timeline,
-        titulo: 'No tienes asistencias abiertas',
-        mensaje: 'Para reportar una falla o pedir una mantención, toca «Solicitar asistencia» '
-            'en uno de tus equipos.',
+      return EstadoRefrescable(
+        onRefresh: _cargar,
+        child: const EstadoVacio(
+          icono: Icons.timeline,
+          titulo: 'No tienes asistencias abiertas',
+          mensaje: 'Para reportar una falla o pedir una mantención, toca «Solicitar asistencia» '
+              'en uno de tus equipos.',
+        ),
       );
     }
 
@@ -105,35 +114,39 @@ String etiquetaParaCliente(String? estado) => switch (estado) {
       null => 'Recibida',
       'pendiente' => 'Recibida',
       'asignada' => 'Técnico asignado',
-      'aceptada' => 'Técnico asignado',
+      'aceptada' => 'Técnico aceptó',
       'en_camino' => 'Técnico en camino',
-      'en_terreno' => 'Técnico en terreno',
-      'en_reparacion' => 'En reparación',
+      'en_terreno' || 'en_reparacion' => 'Trabajando en tu equipo',
       'finalizada' => 'Finalizada',
       _ => GomaqColors.etiquetaEstado(estado),
+    };
+
+/// Pasos del seguimiento tal como los ve el cliente, en orden.
+const pasosParaCliente = [
+  'Solicitud recibida',
+  'Técnico asignado',
+  'Técnico aceptó',
+  'Técnico en camino',
+  'Trabajando en tu equipo',
+  'Finalizada',
+];
+
+/// Índice en [pasosParaCliente] de un estado de la orden. En terreno y en reparación son un
+/// solo paso para el cliente; una asistencia sin orden (estado nulo) es la solicitud recibida.
+int pasoParaCliente(String? estado) => switch (estado) {
+      'asignada' => 1,
+      'aceptada' => 2,
+      'en_camino' => 3,
+      'en_terreno' || 'en_reparacion' => 4,
+      'finalizada' => 5,
+      _ => 0,
     };
 
 class _SeguimientoDialog extends StatelessWidget {
   final Map<String, dynamic> item;
   const _SeguimientoDialog({required this.item});
 
-  static const _pasos = [
-    'Asistencia recibida',
-    'Técnico asignado',
-    'Técnico en camino',
-    'Técnico en terreno',
-    'En reparación',
-    'Finalizada',
-  ];
-
-  int _pasoActual() => switch (item['estado']) {
-        'asignada' || 'aceptada' => 1,
-        'en_camino' => 2,
-        'en_terreno' => 3,
-        'en_reparacion' => 4,
-        'finalizada' => 5,
-        _ => 0,
-      };
+  int _pasoActual() => pasoParaCliente(item['estado'] as String?);
 
   @override
   Widget build(BuildContext context) {
@@ -149,7 +162,7 @@ class _SeguimientoDialog extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              for (var i = 0; i < _pasos.length; i++) _pasoTimeline(i, i <= paso, i == paso),
+              for (var i = 0; i < pasosParaCliente.length; i++) _pasoTimeline(i, i <= paso, i == paso),
               if (mecanico != null && mecanico.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 const TituloSeccion('Técnico asignado'),
@@ -182,25 +195,33 @@ class _SeguimientoDialog extends StatelessWidget {
   }
 
   Widget _pasoTimeline(int i, bool completado, bool actual) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Icon(
-            completado ? (actual ? Icons.radio_button_checked : Icons.check_circle) : Icons.circle_outlined,
-            color: completado ? GomaqColors.accion : Colors.grey.shade500,
-            size: 20,
-          ),
-          const SizedBox(width: 12),
-          Text(
-            _pasos[i],
-            style: TextStyle(
-              fontWeight: completado ? FontWeight.bold : FontWeight.normal,
-              color: completado ? Colors.black87 : Colors.grey.shade700,
+    final estado = actual ? 'actual' : (completado ? 'completado' : 'pendiente');
+    return Semantics(
+      label: 'Paso ${i + 1} de ${pasosParaCliente.length}, $estado: ${pasosParaCliente[i]}',
+      excludeSemantics: true,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(
+              completado ? (actual ? Icons.radio_button_checked : Icons.check_circle) : Icons.circle_outlined,
+              // estadoNeutro llega a 4,9:1 sobre blanco; el gris 500 anterior daba cerca de 2,7:1
+              color: completado ? GomaqColors.accion : GomaqColors.estadoNeutro,
+              size: 20,
             ),
-          ),
-        ],
+            const SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                pasosParaCliente[i],
+                style: TextStyle(
+                  fontWeight: completado ? FontWeight.bold : FontWeight.normal,
+                  color: completado ? Colors.black87 : Colors.grey.shade700,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

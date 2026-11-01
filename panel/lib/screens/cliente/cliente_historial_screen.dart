@@ -33,8 +33,9 @@ class _ClienteHistorialScreenState extends State<ClienteHistorialScreen> {
       final data = await ApiClient.instance.get('/api/ordenes-trabajo/mias') as List;
       if (!mounted) return;
       setState(() => _ordenes = data.where((o) => o['estado'] == 'finalizada').toList());
-    } on ApiException catch (e) {
-      setState(() => _error = e.message);
+    } catch (e) {
+      // no solo ApiException: sin red ClienteApi deja pasar el error de socket o de timeout
+      if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -43,12 +44,20 @@ class _ClienteHistorialScreenState extends State<ClienteHistorialScreen> {
   @override
   Widget build(BuildContext context) {
     if (_cargando) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return Center(child: Text('No se pudo cargar el historial: $_error'));
+    if (_error != null) {
+      return EstadoRefrescable(
+        onRefresh: _cargar,
+        child: EstadoError(titulo: 'No se pudo cargar el historial', mensaje: _error!, onReintentar: _cargar),
+      );
+    }
     if (_ordenes.isEmpty) {
-      return const EstadoVacio(
-        icono: Icons.history,
-        titulo: 'Aún no hay trabajos terminados',
-        mensaje: 'Cuando GOMAQ cierre un trabajo sobre tus equipos, aparecerá aquí con su factura.',
+      return EstadoRefrescable(
+        onRefresh: _cargar,
+        child: const EstadoVacio(
+          icono: Icons.history,
+          titulo: 'Aún no hay trabajos terminados',
+          mensaje: 'Cuando GOMAQ cierre un trabajo sobre tus equipos, aparecerá aquí con su factura.',
+        ),
       );
     }
 

@@ -157,7 +157,14 @@ GoRouter construirRouter(AuthService auth) {
           GoRoute(path: '/horometro', builder: (_, _) => const HorometroScreen()),
           GoRoute(path: '/vehiculos', builder: (_, _) => const VehiculosScreen()),
           GoRoute(path: '/guias', builder: (_, _) => const GuiasScreen()),
-          GoRoute(path: '/facturacion', builder: (_, _) => const FacturacionScreen()),
+          GoRoute(
+            path: '/facturacion',
+            // la key fuerza abrir la pestaña que pide la URL (el atajo del Dashboard)
+            builder: (_, estado) => FacturacionScreen(
+              key: ValueKey(estado.uri.query),
+              pestanaInicial: estado.uri.queryParameters['pestana'],
+            ),
+          ),
           GoRoute(path: '/costos', builder: (_, _) => const RentabilidadScreen()),
           GoRoute(path: '/clientes', builder: (_, _) => const ClientesScreen()),
           GoRoute(path: '/notificaciones', builder: (_, _) => const NotificacionesScreen()),

@@ -5,10 +5,15 @@ import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../utils/numeros.dart';
+import '../../utils/formato.dart';
 import '../../widgets/dialogos.dart';
+import '../../widgets/estado_vacio.dart';
+import 'ordenes_screen.dart' show abrirDetalleOrden;
 
 class FacturacionScreen extends StatefulWidget {
-  const FacturacionScreen({super.key});
+  /// Pestaña con la que se abre: 'valorizar' llega desde el atajo del Dashboard.
+  final String? pestanaInicial;
+  const FacturacionScreen({super.key, this.pestanaInicial});
 
   @override
   State<FacturacionScreen> createState() => _FacturacionScreenState();
@@ -25,7 +30,7 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 2, vsync: this, initialIndex: widget.pestanaInicial == 'valorizar' ? 1 : 0);
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
   }
 
@@ -48,8 +53,8 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
         _pendientesValorizar = data['reparaciones_pendientes_valorizar'] ?? [];
         _listas = data['reparaciones_listas'] ?? [];
       });
-    } on ApiException catch (e) {
-      setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -78,7 +83,7 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
       body: _cargando
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(child: Text('Error: $_error'))
+              ? EstadoError(titulo: 'No se pudo cargar la facturación', mensaje: _error!, onReintentar: _cargar)
               : TabBarView(
                   controller: _tabController,
                   children: [_construirPorFacturar(), _construirPendienteValorizar()],
@@ -103,7 +108,7 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
           'titulo': 'OT #${r['id']} · ${r['maquinaria_codigo']} · Reparación',
           'cliente_nombre': r['cliente_nombre'],
           'monto_sugerido': r['valorizacion'],
-          'subtitulo': 'Valorización aprobada: \$${r['valorizacion']} · Cliente: ${r['cliente_nombre'] ?? '-'}',
+          'subtitulo': 'Valorización aprobada: ${Formato.clp(num.tryParse('${r['valorizacion']}'))} · Cliente: ${r['cliente_nombre'] ?? '-'}',
         },
     ];
 
@@ -149,14 +154,18 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
         itemCount: _pendientesValorizar.length,
         itemBuilder: (context, i) {
           final ot = _pendientesValorizar[i];
+          final esGerente = context.watch<AuthService>().esGerente;
           return Card(
             child: ListTile(
               leading: const Icon(Icons.hourglass_empty, color: Colors.grey),
               title: Text('OT #${ot['id']} · ${ot['maquinaria_codigo']}'),
               subtitle: Text(
                 'Cliente: ${ot['cliente_nombre'] ?? '-'} · El mecánico ya la marcó facturable, '
-                'falta que el Gerente le ponga el monto en Órdenes de Trabajo',
+                '${esGerente ? 'toca para ponerle el monto' : 'falta que el Gerente le ponga el monto'}',
               ),
+              trailing: const Icon(Icons.chevron_right),
+              // abre el detalle de la orden, donde el Gerente aprueba el monto
+              onTap: () => abrirDetalleOrden(context, ot['id'] as int, onCambio: _cargar),
             ),
           );
         },

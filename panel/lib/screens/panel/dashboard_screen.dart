@@ -2,6 +2,7 @@ import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import '../../services/api_client.dart';
 import '../../theme/gomaq_theme.dart';
+import '../../widgets/estado_vacio.dart';
 
 class DashboardScreen extends StatefulWidget {
   /// Navega a una ruta del panel. El filtro viaja como query en la URL, asi que el
@@ -32,20 +33,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _error = null;
     });
     try {
-      final data = await ApiClient.instance.get('/api/dashboard/resumen');
-      final ventas = await ApiClient.instance.get('/api/dashboard/ventas-por-ejecutivo');
-      final otsMes = await ApiClient.instance.get('/api/dashboard/ots-por-mes');
+      // las tres consultas son independientes: en paralelo, cargan en lo que tarda la más lenta
+      final r = await Future.wait([
+        ApiClient.instance.get('/api/dashboard/resumen'),
+        ApiClient.instance.get('/api/dashboard/ventas-por-ejecutivo'),
+        ApiClient.instance.get('/api/dashboard/ots-por-mes'),
+      ]);
       if (!mounted) return;
       setState(() {
-        _resumen = data;
-        _ventasPorEjecutivo = ventas;
-        _otsPorMes = otsMes as List;
+        _resumen = r[0];
+        _ventasPorEjecutivo = r[1];
+        _otsPorMes = r[2] as List;
       });
     } on ApiException catch (e) {
-      setState(() => _error = e.message);
+      if (mounted) setState(() => _error = e.message);
     } catch (e) {
-      // dato inesperado o fallo de red: mejor un mensaje que una pantalla en blanco
-      setState(() => _error = 'No se pudo cargar el dashboard ($e)');
+      // dato inesperado o fallo de red: un mensaje entendible en vez de la excepción en crudo
+      if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -96,7 +100,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _tarjetaNumero(String numero, String etiqueta, {Color? color, VoidCallback? onTap}) {
+  Widget _tarjetaNumero(String numero, String etiqueta, {Color? color, Color? colorTexto, VoidCallback? onTap}) {
     final contenido = Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -107,7 +111,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(numero, style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: color)),
+          Text(numero, style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: colorTexto ?? color)),
           const SizedBox(height: 4),
           Text(etiqueta, style: const TextStyle(fontSize: 12, color: Colors.black54)),
         ],
@@ -131,7 +135,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(numero, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: GomaqColors.primario)),
+              Text(numero, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: GomaqColors.accion)),
               const SizedBox(height: 4),
               Text(etiqueta, style: const TextStyle(fontSize: 12, color: Colors.black87)),
             ],
@@ -395,7 +399,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     if (_cargando) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return Center(child: Text('Error: $_error'));
+    if (_error != null) {
+      return EstadoError(titulo: 'No se pudo cargar el dashboard', mensaje: _error!, onReintentar: _cargar);
+    }
 
     final flota = _resumen!['flota'];
     final atajos = _resumen!['atajos'];
@@ -408,7 +414,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
     final atajosTarjetas = [
       // el número cuenta órdenes de reparación sin monto, no equipos
-      _tarjetaAtajo('${atajos['pendientes_facturar']}', 'Reparaciones por valorizar', () => widget.onNavegar('/facturacion')),
+      _tarjetaAtajo('${atajos['pendientes_facturar']}', 'Reparaciones por valorizar', () => widget.onNavegar('/facturacion', filtro: {'pestana': 'valorizar'})),
       _tarjetaAtajo('${atajos['solicitudes_pendientes']}', 'Asistencias por atender', () => widget.onNavegar('/asistencias')),
       // la aprobación de cuentas vive en una pestaña de Clientes: sin este atajo no se veía
       _tarjetaAtajo('${atajos['cuentas_por_aprobar'] ?? 0}', 'Cuentas por aprobar', () => widget.onNavegar('/clientes')),
@@ -451,6 +457,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 '${flota['arrendados']}',
                 'Equipos arrendados',
                 color: GomaqColors.estadoAdvertencia,
+                // el ámbar y el verde de marca no llegan al contraste mínimo como texto
+                colorTexto: GomaqColors.textoEstado('en_terreno'),
                 onTap: () => widget.onNavegar('/flota', filtro: {'disponibilidad': 'arrendados'}),
               ),
               const SizedBox(width: 16),
@@ -458,6 +466,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 '${flota['disponibles']}',
                 'Equipos disponibles',
                 color: GomaqColors.estadoPositivo,
+                colorTexto: GomaqColors.textoEstado('operativa'),
                 onTap: () => widget.onNavegar('/flota', filtro: {'disponibilidad': 'disponibles'}),
               ),
             ],

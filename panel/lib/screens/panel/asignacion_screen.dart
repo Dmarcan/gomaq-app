@@ -4,6 +4,7 @@ import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../widgets/dialogos.dart';
+import '../../widgets/estado_vacio.dart';
 
 class AsignacionScreen extends StatefulWidget {
   const AsignacionScreen({super.key});
@@ -32,8 +33,8 @@ class _AsignacionScreenState extends State<AsignacionScreen> {
       final data = (await ApiClient.instance.get('/api/ordenes-trabajo'))['items'];
       if (!mounted) return;
       setState(() => _ordenesSinAsignar = (data as List).where((o) => o['mecanico_id'] == null).toList());
-    } on ApiException catch (e) {
-      setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -42,7 +43,9 @@ class _AsignacionScreenState extends State<AsignacionScreen> {
   @override
   Widget build(BuildContext context) {
     if (_cargando) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return Center(child: Text('Error: $_error'));
+    if (_error != null) {
+      return EstadoError(titulo: 'No se pudieron cargar las órdenes', mensaje: _error!, onReintentar: _cargar);
+    }
     if (_ordenesSinAsignar.isEmpty) {
       return const Center(child: Text('No hay órdenes de trabajo pendientes de asignar'));
     }

@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter/semantics.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_web_plugins/url_strategy.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
@@ -63,6 +64,14 @@ class _AppConRouterState extends State<_AppConRouter> {
       title: 'GOMAQ - Panel de Gestión',
       theme: construirTemaGomaq(),
       routerConfig: _router,
+      // Sin esto los selectores de fecha y hora salían en inglés.
+      locale: const Locale('es', 'CL'),
+      supportedLocales: const [Locale('es', 'CL'), Locale('es')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
     );
   }
 }

@@ -35,6 +35,9 @@ dependencies:
   # usePathUrlStrategy(): URLs sin '#'. Viene con el SDK, pero hay que declararlo.
   flutter_web_plugins:
     sdk: flutter
+  # Selectores de fecha y hora (y textos de Material) en español.
+  flutter_localizations:
+    sdk: flutter
 
   gomaq_comun:
     path: ../comun

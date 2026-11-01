@@ -175,10 +175,12 @@ class _DialogoFormularioState extends State<DialogoFormulario> {
     try {
       await widget.alGuardar();
       if (mounted) Navigator.of(context).pop(true);
-    } on ApiException catch (e) {
+    } catch (e) {
+      // cualquier fallo, no solo ApiException: sin red el error es de socket o de timeout, y
+      // antes el cuadro se quedaba en "Guardando..." sin poder cerrarse
       if (mounted) {
         setState(() {
-          _error = e.message;
+          _error = e is ApiException ? e.message : 'Sin conexión. Revisa tu internet y vuelve a intentar.';
           _guardando = false;
         });
       }
