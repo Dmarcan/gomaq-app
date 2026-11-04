@@ -5,6 +5,7 @@ import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../widgets/dialogos.dart';
+import '../../widgets/documentos_equipo.dart';
 import '../../widgets/estado_chip.dart';
 import '../../widgets/estado_vacio.dart';
 
@@ -53,6 +54,31 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
     if (enviada == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Asistencia solicitada. Te contactaremos pronto.')));
     }
+  }
+
+  /// Guías, órdenes y facturas de ESTE equipo que corresponden a tu empresa.
+  Future<void> _verDocumentos(Map<String, dynamic> maquinaria) {
+    return showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      showDragHandle: true,
+      builder: (_) => DraggableScrollableSheet(
+        expand: false,
+        initialChildSize: 0.8,
+        maxChildSize: 0.95,
+        builder: (context, controlador) => ListView(
+          controller: controlador,
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+          children: [
+            Text('Documentos de ${maquinaria['codigo']}', style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 4),
+            const Text('Solo aparecen los documentos de los períodos en que este equipo fue tuyo.'),
+            const SizedBox(height: 12),
+            DocumentosEquipo(maquinariaId: maquinaria['id'] as int),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -119,10 +145,21 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
                       // indicaba: un cliente con un equipo en falla no encontraba cómo pedir ayuda.
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 12),
-                        child: OutlinedButton.icon(
-                          onPressed: () => _solicitarAsistencia(m),
-                          icon: const Icon(Icons.support_agent, size: 18),
-                          label: const Text('Solicitar asistencia'),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: () => _solicitarAsistencia(m),
+                              icon: const Icon(Icons.support_agent, size: 18),
+                              label: const Text('Solicitar asistencia'),
+                            ),
+                            OutlinedButton.icon(
+                              onPressed: () => _verDocumentos(m),
+                              icon: const Icon(Icons.folder_open_outlined, size: 18),
+                              label: const Text('Documentos'),
+                            ),
+                          ],
                         ),
                       ),
                     ],

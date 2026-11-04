@@ -13,6 +13,7 @@ import '../../utils/formato.dart';
 import '../../utils/numeros.dart';
 import '../../widgets/asignar_cliente.dart';
 import '../../widgets/dialogos.dart';
+import '../../widgets/documentos_equipo.dart';
 
 /// Perfil de un equipo: quién es, en qué estado está y qué hacer con él.
 ///
@@ -23,7 +24,7 @@ import '../../widgets/dialogos.dart';
 class MaquinariaPerfilScreen extends StatefulWidget {
   final int maquinariaId;
 
-  /// Pestaña con que abre: 'resumen', 'ficha', 'historial' o 'costos'. Costos por equipo abre
+  /// Pestaña con que abre: 'resumen', 'ficha', 'historial', 'documentos' o 'costos'. Costos por equipo abre
   /// el perfil directo en 'costos'.
   final String pestanaInicial;
   const MaquinariaPerfilScreen({super.key, required this.maquinariaId, this.pestanaInicial = 'resumen'});
@@ -39,7 +40,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
   bool _cargando = true;
   String? _error;
   bool _subiendoFoto = false;
-  late String _pestana = const ['resumen', 'ficha', 'historial', 'costos'].contains(widget.pestanaInicial) ? widget.pestanaInicial : 'resumen';
+  late String _pestana = const ['resumen', 'ficha', 'historial', 'documentos', 'costos'].contains(widget.pestanaInicial) ? widget.pestanaInicial : 'resumen';
 
   @override
   void initState() {
@@ -425,6 +426,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
               (id: 'resumen', etiqueta: 'Resumen', cantidad: null),
               (id: 'ficha', etiqueta: 'Ficha técnica', cantidad: null),
               (id: 'historial', etiqueta: 'Historial', cantidad: _historial.length),
+              (id: 'documentos', etiqueta: 'Documentos', cantidad: null),
               if (_rentabilidad != null) (id: 'costos', etiqueta: 'Costos', cantidad: null),
             ],
             seleccionada: _pestana,
@@ -434,6 +436,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
           switch (_pestana) {
             'ficha' => _pestanaFicha(m, auth),
             'historial' => _pestanaHistorial(),
+            'documentos' => DocumentosEquipo(maquinariaId: widget.maquinariaId, filtrarPorCliente: true),
             'costos' => _pestanaCostos(),
             _ => _pestanaResumen(m, auth),
           },

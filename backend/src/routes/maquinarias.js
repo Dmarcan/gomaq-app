@@ -2,11 +2,12 @@ const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaImagen } = require('../middleware/upload');
-const { supabase, BUCKET_EQUIPOS } = require('../config/supabase');
+const { supabase, BUCKET_EQUIPOS, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 const { calcularEstadoMantencion } = require('../utils/mantencion');
 const { ordenSql } = require('../utils/ordenFlota');
+const { visiblePara, construirSqlDocumentos, filaPublica } = require('../utils/documentosEquipo');
 
 const router = express.Router();
 
@@ -125,6 +126,73 @@ router.get('/resumen', verifyToken, requireRole('gerente', 'administrativo', 'me
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar el resumen de la flota' });
+    }
+});
+
+// GET /api/maquinarias/:id/documentos - guias, ordenes de trabajo y facturas del equipo.
+// Administrativo y gerente ven todo (tambien lo que no tiene cliente) y pueden filtrar con
+// ?cliente_id. Un cliente ve SOLO los documentos que llevan su cliente_id (el que el documento
+// guardo en su momento, no el de hoy del equipo), ignora ?cliente_id y no ve valorizaciones.
+// Las guias creadas antes de la migracion 010 no se muestran al cliente: esa migracion les copio el
+// cliente de hoy del equipo y no se sabe si era el de entonces. El mecanico no entra.
+// Nunca se devuelve archivo_url: solo URLs firmadas de 1 hora.
+const ID_MAXIMO = 2147483647; // integer de Postgres: un id mayor daria 500 en vez de 400
+const idValido = (n) => Number.isSafeInteger(n) && n >= 1 && n <= ID_MAXIMO;
+
+router.get('/:id/documentos', verifyToken, requireRole('gerente', 'administrativo', 'cliente'), async (req, res) => {
+    const equipoId = /^\d+$/.test(req.params.id) ? Number(req.params.id) : NaN;
+    if (!idValido(equipoId)) return res.status(400).json({ error: 'Id de equipo inválido' });
+    const rol = req.user.rol;
+    const esCliente = rol === 'cliente';
+    if (esCliente && !idValido(Number(req.user.cliente_id))) {
+        return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
+    }
+    try {
+        let params;
+        if (esCliente) {
+            // sin registro de la 010 (base armada a mano) no se puede confiar en ninguna guia anterior
+            const m = await pool.query("SELECT aplicada_at FROM schema_migraciones WHERE nombre LIKE '010%' LIMIT 1");
+            params = [equipoId, Number(req.user.cliente_id), m.rows[0] ? m.rows[0].aplicada_at : 'infinity'];
+        } else {
+            // el filtro es opcional, pero si viene tiene que ser un id: uno repetido o invalido es 400
+            const filtro = req.query.cliente_id;
+            let clienteFiltro = null;
+            if (filtro !== undefined && filtro !== '') {
+                clienteFiltro = typeof filtro === 'string' && /^\d+$/.test(filtro) ? Number(filtro) : NaN;
+                if (!idValido(clienteFiltro)) return res.status(400).json({ error: 'cliente_id inválido' });
+            }
+            const equipo = await pool.query('SELECT 1 FROM maquinarias WHERE id = $1', [equipoId]);
+            if (equipo.rows.length === 0) return res.status(404).json({ error: 'Equipo no encontrado' });
+            params = [equipoId, clienteFiltro];
+        }
+        const r = await pool.query(construirSqlDocumentos({ rol }), params);
+        const filas = r.rows.filter((d) => visiblePara(d, req.user) || (!esCliente && d.cliente_id === null));
+        // el cliente recibe el MISMO 404 exista o no el equipo y tenga otros clientes documentos o no:
+        // asi no puede descubrir que ids de equipo existen
+        if (esCliente && filas.length === 0) return res.status(404).json({ error: 'No hay documentos de este equipo' });
+
+        const equipo = await pool.query('SELECT id, codigo, tipo FROM maquinarias WHERE id = $1', [equipoId]);
+        const ids = [...new Set(filas.map((d) => d.cliente_id).filter((x) => x !== null))];
+        const nombres = ids.length
+            ? Object.fromEntries((await pool.query('SELECT id, nombre FROM clientes WHERE id = ANY($1)', [ids])).rows.map((c) => [c.id, c.nombre]))
+            : {};
+        const documentos = await Promise.all(filas.map(async (d) => {
+            let urlFirmada = null;
+            if (d.archivo_url) {
+                // un archivo que no se pueda firmar deja ese documento sin enlace, no tumba la lista
+                try {
+                    const { data, error } = await supabase.storage.from(BUCKET_DOCUMENTOS).createSignedUrl(d.archivo_url, URL_EXPIRACION_SEGUNDOS);
+                    urlFirmada = error ? null : data.signedUrl;
+                } catch (errFirma) {
+                    console.error('No se pudo firmar un documento del equipo:', errFirma.message);
+                }
+            }
+            return { ...filaPublica(d, { rol, urlFirmada }), cliente_nombre: d.cliente_id === null ? null : (nombres[d.cliente_id] || null) };
+        }));
+        res.json({ maquinaria: equipo.rows[0], documentos });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al consultar los documentos del equipo' });
     }
 });
 

@@ -68,6 +68,10 @@ before(async () => {
     supabase.storage.from = () => ({
         upload: async (ruta) => { datos.storage.subidos.push(ruta); return { data: {}, error: null }; },
         remove: async (rutas) => { datos.storage.borrados.push(...rutas); return { data: [], error: null }; },
+        createSignedUrl: async (ruta) => {
+            if (ruta.includes('firma-falla')) throw new Error('no se pudo firmar');
+            return { data: { signedUrl: `https://firmada.test/${ruta}?token=t` }, error: null };
+        },
     });
     await new Promise((resolve) => { servidor = app.listen(0, resolve); });
     base = `http://127.0.0.1:${servidor.address().port}`;
@@ -3751,5 +3755,351 @@ describe('bloque 3: estado del equipo derivado de las ordenes, cierre con estado
             }
         }
         assert.deepEqual(await estadoDe(equipo.id), { estado: 'en_mantencion', estado_origen: 'ot' });
+    });
+});
+
+describe('bloque 4 (parte B): documentos del equipo por rol y cliente', () => {
+    const esc = {};
+    const clave = (d) => `${d.tipo}:${d.id}`;
+    const tokenCliente = (clienteId) => jwt.sign({ id: 987654, rol: 'cliente', cliente_id: clienteId }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    async function pedirConToken(ruta, token) {
+        const r = await fetch(`${base}${ruta}`, { headers: { Authorization: `Bearer ${token}` } });
+        let json = null;
+        try { json = await r.json(); } catch (_) { /* sin cuerpo */ }
+        return { status: r.status, body: json };
+    }
+
+    const guia = async (tipo, fecha, clienteId, extra = {}) => (await pool.query(
+        `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id, created_at)
+         VALUES ($1, $2::tipo_guia, $3, $4, $5, COALESCE($6, now())) RETURNING id`,
+        [esc.equipo.id, tipo, extra.sinDocumento ? null : `guias/${crypto.randomUUID()}.pdf`, fecha, clienteId, extra.creada || null])).rows[0].id;
+
+    before(async () => {
+        if (!HABILITADO) return;
+        const nuevoCliente = async (nombre) => (await pool.query(
+            "INSERT INTO clientes (nombre, email) VALUES ($1, 'doc@gomaq.test') RETURNING id", [`${nombre} ${crypto.randomUUID().slice(0, 6)}`])).rows[0].id;
+        esc.acsa = await nuevoCliente('ACSA');
+        esc.prize = await nuevoCliente('Prize');
+        esc.servinut = await nuevoCliente('Servinut');
+        esc.otro = await nuevoCliente('Sin documentos');
+        esc.equipo = await crearEquipo(null);
+
+        // arriendo 1: ACSA (despacho, OT, recepcion, factura del periodo)
+        esc.g1 = await guia('despacho', '2026-01-02T09:00:00-03:00', esc.acsa);
+        esc.ot1 = (await pool.query(
+            "INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, estado, motivo, valorizacion) VALUES ($1, $2, 'finalizada', 'Revision ACSA', 777000) RETURNING id",
+            [esc.equipo.id, esc.acsa])).rows[0].id;
+        datos.ordenes.push(esc.ot1);
+        esc.r1 = await guia('recepcion', '2026-01-20T10:00:00-03:00', esc.acsa);
+        esc.f1 = (await pool.query(
+            `INSERT INTO facturas (maquinaria_id, guia_despacho_id, periodo_desde, periodo_hasta, cliente_id, folio, archivo_url, monto)
+             VALUES ($1, $2, '2026-01-02', '2026-01-20', $3, 'D-1', 'facturas/acsa1.pdf', 100000) RETURNING id`,
+            [esc.equipo.id, esc.g1, esc.acsa])).rows[0].id;
+        // arriendo 2: Prize; la factura se inserta como el servidor anterior, solo con la recepcion (trigger de la 023)
+        esc.g2 = await guia('despacho', '2026-02-02T09:00:00-03:00', esc.prize);
+        esc.r2 = await guia('recepcion', '2026-02-10T10:00:00-03:00', esc.prize);
+        esc.f2 = (await pool.query(
+            `INSERT INTO facturas (maquinaria_id, guia_recepcion_id, folio, archivo_url, monto) VALUES ($1, $2, 'D-2', 'facturas/prize.pdf', 90000) RETURNING id`,
+            [esc.equipo.id, esc.r2])).rows[0].id;
+        // una OT de taller entre Prize y Servinut, sin cliente
+        esc.ot0 = (await pool.query(
+            "INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, estado, motivo) VALUES ($1, NULL, 'finalizada', 'Taller sin cliente') RETURNING id",
+            [esc.equipo.id])).rows[0].id;
+        datos.ordenes.push(esc.ot0);
+        // arriendo 3: Servinut, con una guia sin documento
+        esc.g3 = await guia('despacho', '2026-03-02T09:00:00-03:00', esc.servinut, { sinDocumento: true });
+        esc.r3 = await guia('recepcion', '2026-03-12T10:00:00-03:00', esc.servinut);
+        // arriendo 4: ACSA otra vez, vigente hoy
+        esc.g4 = await guia('despacho', '2026-04-02T09:00:00-03:00', esc.acsa);
+        // documentos antiguos sin cliente (guia y factura) y una guia de ACSA anterior a la migracion 010
+        esc.gNull = await guia('despacho', '2025-12-01T09:00:00-03:00', null);
+        esc.fNull = (await pool.query(
+            `INSERT INTO facturas (maquinaria_id, folio, archivo_url) VALUES ($1, 'D-NULL', 'facturas/sin-cliente.pdf') RETURNING id`,
+            [esc.equipo.id])).rows[0].id;
+        esc.gVieja = await guia('despacho', '2025-06-01T09:00:00-03:00', esc.acsa, { creada: '2000-01-01T00:00:00Z' });
+    });
+
+    after(async () => {
+        if (!HABILITADO || !esc.equipo) return;
+        // los clientes de prueba se borran aca: antes hay que soltar lo que los referencia
+        await pool.query('DELETE FROM facturas WHERE maquinaria_id = $1', [esc.equipo.id]);
+        await pool.query('DELETE FROM guias WHERE maquinaria_id = $1', [esc.equipo.id]);
+        await purgarOrdenes([esc.ot0, esc.ot1]);
+        await pool.query('DELETE FROM clientes WHERE id = ANY($1)', [[esc.acsa, esc.prize, esc.servinut, esc.otro]]);
+    });
+
+    const conjunto = (r) => new Set(r.body.documentos.map(clave));
+    const esperado = (...pares) => new Set(pares);
+
+    test('cada cliente ve exactamente los documentos de sus arriendos, no los del equipo completo', async (t) => {
+        if (!requiereBase(t)) return;
+        const acsa = await pedirConToken(`/api/maquinarias/${esc.equipo.id}/documentos`, tokenCliente(esc.acsa));
+        assert.equal(acsa.status, 200);
+        assert.deepEqual(conjunto(acsa), esperado(
+            `guia_despacho:${esc.g1}`, `guia_recepcion:${esc.r1}`, `orden_trabajo:${esc.ot1}`, `factura:${esc.f1}`, `guia_despacho:${esc.g4}`));
+        const prize = await pedirConToken(`/api/maquinarias/${esc.equipo.id}/documentos`, tokenCliente(esc.prize));
+        assert.deepEqual(conjunto(prize), esperado(`guia_despacho:${esc.g2}`, `guia_recepcion:${esc.r2}`, `factura:${esc.f2}`));
+        const servinut = await pedirConToken(`/api/maquinarias/${esc.equipo.id}/documentos`, tokenCliente(esc.servinut));
+        assert.deepEqual(conjunto(servinut), esperado(`guia_despacho:${esc.g3}`, `guia_recepcion:${esc.r3}`));
+    });
+
+    test('el trigger de la 023 dejo el cliente en la factura insertada solo con la recepcion', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pool.query('SELECT cliente_id FROM facturas WHERE id = $1', [esc.f2]);
+        assert.equal(r.rows[0].cliente_id, esc.prize);
+    });
+
+    test('administrativo y gerente ven todo, tambien lo que no tiene cliente, y pueden filtrar por cliente', async (t) => {
+        if (!requiereBase(t)) return;
+        for (const rol of ['administrativo', 'gerente']) {
+            const r = await pedir('GET', `/api/maquinarias/${esc.equipo.id}/documentos`, rol);
+            assert.equal(r.status, 200);
+            const claves = conjunto(r);
+            for (const k of [`guia_despacho:${esc.gNull}`, `factura:${esc.fNull}`, `orden_trabajo:${esc.ot0}`, `guia_despacho:${esc.gVieja}`,
+                `factura:${esc.f1}`, `factura:${esc.f2}`, `guia_recepcion:${esc.r3}`, `guia_despacho:${esc.g4}`]) {
+                assert.ok(claves.has(k), `${rol} debe ver ${k}`);
+            }
+            const sinCliente = r.body.documentos.find((d) => clave(d) === `factura:${esc.fNull}`);
+            assert.equal(sinCliente.cliente_id, null);
+            assert.equal(sinCliente.cliente_nombre, null);
+        }
+        const filtrado = await pedir('GET', `/api/maquinarias/${esc.equipo.id}/documentos?cliente_id=${esc.prize}`, 'administrativo');
+        assert.deepEqual(conjunto(filtrado), esperado(`guia_despacho:${esc.g2}`, `guia_recepcion:${esc.r2}`, `factura:${esc.f2}`));
+    });
+
+    test('un cliente no puede ampliar lo que ve con ?cliente_id', async (t) => {
+        if (!requiereBase(t)) return;
+        const base1 = await pedirConToken(`/api/maquinarias/${esc.equipo.id}/documentos`, tokenCliente(esc.prize));
+        const otro = await pedirConToken(`/api/maquinarias/${esc.equipo.id}/documentos?cliente_id=${esc.acsa}`, tokenCliente(esc.prize));
+        assert.deepEqual(conjunto(otro), conjunto(base1));
+        const nulo = await pedirConToken(`/api/maquinarias/${esc.equipo.id}/documentos?cliente_id=`, tokenCliente(esc.prize));
+        assert.deepEqual(conjunto(nulo), conjunto(base1));
+    });
+
+    test('la guia anterior a la migracion 010 no se muestra al cliente aunque lleve su cliente_id', async (t) => {
+        if (!requiereBase(t)) return;
+        const acsa = await pedirConToken(`/api/maquinarias/${esc.equipo.id}/documentos`, tokenCliente(esc.acsa));
+        assert.ok(!conjunto(acsa).has(`guia_despacho:${esc.gVieja}`));
+        const admin = await pedir('GET', `/api/maquinarias/${esc.equipo.id}/documentos`, 'administrativo');
+        assert.ok(conjunto(admin).has(`guia_despacho:${esc.gVieja}`));
+    });
+
+    test('permisos y errores: mecanico 403, cliente sin empresa 400, cliente sin documentos 404, equipo inexistente 404, id invalido 400', async (t) => {
+        if (!requiereBase(t)) return;
+        const ruta = `/api/maquinarias/${esc.equipo.id}/documentos`;
+        assert.equal((await pedir('GET', ruta, 'mecanico')).status, 403);
+        assert.equal((await pedirConToken(ruta, tokens.cliente)).status, 400, 'cliente sin cliente_id');
+        assert.equal((await pedirConToken(ruta, tokenCliente(esc.otro))).status, 404, 'cliente sin documentos de este equipo');
+        assert.equal((await pedir('GET', '/api/maquinarias/99999999/documentos', 'administrativo')).status, 404);
+        assert.equal((await pedir('GET', '/api/maquinarias/abc/documentos', 'administrativo')).status, 400);
+        const sinSesion = await fetch(`${base}${ruta}`);
+        assert.equal(sinSesion.status, 401);
+    });
+
+    test('la respuesta nunca trae archivo_url ni rutas privadas; usa URLs firmadas y la guia sin documento lleva url nula', async (t) => {
+        if (!requiereBase(t)) return;
+        for (const [rol, token] of [['cliente', tokenCliente(esc.servinut)], ['admin', tokens.administrativo]]) {
+            const r = await pedirConToken(`/api/maquinarias/${esc.equipo.id}/documentos`, token);
+            assert.equal(r.status, 200, rol);
+            for (const d of r.body.documentos) {
+                assert.equal('archivo_url' in d, false, `${rol}: sin archivo_url`);
+                if (d.url) assert.match(d.url, /^https:\/\/firmada\.test\//);
+            }
+        }
+        const sinDoc = (await pedirConToken(`/api/maquinarias/${esc.equipo.id}/documentos`, tokenCliente(esc.servinut)))
+            .body.documentos.find((d) => clave(d) === `guia_despacho:${esc.g3}`);
+        assert.equal(sinDoc.sin_documento, true);
+        assert.equal(sinDoc.url, null);
+    });
+
+    test('el cliente no ve la valorizacion de su orden; el administrativo si', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await pedirConToken(`/api/maquinarias/${esc.equipo.id}/documentos`, tokenCliente(esc.acsa));
+        const ot = cliente.body.documentos.find((d) => d.tipo === 'orden_trabajo');
+        assert.equal(ot.id, esc.ot1);
+        assert.equal('valorizacion' in ot, false);
+        assert.equal(ot.estado, 'finalizada');
+        const admin = await pedir('GET', `/api/maquinarias/${esc.equipo.id}/documentos`, 'administrativo');
+        assert.equal(admin.body.documentos.find((d) => d.tipo === 'orden_trabajo' && d.id === esc.ot1).valorizacion, 777000);
+    });
+
+    test('ordenados de lo mas nuevo a lo mas antiguo y con el nombre del cliente', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedir('GET', `/api/maquinarias/${esc.equipo.id}/documentos`, 'administrativo');
+        const fechas = r.body.documentos.map((d) => new Date(d.fecha).getTime());
+        assert.deepEqual(fechas, [...fechas].sort((a, b) => b - a));
+        const acsa = r.body.documentos.find((d) => clave(d) === `guia_despacho:${esc.g4}`);
+        assert.match(acsa.cliente_nombre, /^ACSA /);
+    });
+});
+
+describe('bloque 4 (parte B): documentos del equipo, casos de borde de la revision', () => {
+    const esc = {};
+    const clave = (d) => `${d.tipo}:${d.id}`;
+    const tokenCliente = (clienteId) => jwt.sign({ id: 987655, rol: 'cliente', cliente_id: clienteId }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    async function pedirConToken(ruta, token) {
+        const r = await fetch(`${base}${ruta}`, { headers: { Authorization: `Bearer ${token}` } });
+        let json = null;
+        try { json = await r.json(); } catch (_) { /* sin cuerpo */ }
+        return { status: r.status, body: json };
+    }
+    const guia = async (equipoId, tipo, fecha, clienteId, extra = {}) => (await pool.query(
+        `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id, created_at)
+         VALUES ($1, $2::tipo_guia, $3, $4, $5, COALESCE($6, now())) RETURNING id`,
+        [equipoId, tipo, extra.archivo || `guias/${crypto.randomUUID()}.pdf`, fecha, clienteId, extra.creada || null])).rows[0].id;
+
+    before(async () => {
+        if (!HABILITADO) return;
+        const nuevoCliente = async (nombre) => (await pool.query(
+            "INSERT INTO clientes (nombre) VALUES ($1) RETURNING id", [`${nombre} ${crypto.randomUUID().slice(0, 6)}`])).rows[0].id;
+        esc.a = await nuevoCliente('Cliente A');
+        esc.b = await nuevoCliente('Cliente B');
+        esc.equipo = await crearEquipo(null);
+        esc.soloB = await crearEquipo(null);
+        // equipo con documentos de A y B
+        esc.gA = await guia(esc.equipo.id, 'despacho', '2026-02-01T09:00:00-03:00', esc.a);
+        esc.gFalla = await guia(esc.equipo.id, 'recepcion', '2026-02-10T10:00:00-03:00', esc.a, { archivo: 'guias/firma-falla.pdf' });
+        // despacho y recepcion anteriores a la migracion 010 (cliente copiado por el relleno)
+        esc.dVieja = await guia(esc.equipo.id, 'despacho', '2025-05-01T09:00:00-03:00', esc.a, { creada: '2000-01-01T00:00:00Z' });
+        esc.rVieja = await guia(esc.equipo.id, 'recepcion', '2025-05-20T10:00:00-03:00', esc.a, { creada: '2000-01-01T00:00:00Z' });
+        // OT de B y factura de A que (por error de datos) apunta a esa OT: A no debe recibir el id de la OT de B
+        esc.otB = (await pool.query(
+            "INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, estado, motivo) VALUES ($1, $2, 'finalizada', 'OT de B') RETURNING id", [esc.equipo.id, esc.b])).rows[0].id;
+        datos.ordenes.push(esc.otB);
+        esc.otA = (await pool.query(
+            "INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, estado, motivo) VALUES ($1, $2, 'finalizada', 'OT de A') RETURNING id", [esc.equipo.id, esc.a])).rows[0].id;
+        datos.ordenes.push(esc.otA);
+        // factura de reparacion SIN maquinaria_id: solo llega al equipo por su OT
+        esc.fRep = (await pool.query(
+            "INSERT INTO facturas (orden_trabajo_id, folio, archivo_url, monto, cliente_id) VALUES ($1, 'R-1', 'facturas/rep.pdf', 55555, $2) RETURNING id",
+            [esc.otA, esc.a])).rows[0].id;
+        // facturas de arriendo colgadas de guias anteriores a la 010
+        // (el despacho primero: el trigger de la 023 no debe dar el mismo despacho a la factura de la recepcion)
+        esc.fDesVieja = (await pool.query(
+            "INSERT INTO facturas (maquinaria_id, guia_despacho_id, periodo_desde, periodo_hasta, folio, archivo_url, cliente_id, monto) VALUES ($1, $2, '2025-05-01', '2025-05-20', 'V-DES', 'facturas/v2.pdf', $3, 1000) RETURNING id",
+            [esc.equipo.id, esc.dVieja, esc.a])).rows[0].id;
+        esc.fRecVieja = (await pool.query(
+            "INSERT INTO facturas (maquinaria_id, guia_recepcion_id, folio, archivo_url, cliente_id, monto) VALUES ($1, $2, 'V-REC', 'facturas/v1.pdf', $3, 1000) RETURNING id",
+            [esc.equipo.id, esc.rVieja, esc.a])).rows[0].id;
+        // factura de A que apunta a la OT de B
+        esc.fCruzada = (await pool.query(
+            "INSERT INTO facturas (maquinaria_id, orden_trabajo_id, folio, archivo_url, cliente_id, monto) VALUES ($1, $2, 'X-1', 'facturas/x.pdf', $3, 2000) RETURNING id",
+            [esc.equipo.id, esc.otB, esc.a])).rows[0].id;
+        // equipo donde solo B tiene documentos
+        esc.gSoloB = await guia(esc.soloB.id, 'despacho', '2026-03-01T09:00:00-03:00', esc.b);
+    });
+
+    after(async () => {
+        if (!HABILITADO || !esc.equipo) return;
+        await pool.query('DELETE FROM facturas WHERE maquinaria_id = ANY($1) OR orden_trabajo_id = ANY($2)', [[esc.equipo.id, esc.soloB.id], [esc.otA, esc.otB]]);
+        await pool.query('DELETE FROM guias WHERE maquinaria_id = ANY($1)', [[esc.equipo.id, esc.soloB.id]]);
+        await purgarOrdenes([esc.otA, esc.otB]);
+        await pool.query('DELETE FROM clientes WHERE id = ANY($1)', [[esc.a, esc.b]]);
+    });
+
+    const ruta = (id = esc.equipo.id, q = '') => `/api/maquinarias/${id}/documentos${q}`;
+    const conjunto = (r) => new Set(r.body.documentos.map(clave));
+
+    test('la factura de reparacion sin maquinaria_id llega al equipo por su OT y la ve su cliente', async (t) => {
+        if (!requiereBase(t)) return;
+        const a = await pedirConToken(ruta(), tokenCliente(esc.a));
+        assert.ok(conjunto(a).has(`factura:${esc.fRep}`));
+        const b = await pedirConToken(ruta(), tokenCliente(esc.b));
+        assert.ok(!conjunto(b).has(`factura:${esc.fRep}`));
+    });
+
+    test('las facturas colgadas de una recepcion o de un despacho anteriores a la 010 no se muestran al cliente', async (t) => {
+        if (!requiereBase(t)) return;
+        const a = await pedirConToken(ruta(), tokenCliente(esc.a));
+        for (const k of [`factura:${esc.fRecVieja}`, `factura:${esc.fDesVieja}`, `guia_despacho:${esc.dVieja}`, `guia_recepcion:${esc.rVieja}`]) {
+            assert.ok(!conjunto(a).has(k), `el cliente no debe ver ${k}`);
+        }
+        const admin = await pedir('GET', ruta(), 'administrativo');
+        for (const k of [`factura:${esc.fRecVieja}`, `factura:${esc.fDesVieja}`, `guia_despacho:${esc.dVieja}`]) {
+            assert.ok(conjunto(admin).has(k), `administrativo ve ${k}`);
+        }
+    });
+
+    test('sin registro de la migracion 010 el cliente no ve ninguna guia ni factura de guia (falla cerrado)', async (t) => {
+        if (!requiereBase(t)) return;
+        const original = (await pool.query("SELECT nombre FROM schema_migraciones WHERE nombre LIKE '010%'")).rows[0].nombre;
+        try {
+            await pool.query("UPDATE schema_migraciones SET nombre = 'x-' || nombre WHERE nombre = $1", [original]);
+            const a = await pedirConToken(ruta(), tokenCliente(esc.a));
+            assert.equal(a.status, 200);
+            assert.ok([...conjunto(a)].every((k) => !k.startsWith('guia_')), 'ninguna guia');
+            assert.ok(conjunto(a).has(`orden_trabajo:${esc.otA}`), 'las ordenes siguen visibles');
+        } finally {
+            await pool.query("UPDATE schema_migraciones SET nombre = $1 WHERE nombre = 'x-' || $1", [original]);
+        }
+        assert.ok((await pool.query('SELECT 1 FROM schema_migraciones WHERE nombre = $1', [original])).rows.length === 1, 'registro restaurado');
+    });
+
+    test('ids fuera de rango o mal formados dan 400 y no 500', async (t) => {
+        if (!requiereBase(t)) return;
+        for (const id of ['2147483648', '0', '-1', '1e3', '1.5', '99999999999999999999', 'abc']) {
+            assert.equal((await pedir('GET', ruta(id), 'administrativo')).status, 400, `id ${id}`);
+            assert.equal((await pedirConToken(ruta(id), tokenCliente(esc.a))).status, 400, `id ${id} (cliente)`);
+        }
+        // un cliente con cliente_id absurdo en el token tambien es 400
+        assert.equal((await pedirConToken(ruta(), tokenCliente(2147483648))).status, 400);
+    });
+
+    test('?cliente_id invalido o repetido da 400 al administrativo; el cliente lo ignora', async (t) => {
+        if (!requiereBase(t)) return;
+        for (const q of ['?cliente_id=abc', '?cliente_id=0', '?cliente_id=2147483648', '?cliente_id=1&cliente_id=2', '?cliente_id[]=1']) {
+            assert.equal((await pedir('GET', ruta(esc.equipo.id, q), 'administrativo')).status, 400, q);
+        }
+        assert.equal((await pedir('GET', ruta(esc.equipo.id, '?cliente_id='), 'administrativo')).status, 200, 'vacio = sin filtro');
+        const limpio = await pedirConToken(ruta(), tokenCliente(esc.a));
+        const raro = await pedirConToken(ruta(esc.equipo.id, '?cliente_id=abc&cliente_id=2'), tokenCliente(esc.a));
+        assert.equal(raro.status, 200);
+        assert.deepEqual(conjunto(raro), conjunto(limpio));
+    });
+
+    test('la respuesta no trae montos ni rutas de archivo', async (t) => {
+        if (!requiereBase(t)) return;
+        for (const token of [tokenCliente(esc.a), tokens.administrativo]) {
+            const r = await pedirConToken(ruta(), token);
+            // la ruta privada solo puede aparecer dentro de la URL firmada, nunca como dato propio
+            const texto = JSON.stringify(r.body.documentos.map(({ url: _url, ...resto }) => resto));
+            assert.ok(!/"monto"/.test(texto), 'sin monto');
+            assert.ok(!/archivo_url|facturas\/|guias\//.test(texto), 'sin rutas privadas');
+        }
+    });
+
+    test('un cliente que pide un equipo donde solo otro tiene documentos recibe el mismo 404 que con un id inexistente', async (t) => {
+        if (!requiereBase(t)) return;
+        const ajeno = await pedirConToken(ruta(esc.soloB.id), tokenCliente(esc.a));
+        const inexistente = await pedirConToken(ruta(99999999), tokenCliente(esc.a));
+        assert.equal(ajeno.status, 404);
+        assert.equal(inexistente.status, 404);
+        assert.deepEqual(ajeno.body, inexistente.body);
+        // y B si ve lo suyo del mismo equipo
+        const b = await pedirConToken(ruta(esc.soloB.id), tokenCliente(esc.b));
+        assert.equal(b.status, 200);
+    });
+
+    test('al cliente no se le da el id de una OT que no es de su empresa', async (t) => {
+        if (!requiereBase(t)) return;
+        const a = await pedirConToken(ruta(), tokenCliente(esc.a));
+        const cruzada = a.body.documentos.find((d) => clave(d) === `factura:${esc.fCruzada}`);
+        assert.ok(cruzada, 'la factura es de A');
+        assert.equal(cruzada.orden_trabajo_id, null);
+        const propia = a.body.documentos.find((d) => clave(d) === `factura:${esc.fRep}`);
+        assert.equal(propia.orden_trabajo_id, esc.otA);
+        const admin = await pedir('GET', ruta(), 'administrativo');
+        assert.equal(admin.body.documentos.find((d) => clave(d) === `factura:${esc.fCruzada}`).orden_trabajo_id, esc.otB);
+    });
+
+    test('un archivo que no se puede firmar deja ese documento sin enlace y el resto de la lista sigue', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedir('GET', ruta(), 'administrativo');
+        assert.equal(r.status, 200);
+        const roto = r.body.documentos.find((d) => clave(d) === `guia_recepcion:${esc.gFalla}`);
+        assert.equal(roto.url, null);
+        const sano = r.body.documentos.find((d) => clave(d) === `guia_despacho:${esc.gA}`);
+        assert.match(sano.url, /^https:\/\/firmada\.test\//);
     });
 });
