@@ -5,6 +5,8 @@ const DEFAULTS = Object.freeze({
     dia_facturacion: 5,
     hora_corte_despacho: 13,
     incluir_dia_recepcion: true,
+    // si el dia de corte cierra el periodo (true) o el periodo termina el dia anterior (false)
+    corte_cierra_periodo: true,
 });
 
 const enteroEnRango = (v, min, max) => typeof v === 'number' && Number.isInteger(v) && v >= min && v <= max;
@@ -14,12 +16,14 @@ const VALIDADORES = Object.assign(Object.create(null), {
     dia_facturacion: (v) => enteroEnRango(v, 1, 28),
     hora_corte_despacho: (v) => enteroEnRango(v, 0, 23),
     incluir_dia_recepcion: (v) => typeof v === 'boolean',
+    corte_cierra_periodo: (v) => typeof v === 'boolean',
 });
 
 const MENSAJES = Object.assign(Object.create(null), {
     dia_facturacion: 'El día de facturación debe ser un entero entre 1 y 28',
     hora_corte_despacho: 'La hora de corte debe ser un entero entre 0 y 23',
     incluir_dia_recepcion: 'Incluir el día de recepción debe ser verdadero o falso',
+    corte_cierra_periodo: 'Que el corte cierre el período debe ser verdadero o falso',
 });
 
 /** Valida el cuerpo de un cambio: solo claves conocidas, al menos una, valores estrictos. */

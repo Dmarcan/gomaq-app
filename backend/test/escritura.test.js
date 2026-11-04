@@ -2702,13 +2702,14 @@ describe('migracion 021: tipo de evento factura_anulada', () => {
 
 describe('bloque 2a: configuracion de cobro, inicio de cobro y arriendos en curso', () => {
     const { inicioCobroDia } = require('../src/utils/diasArriendo');
-    const DEFAULTS_CONFIG = { dia_facturacion: 5, hora_corte_despacho: 13, incluir_dia_recepcion: true };
+    const DEFAULTS_CONFIG = { dia_facturacion: 5, hora_corte_despacho: 13, incluir_dia_recepcion: true, corte_cierra_periodo: true };
 
     /** Deja la configuracion como esta en la migracion, sin rastro de quien la toco. */
     async function restaurarConfiguracion() {
         for (const [clave, valor] of Object.entries(DEFAULTS_CONFIG)) {
             await pool.query(
-                'UPDATE configuracion SET valor = $2::jsonb, actualizado_por = NULL WHERE clave = $1', [clave, JSON.stringify(valor)]);
+                `INSERT INTO configuracion (clave, valor) VALUES ($1, $2::jsonb)
+                 ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_por = NULL`, [clave, JSON.stringify(valor)]);
         }
     }
 
@@ -2874,14 +2875,21 @@ describe('bloque 2a: configuracion de cobro, inicio de cobro y arriendos en curs
         const fallido = await crearEquipo(null);
         await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, fallido, cliente_id) VALUES ($1, 'despacho', 'x', now(), true, $2)`, [fallido.id, cliente]);
         assert.equal((await buscar(fallido.id)).length, 0);
-        // dos despachos sin recepcion entre ellos: una sola fila, la del primero
+        // dos despachos sin recepcion entre ellos (no deberia pasar): el primero se cierra solo y el
+        // segundo, a otro cliente, es el unico arriendo en curso del equipo
         const doble = await crearEquipo(null);
+        const otroCliente = (await pool.query('SELECT id FROM clientes WHERE id <> $1 ORDER BY id LIMIT 1', [cliente])).rows[0];
         const g1 = await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'despacho', 'x', '2026-02-01T09:00:00-03:00', $2) RETURNING id`, [doble.id, cliente]);
-        await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'despacho', 'x', '2026-02-10T09:00:00-03:00', $2)`, [doble.id, cliente]);
+        const g2 = await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'despacho', 'x', '2026-02-10T09:00:00-03:00', $2) RETURNING id`, [doble.id, otroCliente ? otroCliente.id : cliente]);
         const filas = await buscar(doble.id);
         assert.equal(filas.length, 1);
-        assert.equal(filas[0].guia_despacho_id, g1.rows[0].id);
-        assert.equal(filas[0].inicio_cobro, '2026-02-01');
+        assert.equal(filas[0].guia_despacho_id, g2.rows[0].id);
+        assert.equal(filas[0].inicio_cobro, '2026-02-10');
+        const pendiente = (await pedir('GET', '/api/facturacion/pendientes', 'administrativo')).body.arriendos
+            .find((a) => a.guia_despacho_id === g1.rows[0].id);
+        assert.ok(pendiente, 'el primero queda pendiente de facturar');
+        assert.equal(pendiente.falta_recepcion, true);
+        assert.equal(pendiente.guia_recepcion_id, null);
     });
 
     test('arriendos en curso: recepcion y despacho a la misma hora se ordenan por id', async (t) => {
@@ -3205,5 +3213,282 @@ describe('bloque 2b (parte 1): correcciones de la revision experta', () => {
             const resultados = await Promise.allSettled([insertar(r1, `T-25${vuelta}1`), insertar(r2, `T-25${vuelta}2`)]);
             assert.deepEqual(resultados.map((x) => x.status), ['fulfilled', 'fulfilled'], JSON.stringify(resultados.map((x) => x.reason && x.reason.message)));
         }
+    });
+});
+
+describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
+    const DEFECTO = { dia_facturacion: 5, hora_corte_despacho: 13, incluir_dia_recepcion: true, corte_cierra_periodo: true };
+
+    async function restaurar() {
+        for (const [clave, valor] of Object.entries(DEFECTO)) {
+            await pool.query(
+                `INSERT INTO configuracion (clave, valor) VALUES ($1, $2::jsonb)
+                 ON CONFLICT (clave) DO UPDATE SET valor = EXCLUDED.valor, actualizado_por = NULL`, [clave, JSON.stringify(valor)]);
+        }
+    }
+
+    const guiaSql = async (equipoId, tipo, fecha, clienteId) => (await pool.query(
+        `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, $2::tipo_guia, 'x', $3, $4) RETURNING id`,
+        [equipoId, tipo, fecha, clienteId])).rows[0].id;
+
+    /** Un arriendo ya terminado: despacho y recepcion con las fechas dadas. */
+    async function arriendo(despacho, recepcion, clienteId) {
+        const cliente = clienteId || await algunCliente();
+        const equipo = await crearEquipo(null);
+        const d = await guiaSql(equipo.id, 'despacho', despacho, cliente);
+        const r = recepcion ? await guiaSql(equipo.id, 'recepcion', recepcion, cliente) : null;
+        return { equipo, d, r, cliente };
+    }
+
+    const propuesta = async (d, rol = 'administrativo') => pedir('GET', `/api/facturacion/arriendos/${d}/propuesta`, rol);
+
+    async function facturar(campos, rol = 'administrativo') {
+        const formulario = new FormData();
+        for (const [k, v] of Object.entries(campos)) if (v !== undefined && v !== null) formulario.append(k, String(v));
+        formulario.append('archivo', new Blob(['%PDF-1.4 prueba'], { type: 'application/pdf' }), 'f.pdf');
+        const r = await fetch(`${base}/api/facturacion/arriendo`, {
+            method: 'POST', headers: { Authorization: `Bearer ${tokens[rol]}` }, body: formulario });
+        let body = null;
+        try { body = await r.json(); } catch (_) { /* sin cuerpo */ }
+        return { status: r.status, body };
+    }
+
+    test('propuesta: del inicio de cobro al primer corte, con las opciones hasta el fin', async (t) => {
+        if (!requiereBase(t)) return;
+        const { d } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T10:00:00-03:00');
+        const r = await propuesta(d);
+        assert.equal(r.status, 200);
+        assert.equal(r.body.desde, '2026-08-01');
+        assert.equal(r.body.hasta_sugerido, '2026-08-05');
+        assert.deepEqual(r.body.opciones_hasta, ['2026-08-05', '2026-09-05', '2026-10-05', '2026-10-20']);
+        assert.equal(r.body.dias, 5);
+        assert.equal(r.body.es_final, false);
+        assert.equal(r.body.en_curso, false);
+        assert.equal((await propuesta(d, 'gerente')).status, 200);
+        assert.equal((await propuesta(d, 'mecanico')).status, 403);
+        assert.equal((await pedir('GET', '/api/facturacion/arriendos/99999999/propuesta', 'administrativo')).status, 404);
+        assert.equal((await pedir('GET', '/api/facturacion/arriendos/abc/propuesta', 'administrativo')).status, 404);
+    });
+
+    test('facturar por periodos encadenados hasta el final, sin huecos', async (t) => {
+        if (!requiereBase(t)) return;
+        const { d, r: recep, cliente } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T10:00:00-03:00');
+        const ids = [];
+        for (const [desde, hasta] of [['2026-08-01', '2026-08-05'], ['2026-08-06', '2026-09-05'], ['2026-09-06', '2026-10-05'], ['2026-10-06', '2026-10-20']]) {
+            const p = await propuesta(d);
+            assert.equal(p.body.desde, desde);
+            const f = await facturar({ guia_despacho_id: d, periodo_desde: desde, periodo_hasta: hasta, folio: `P-${desde}`, monto: 1000 });
+            assert.equal(f.status, 201, JSON.stringify(f.body));
+            assert.equal(f.body.cliente_id, cliente);
+            ids.push(f.body.id);
+            if (hasta === '2026-10-20') {
+                assert.equal(f.body.guia_recepcion_id, recep, 'la factura final se ata a la recepcion');
+            } else {
+                assert.equal(f.body.guia_recepcion_id, null);
+            }
+        }
+        const fin = await propuesta(d);
+        assert.equal(fin.body.nada_que_facturar, true);
+        assert.equal(fin.body.facturado_completo, true);
+        const otra = await facturar({ guia_despacho_id: d, periodo_desde: '2026-10-21', periodo_hasta: '2026-10-21', folio: 'P-extra' });
+        assert.equal(otra.status, 409);
+        const pend = (await pedir('GET', '/api/facturacion/pendientes', 'administrativo')).body.arriendos;
+        assert.equal(pend.find((a) => a.guia_despacho_id === d), undefined, 'facturado completo no esta pendiente');
+    });
+
+    test('un periodo parcial deja el resto pendiente en /pendientes', async (t) => {
+        if (!requiereBase(t)) return;
+        const { d, r: recep } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T10:00:00-03:00');
+        const f = await facturar({ guia_despacho_id: d, periodo_desde: '2026-08-01', periodo_hasta: '2026-08-05', folio: 'PP-1' });
+        assert.equal(f.status, 201);
+        const pend = (await pedir('GET', '/api/facturacion/pendientes', 'administrativo')).body.arriendos.find((a) => a.guia_despacho_id === d);
+        assert.ok(pend);
+        assert.equal(pend.desde, '2026-08-06');
+        assert.equal(pend.hasta_sugerido, '2026-09-05');
+        assert.equal(pend.guia_recepcion_id, recep);
+        assert.equal(pend.dias, 76);
+    });
+
+    test('periodo con hueco, solape o fin invalido se rechaza y no sube el PDF', async (t) => {
+        if (!requiereBase(t)) return;
+        const { d } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T10:00:00-03:00');
+        const subidos = datos.storage.subidos.length;
+        const hueco = await facturar({ guia_despacho_id: d, periodo_desde: '2026-08-03', periodo_hasta: '2026-08-05', folio: 'H-1' });
+        assert.equal(hueco.status, 409);
+        assert.equal(hueco.body.codigo, 'periodo_desactualizado');
+        assert.equal(hueco.body.propuesta.desde, '2026-08-01', 'devuelve la propuesta actual');
+        const invalido = await facturar({ guia_despacho_id: d, periodo_desde: '2026-08-01', periodo_hasta: '2026-08-07', folio: 'H-2' });
+        assert.equal(invalido.status, 400);
+        const pasado = await facturar({ guia_despacho_id: d, periodo_desde: '2026-08-01', periodo_hasta: '2026-10-21', folio: 'H-3' });
+        assert.equal(pasado.status, 400);
+        const mal = await facturar({ guia_despacho_id: d, periodo_desde: 'ayer', periodo_hasta: '2026-08-05', folio: 'H-4' });
+        assert.equal(mal.status, 400);
+        assert.equal((await pool.query('SELECT 1 FROM facturas WHERE guia_despacho_id = $1', [d])).rows.length, 0);
+        assert.ok(datos.storage.borrados.length >= datos.storage.subidos.length - subidos, 'los PDF subidos se borran');
+        // solape: tras facturar el primero, repetir el mismo periodo es desactualizado
+        assert.equal((await facturar({ guia_despacho_id: d, periodo_desde: '2026-08-01', periodo_hasta: '2026-08-05', folio: 'H-5' })).status, 201);
+        const repetido = await facturar({ guia_despacho_id: d, periodo_desde: '2026-08-01', periodo_hasta: '2026-08-05', folio: 'H-6' });
+        assert.equal(repetido.status, 409);
+    });
+
+    test('dos facturas simultaneas del mismo periodo: una entra y la otra se rechaza', async (t) => {
+        if (!requiereBase(t)) return;
+        const { d } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T10:00:00-03:00');
+        const campos = { guia_despacho_id: d, periodo_desde: '2026-08-01', periodo_hasta: '2026-08-05' };
+        const [a, b] = await Promise.all([facturar({ ...campos, folio: 'C-1' }), facturar({ ...campos, folio: 'C-2' })]);
+        assert.deepEqual([a.status, b.status].sort(), [201, 409]);
+        assert.equal((await pool.query('SELECT 1 FROM facturas WHERE guia_despacho_id = $1', [d])).rows.length, 1);
+    });
+
+    test('compatibilidad: solo con guia_recepcion_id factura todo hasta el fin (panel antiguo)', async (t) => {
+        if (!requiereBase(t)) return;
+        const { d, r } = await arriendo('2026-03-01T09:00:00-03:00', '2026-03-04T10:00:00-03:00');
+        const f = await facturar({ guia_recepcion_id: r, folio: 'L-1', monto: 500 });
+        assert.equal(f.status, 201, JSON.stringify(f.body));
+        assert.equal(f.body.guia_despacho_id, d);
+        assert.equal(f.body.guia_recepcion_id, r);
+        assert.equal(String(f.body.periodo_desde).slice(0, 10) >= '2026-02-28', true);
+        const otra = await facturar({ guia_recepcion_id: r, folio: 'L-2' });
+        assert.equal(otra.status, 409);
+        assert.match(otra.body.error, /ya tiene su factura/);
+        assert.equal((await facturar({ guia_recepcion_id: 99999999, folio: 'L-3' })).status, 404);
+        assert.equal((await facturar({ folio: 'L-4' })).status, 400);
+    });
+
+    test('un arriendo en curso solo se factura hasta un corte ya vencido', async (t) => {
+        if (!requiereBase(t)) return;
+        const { d } = await arriendo('2026-01-02T09:00:00-03:00', null);
+        const p = await propuesta(d);
+        assert.equal(p.body.en_curso, true);
+        assert.equal(p.body.desde, '2026-01-02');
+        assert.equal(p.body.hasta_sugerido, '2026-01-05');
+        assert.equal(p.body.es_final, false);
+        assert.equal((await facturar({ guia_despacho_id: d, periodo_desde: '2026-01-02', periodo_hasta: '2026-01-05', folio: 'E-1' })).status, 201);
+        const siguiente = await propuesta(d);
+        assert.equal(siguiente.body.desde, '2026-01-06');
+        // en curso no se puede cerrar con el panel antiguo (no hay recepcion)
+        const enCurso = (await pedir('GET', '/api/facturacion/arriendos-en-curso', 'administrativo')).body.arriendos.find((a) => a.guia_despacho_id === d);
+        assert.equal(enCurso.facturado_hasta, '2026-01-05');
+        assert.equal(enCurso.desde, '2026-01-06');
+    });
+
+    test('despacho de otro cliente sin recepcion en medio: el primero se cierra y cada uno factura al suyo', async (t) => {
+        if (!requiereBase(t)) return;
+        const c1 = await algunCliente();
+        const otro = (await pool.query('SELECT id FROM clientes WHERE id <> $1 ORDER BY id LIMIT 1', [c1])).rows[0];
+        const equipo = await crearEquipo(null);
+        const d1 = await guiaSql(equipo.id, 'despacho', '2026-02-01T09:00:00-03:00', c1);
+        const d2 = await guiaSql(equipo.id, 'despacho', '2026-02-10T11:00:00-03:00', otro ? otro.id : c1);
+        const p1 = await propuesta(d1);
+        assert.equal(p1.body.falta_recepcion, true);
+        assert.equal(p1.body.en_curso, false);
+        assert.equal(p1.body.fin, '2026-02-10', 'cierra el dia del segundo despacho');
+        assert.equal(p1.body.cliente_id, c1);
+        const p2 = await propuesta(d2);
+        assert.equal(p2.body.en_curso, true);
+        assert.equal(p2.body.desde, '2026-02-10');
+        assert.equal(p2.body.cliente_id, otro ? otro.id : c1);
+    });
+
+    test('despacho a las 12:59 y 13:00 en el mismo dia que vuelve otro equipo: cada uno cuenta su dia', async (t) => {
+        if (!requiereBase(t)) return;
+        const a = await arriendo('2026-03-10T12:59:00-03:00', '2026-03-12T10:00:00-03:00');
+        const b = await arriendo('2026-03-10T13:00:00-03:00', '2026-03-12T10:00:00-03:00');
+        assert.equal((await propuesta(a.d)).body.desde, '2026-03-10');
+        assert.equal((await propuesta(b.d)).body.desde, '2026-03-11');
+    });
+
+    test('devolucion el mismo dia, ya pasado el corte: 0 dias, no queda pendiente', async (t) => {
+        if (!requiereBase(t)) return;
+        const { d } = await arriendo('2026-03-10T15:00:00-03:00', '2026-03-10T17:00:00-03:00');
+        const p = await propuesta(d);
+        assert.equal(p.body.nada_que_facturar, true);
+        const pend = (await pedir('GET', '/api/facturacion/pendientes', 'administrativo')).body.arriendos;
+        assert.equal(pend.find((x) => x.guia_despacho_id === d), undefined);
+    });
+
+    test('monto de la factura de arriendo: solo enteros de pesos, 400 antes de subir el PDF', async (t) => {
+        if (!requiereBase(t)) return;
+        const { d } = await arriendo('2026-03-01T09:00:00-03:00', '2026-03-05T10:00:00-03:00');
+        const subidosAntes = datos.storage.subidos.length;
+        for (const monto of ['249.900', '249,9', '-1000', '1e3', '12.5', 'abc', '1 000']) {
+            const r = await facturar({ guia_despacho_id: d, periodo_desde: '2026-03-01', periodo_hasta: '2026-03-05', folio: 'M-1', monto });
+            assert.equal(r.status, 400, `monto ${monto}`);
+        }
+        assert.equal(datos.storage.subidos.length, subidosAntes, 'no se subio ningun PDF');
+        assert.equal((await pool.query('SELECT 1 FROM facturas WHERE guia_despacho_id = $1', [d])).rows.length, 0);
+        const ok = await facturar({ guia_despacho_id: d, periodo_desde: '2026-03-01', periodo_hasta: '2026-03-05', folio: 'M-2', monto: '249900' });
+        assert.equal(ok.status, 201);
+        assert.equal(Number(ok.body.monto), 249900);
+    });
+
+    test('con el dia de recepcion apagado el arriendo termina el dia anterior', async (t) => {
+        if (!requiereBase(t)) return;
+        const { d } = await arriendo('2026-10-10T09:00:00-03:00', '2026-10-20T10:00:00-03:00');
+        try {
+            assert.equal((await pedir('PUT', '/api/facturacion/configuracion', 'gerente', { incluir_dia_recepcion: false })).status, 200);
+            const p = await propuesta(d);
+            assert.equal(p.body.fin, '2026-10-19');
+            assert.deepEqual(p.body.opciones_hasta, ['2026-10-19']);
+        } finally {
+            await restaurar();
+        }
+        assert.equal((await propuesta(d)).body.fin, '2026-10-20');
+    });
+
+    test('si el corte no cierra el periodo, el periodo termina el dia anterior al corte', async (t) => {
+        if (!requiereBase(t)) return;
+        const { d } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T10:00:00-03:00');
+        try {
+            const put = await pedir('PUT', '/api/facturacion/configuracion', 'gerente', { corte_cierra_periodo: false });
+            assert.equal(put.status, 200);
+            assert.equal(put.body.corte_cierra_periodo, false);
+            const p = await propuesta(d);
+            assert.deepEqual(p.body.opciones_hasta, ['2026-08-04', '2026-09-04', '2026-10-04', '2026-10-20']);
+            assert.equal((await pedir('GET', '/api/facturacion/configuracion', 'administrativo')).body.corte_cierra_periodo, false);
+            assert.equal((await pedir('PUT', '/api/facturacion/configuracion', 'gerente', { corte_cierra_periodo: 'no' })).status, 400);
+        } finally {
+            await restaurar();
+        }
+        assert.equal((await propuesta(d)).body.opciones_hasta[0], '2026-08-05');
+    });
+
+    test('recepcion retroactiva anterior a lo ya facturado: se avisa y no admite otra factura', async (t) => {
+        if (!requiereBase(t)) return;
+        const { equipo, d, cliente } = await arriendo('2026-08-01T09:00:00-03:00', null);
+        // en curso se puede facturar de una vez hasta cualquier corte vencido
+        assert.equal((await facturar({ guia_despacho_id: d, periodo_desde: '2026-08-01', periodo_hasta: '2026-09-05', folio: 'R-1' })).status, 201);
+        // la recepcion se registra despues, con fecha anterior a lo facturado
+        await guiaSql(equipo.id, 'recepcion', '2026-08-20T10:00:00-03:00', cliente);
+        const p = await propuesta(d);
+        assert.equal(p.body.facturado_de_mas, true);
+        assert.equal(p.body.nada_que_facturar, true);
+        // sigue visible en pendientes, con la marca, para que se emita la nota de credito
+        const pend = (await pedir('GET', '/api/facturacion/pendientes', 'administrativo')).body.arriendos;
+        const item = pend.find((x) => x.guia_despacho_id === d);
+        assert.ok(item, 'el arriendo facturado de mas sigue visible');
+        assert.equal(item.facturado_de_mas, true);
+        assert.equal(item.facturado_hasta, '2026-09-05');
+        assert.equal(item.dias, 0);
+        // y no admite otra factura
+        assert.equal((await facturar({ guia_despacho_id: d, periodo_desde: '2026-09-06', periodo_hasta: '2026-09-10', folio: 'R-2' })).status, 409);
+    });
+
+    test('/pendientes con recepciones repetidas ya no duplica el arriendo', async (t) => {
+        if (!requiereBase(t)) return;
+        const { equipo, d, cliente } = await arriendo('2026-03-01T09:00:00-03:00', '2026-03-05T10:00:00-03:00');
+        await guiaSql(equipo.id, 'recepcion', '2026-03-06T10:00:00-03:00', cliente); // recepcion repetida (huerfana)
+        const pend = (await pedir('GET', '/api/facturacion/pendientes', 'administrativo')).body.arriendos.filter((a) => a.guia_despacho_id === d);
+        assert.equal(pend.length, 1);
+    });
+
+    test('valorizar y facturar una OT no se mezclan con los arriendos (campos nuevos en /pendientes)', async (t) => {
+        if (!requiereBase(t)) return;
+        const { d } = await arriendo('2026-03-01T09:00:00-03:00', '2026-03-05T10:00:00-03:00');
+        const fila = (await pedir('GET', '/api/facturacion/pendientes', 'gerente')).body.arriendos.find((a) => a.guia_despacho_id === d);
+        for (const campo of ['guia_recepcion_id', 'maquinaria_codigo', 'cliente_nombre', 'fecha_despacho', 'fecha_recepcion', 'dias', 'desde', 'hasta_sugerido', 'es_final']) {
+            assert.ok(campo in fila, `falta ${campo}`);
+        }
+        assert.equal(fila.dias, 5);
     });
 });

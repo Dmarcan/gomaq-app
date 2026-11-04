@@ -4,7 +4,9 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { rutaArchivo } = require('../utils/rutaArchivo');
-const { diasEntre, diaSantiago, inicioCobroDia, resumirArriendoEnCurso } = require('../utils/diasArriendo');
+const { diasEntre } = require('../utils/diasArriendo');
+const { resumirArriendoEnCurso, validarPeriodo } = require('../utils/periodosArriendo');
+const { cargarArriendos } = require('../utils/arriendos');
 const { leerConfiguracion, validarCambioConfiguracion } = require('../utils/configuracion');
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
 const { detectarCliente } = require('../utils/detectarCliente');
@@ -20,33 +22,36 @@ const montoONulo = (v) => (v === undefined || v === null || v === '' ? null : v)
 // les ponga monto, y reparaciones ya valorizadas listas para emitir factura.
 router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
-        // el cliente sale de la propia guia de recepcion (snapshot al momento del evento),
-        // NUNCA de maquinarias.cliente_id: la recepcion libera la maquina (cliente_id = NULL)
-        // justo antes de llegar aca, y el arriendo quedaria sin cliente para facturar
-        const arriendosResult = await pool.query(`
-            SELECT g.id AS guia_recepcion_id, g.maquinaria_id, m.codigo AS maquinaria_codigo,
-                   c.nombre AS cliente_nombre, c.email AS cliente_email,
-                   d.fecha AS fecha_despacho, to_char(d.inicio_cobro, 'YYYY-MM-DD') AS inicio_cobro, g.fecha AS fecha_recepcion
-            FROM guias g
-            JOIN maquinarias m ON m.id = g.maquinaria_id
-            LEFT JOIN clientes c ON c.id = g.cliente_id
-            JOIN LATERAL (
-                SELECT fecha, inicio_cobro FROM guias d2
-                WHERE d2.maquinaria_id = g.maquinaria_id AND d2.tipo = 'despacho'
-                  AND d2.fallido = false AND d2.fecha <= g.fecha
-                ORDER BY d2.fecha DESC LIMIT 1
-            ) d ON true
-            WHERE g.tipo = 'recepcion' AND g.fallido = false
-              AND NOT EXISTS (SELECT 1 FROM facturas f WHERE f.guia_recepcion_id = g.id)
-            ORDER BY g.fecha DESC
-        `);
-        // el inicio de cobro se fijo al crear el despacho (migracion 022); sin el, la regla historica
+        // un arriendo es un despacho; lo cierra la recepcion siguiente o, si falta, el despacho siguiente
+        // (utils/arriendos.js). El cliente es el del despacho (el de la recepcion sale de
+        // maquinarias.cliente_id, que con dos despachos seguidos ya seria el del segundo)
         const config = await leerConfiguracion(pool);
-        const arriendos = arriendosResult.rows.map(({ inicio_cobro: inicioGuardado, ...fila }) => {
-            const inicio = inicioGuardado || inicioCobroDia(fila.fecha_despacho);
-            const dias = diasEntre(inicio, diaSantiago(fila.fecha_recepcion)) - (config.incluir_dia_recepcion ? 0 : 1);
-            return { ...fila, dias: Math.max(0, dias) };
-        });
+        const todos = await cargarArriendos(pool, config);
+        const arriendos = todos
+            // un arriendo facturado de mas (recepcion registrada con fecha anterior a lo ya facturado)
+            // se muestra con su aviso: pide nota de credito en el SII y no se puede subir otra factura
+            .filter((a) => !a.en_curso && (!a.nada_que_facturar || a.facturado_de_mas))
+            .map((a) => ({
+                guia_recepcion_id: a.guia_recepcion_id,
+                guia_despacho_id: a.guia_despacho_id,
+                maquinaria_id: a.maquinaria_id,
+                maquinaria_codigo: a.maquinaria_codigo,
+                cliente_nombre: a.cliente_nombre,
+                cliente_email: a.cliente_email,
+                fecha_despacho: a.fecha_despacho,
+                fecha_recepcion: a.fecha_fin,
+                desde: a.desde,
+                fin: a.fin,
+                hasta_sugerido: a.hasta_sugerido,
+                es_final: a.es_final,
+                falta_recepcion: a.falta_recepcion,
+                facturado_de_mas: a.facturado_de_mas === true,
+                facturado_hasta: a.facturado_hasta || null,
+                // dias que quedan por facturar del arriendo, y dias del primer periodo propuesto
+                dias: a.facturado_de_mas ? 0 : diasEntre(a.desde, a.fin),
+                dias_periodo: a.dias,
+            }))
+            .sort((x, y) => new Date(y.fecha_recepcion) - new Date(x.fecha_recepcion));
 
         const pendientesValorizarResult = await pool.query(`
             SELECT ot.id, ot.motivo, ot.diagnostico, ot.fecha_creacion,
@@ -107,41 +112,154 @@ router.post('/detectar', verifyToken, requireRole('administrativo'), subidaPdf.s
     }
 });
 
-// POST /api/facturacion/arriendo - sube la factura de un ciclo de arriendo ya cerrado
+// GET /api/facturacion/arriendos/:guiaDespachoId/propuesta - el periodo que el sistema propone
+// facturar de un arriendo: desde el dia siguiente al ultimo facturado, hasta el primer fin de
+// periodo (o el fin del arriendo). El administrativo lo confirma o elige otro fin de la lista.
+router.get('/arriendos/:guiaDespachoId/propuesta', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    const id = Number(req.params.guiaDespachoId);
+    if (!Number.isInteger(id) || id <= 0) return res.status(404).json({ error: 'Arriendo no encontrado' });
+    try {
+        const config = await leerConfiguracion(pool);
+        const [arriendo] = await cargarArriendos(pool, config, { despachoId: id });
+        if (!arriendo) return res.status(404).json({ error: 'Arriendo no encontrado' });
+        res.json(respuestaPropuesta(arriendo, config));
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al calcular el período a facturar' });
+    }
+});
+
+function respuestaPropuesta(a, config) {
+    return {
+        guia_despacho_id: a.guia_despacho_id,
+        guia_recepcion_id: a.guia_recepcion_id,
+        maquinaria_id: a.maquinaria_id,
+        maquinaria_codigo: a.maquinaria_codigo,
+        cliente_id: a.cliente_id,
+        cliente_nombre: a.cliente_nombre,
+        inicio_cobro: a.inicio_cobro,
+        facturado_hasta: a.facturado_hasta,
+        fin: a.fin,
+        en_curso: a.en_curso,
+        desde: a.desde,
+        hasta_sugerido: a.hasta_sugerido,
+        opciones_hasta: a.opciones_hasta,
+        dias: a.dias,
+        es_final: a.es_final,
+        falta_recepcion: a.falta_recepcion,
+        nada_que_facturar: a.nada_que_facturar,
+        facturado_de_mas: a.facturado_de_mas,
+        facturado_completo: a.facturado_completo,
+        configuracion: config,
+    };
+}
+
+const esDia = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`));
+
+// POST /api/facturacion/arriendo - sube la factura de un periodo de un arriendo.
+// Campos: guia_despacho_id, periodo_desde, periodo_hasta, folio, monto y archivo (PDF). El servidor
+// vuelve a calcular la propuesta con el despacho bloqueado y rechaza lo que no calce (huecos y
+// solapes). Compatibilidad: solo con guia_recepcion_id (panel antiguo) factura todo lo que falta
+// hasta el fin del arriendo.
 router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
-    const { guia_recepcion_id, folio, monto } = req.body;
-    if (!guia_recepcion_id || !folio || !req.file) {
-        return res.status(400).json({ error: 'guia_recepcion_id, folio y archivo (PDF) son requeridos' });
+    const { guia_recepcion_id, guia_despacho_id, periodo_desde, periodo_hasta, folio, monto } = req.body;
+    const conPeriodo = Boolean(guia_despacho_id);
+    if ((!conPeriodo && !guia_recepcion_id) || !folio || !req.file) {
+        return res.status(400).json({ error: 'guia_despacho_id (o guia_recepcion_id), folio y archivo (PDF) son requeridos' });
+    }
+    if (conPeriodo && (!esDia(periodo_desde) || !esDia(periodo_hasta))) {
+        return res.status(400).json({ error: 'periodo_desde y periodo_hasta son requeridos (AAAA-MM-DD)' });
+    }
+    // pesos chilenos enteros: sin puntos, decimales ni signo (el panel ya manda un entero)
+    if (monto !== undefined && monto !== null && monto !== '' && !/^\d+$/.test(String(monto).trim())) {
+        return res.status(400).json({ error: 'El monto debe ser un número entero de pesos, sin puntos ni decimales' });
+    }
+    const idOrigen = Number(conPeriodo ? guia_despacho_id : guia_recepcion_id);
+    if (!Number.isInteger(idOrigen) || idOrigen <= 0) {
+        return res.status(400).json({ error: 'Id de guía inválido' });
     }
     let rutaStorage = null;
+    let client = null;
+    const rechazar = async (estado, cuerpo) => {
+        await client.query('ROLLBACK');
+        if (rutaStorage) await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+        rutaStorage = null;
+        return res.status(estado).json(cuerpo);
+    };
     try {
-        const guia = await pool.query('SELECT maquinaria_id FROM guias WHERE id = $1', [guia_recepcion_id]);
-        if (guia.rows.length === 0) {
-            return res.status(404).json({ error: 'Guía de recepción no encontrada' });
+        // el despacho del arriendo: directo, o el que cierra la recepcion indicada
+        let despachoId = conPeriodo ? idOrigen : null;
+        const config = await leerConfiguracion(pool);
+        if (!conPeriodo) {
+            const guia = await pool.query('SELECT id FROM guias WHERE id = $1 AND tipo = \'recepcion\'', [idOrigen]);
+            if (guia.rows.length === 0) return res.status(404).json({ error: 'Guía de recepción no encontrada' });
+            const [a] = await cargarArriendos(pool, config, { recepcionId: idOrigen });
+            if (!a) return res.status(409).json({ error: 'Esta recepción no corresponde a un arriendo con despacho' });
+            despachoId = a.guia_despacho_id;
         }
-        const maquinariaId = guia.rows[0].maquinaria_id;
 
-        rutaStorage = rutaArchivo(['facturas', `arriendo-${Number(guia_recepcion_id)}`], req.file.originalname);
+        rutaStorage = rutaArchivo(['facturas', `arriendo-${despachoId}`], req.file.originalname);
         const { error: errorSubida } = await supabase.storage
             .from(BUCKET_DOCUMENTOS)
             .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });
         if (errorSubida) throw errorSubida;
 
-        const result = await pool.query(
-            `INSERT INTO facturas (maquinaria_id, guia_recepcion_id, folio, archivo_url, monto)
-             VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-            [maquinariaId, guia_recepcion_id, folio, rutaStorage, montoONulo(monto)]
+        client = await pool.connect();
+        await client.query('BEGIN');
+        // el mismo candado por despacho que usa el trigger de facturas (migracion 023) y despues el
+        // bloqueo de la fila: serializa dos facturas simultaneas del mismo arriendo
+        await client.query('SELECT pg_advisory_xact_lock(70215, $1)', [despachoId]);
+        const bloqueo = await client.query(
+            `SELECT id FROM guias WHERE id = $1 AND tipo = 'despacho' AND fallido = false FOR UPDATE`, [despachoId]);
+        if (bloqueo.rows.length === 0) return await rechazar(404, { error: 'Arriendo no encontrado' });
+
+        const [arriendo] = await cargarArriendos(client, config, { despachoId });
+        if (arriendo.facturado_completo || arriendo.facturado_de_mas) {
+            return await rechazar(409, { error: conPeriodo ? 'El arriendo ya está facturado completo' : 'Este arriendo ya tiene su factura' });
+        }
+        // panel antiguo: se factura hasta el fin del arriendo
+        const desde = conPeriodo ? periodo_desde : arriendo.desde;
+        const hasta = conPeriodo ? periodo_hasta : arriendo.fin;
+        if (!conPeriodo && arriendo.en_curso) {
+            return await rechazar(409, { error: 'El arriendo aún no tiene recepción: factura por período' });
+        }
+        const veredicto = conPeriodo
+            ? validarPeriodo({ desde, hasta }, arriendo)
+            : (arriendo.nada_que_facturar
+                ? { ok: false, codigo: 'nada_que_facturar', estado: 409, mensaje: 'No hay días por facturar en este arriendo' }
+                : { ok: true });
+        if (!veredicto.ok) {
+            return await rechazar(veredicto.estado, {
+                error: veredicto.mensaje, codigo: veredicto.codigo, propuesta: respuestaPropuesta(arriendo, config),
+            });
+        }
+        // la guia de recepcion solo se ata a la factura que cierra el arriendo
+        const cierra = arriendo.fin !== null && hasta === arriendo.fin && arriendo.guia_recepcion_id !== null;
+        const result = await client.query(
+            `INSERT INTO facturas (maquinaria_id, guia_recepcion_id, guia_despacho_id, periodo_desde, periodo_hasta,
+                                   cliente_id, folio, archivo_url, monto)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+            [arriendo.maquinaria_id, cierra ? arriendo.guia_recepcion_id : null, arriendo.guia_despacho_id, desde, hasta,
+             arriendo.cliente_id, folio, rutaStorage, montoONulo(monto)]
         );
+        await client.query('COMMIT');
         res.status(201).json(result.rows[0]);
     } catch (err) {
+        if (client) await client.query('ROLLBACK').catch(() => {});
         if (rutaStorage) {
             await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
         }
         if (err.code === '23505') {
-            return res.status(409).json({ error: 'Este arriendo ya tiene su factura' });
+            return res.status(409).json({
+                error: err.constraint === 'facturas_despacho_periodo_unico'
+                    ? 'Ya hay una factura para este período'
+                    : 'Esta recepción ya tiene su factura',
+            });
         }
         console.error(err);
         res.status(500).json({ error: 'Error al subir factura de arriendo' });
+    } finally {
+        if (client) client.release();
     }
 });
 
@@ -195,33 +313,31 @@ router.put('/configuracion', verifyToken, requireRole('gerente'), async (req, re
 // GET /api/facturacion/arriendos-en-curso - solo lectura: equipos despachados que aun no vuelven,
 // desde cuando se cobran, cuantos dias van y cuantos periodos (cortes) llevan sin facturar.
 // Sale de las guias, no de maquinarias.cliente_id: un equipo con cliente cargado a mano y sin
-// despacho no aparece. Toma el primer despacho abierto, igual que utils/rentabilidad.js.
+// despacho no aparece. Un equipo tiene a lo mas un arriendo en curso: el del ultimo despacho.
 router.get('/arriendos-en-curso', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
         const config = await leerConfiguracion(pool);
-        const r = await pool.query(
-            `WITH ur AS (
-                 SELECT DISTINCT ON (maquinaria_id) maquinaria_id, fecha, id FROM guias
-                 WHERE tipo = 'recepcion' AND fallido = false
-                 ORDER BY maquinaria_id, fecha DESC, id DESC)
-             SELECT DISTINCT ON (d.maquinaria_id)
-                    d.id AS guia_despacho_id, d.maquinaria_id, m.codigo AS maquinaria_codigo,
-                    d.cliente_id, c.nombre AS cliente_nombre, d.fecha AS fecha_despacho,
-                    to_char(COALESCE(d.inicio_cobro, gomaq_inicio_cobro(d.fecha, $1)), 'YYYY-MM-DD') AS inicio_cobro,
-                    to_char(now() AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD') AS hoy
-             FROM guias d
-             JOIN maquinarias m ON m.id = d.maquinaria_id
-             LEFT JOIN clientes c ON c.id = d.cliente_id
-             LEFT JOIN ur ON ur.maquinaria_id = d.maquinaria_id
-             WHERE d.tipo = 'despacho' AND d.fallido = false
-               AND (ur.id IS NULL OR (d.fecha, d.id) > (ur.fecha, ur.id))
-             ORDER BY d.maquinaria_id, d.fecha ASC, d.id ASC`,
-            [config.hora_corte_despacho]);
-        const arriendos = r.rows.map(({ hoy, inicio_cobro: inicioCobro, ...fila }) => ({
-            ...fila,
-            inicio_cobro: inicioCobro,
-            ...resumirArriendoEnCurso({ inicioCobro, hoy, diaFacturacion: config.dia_facturacion }),
-        }));
+        const todos = await cargarArriendos(pool, config);
+        const arriendos = todos
+            .filter((a) => a.en_curso)
+            .map((a) => ({
+                guia_despacho_id: a.guia_despacho_id,
+                maquinaria_id: a.maquinaria_id,
+                maquinaria_codigo: a.maquinaria_codigo,
+                cliente_id: a.cliente_id,
+                cliente_nombre: a.cliente_nombre,
+                fecha_despacho: a.fecha_despacho,
+                inicio_cobro: a.inicio_cobro,
+                facturado_hasta: a.facturado_hasta,
+                opciones_hasta: a.opciones_hasta,
+                ...resumirArriendoEnCurso({
+                    inicioCobro: a.inicio_cobro,
+                    ultimoPeriodoHasta: a.facturado_hasta,
+                    hoy: a.hoy,
+                    diaFacturacion: config.dia_facturacion,
+                    corteCierraPeriodo: config.corte_cierra_periodo,
+                }),
+            }));
         arriendos.sort((a, b) => b.periodos_sin_facturar - a.periodos_sin_facturar || b.dias - a.dias);
         res.json({ arriendos, configuracion: config });
     } catch (err) {

@@ -106,22 +106,7 @@ function proximoCorte(hoy, diaFacturacion) {
     return null;
 }
 
-// Estado de un arriendo en curso (sin recepcion). El dia de corte cierra el periodo (inclusive) y
-// el aviso aparece desde ese mismo dia. `ultimoPeriodoHasta` lo conectara el bloque 2b: hasta
-// entonces el arriendo se cuenta desde su inicio de cobro.
-function resumirArriendoEnCurso({ inicioCobro, ultimoPeriodoHasta = null, hoy, diaFacturacion }) {
-    const desde = ultimoPeriodoHasta ? sumarDias(ultimoPeriodoHasta, 1) : inicioCobro;
-    const periodos = fechasDeCorte(desde, hoy, diaFacturacion).length;
-    return {
-        desde,
-        dias: diasEntre(desde, hoy),
-        periodos_sin_facturar: periodos,
-        proximo_corte: proximoCorte(hoy, diaFacturacion),
-        aviso: periodos > 0,
-    };
-}
-
 module.exports = {
     HORA_CORTE, calcularInicioCobro, calcularDiasTranscurridos, diaCalendarioUtc,
-    diaSantiago, horaSantiago, sumarDias, diasEntre, inicioCobroDia, fechasDeCorte, proximoCorte, resumirArriendoEnCurso,
+    diaSantiago, horaSantiago, sumarDias, diasEntre, inicioCobroDia, fechasDeCorte, proximoCorte,
 };

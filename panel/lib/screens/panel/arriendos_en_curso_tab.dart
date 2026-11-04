@@ -6,6 +6,7 @@ import '../../theme/gomaq_theme.dart';
 import '../../utils/formato.dart';
 import '../../widgets/dialogos.dart';
 import '../../widgets/estado_vacio.dart';
+import 'facturacion_screen.dart' show FacturaPendienteDialog;
 
 /// Pestaña "Arriendos en curso" de Facturación (solo lectura) con las reglas de cobro.
 ///
@@ -58,6 +59,7 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
     var dia = (_config['dia_facturacion'] as num?)?.toInt() ?? 5;
     var hora = (_config['hora_corte_despacho'] as num?)?.toInt() ?? 13;
     var incluir = _config['incluir_dia_recepcion'] != false;
+    var cierra = _config['corte_cierra_periodo'] != false;
     final guardado = await mostrarFormulario(
       context,
       icono: Icons.tune,
@@ -91,6 +93,13 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
             value: incluir,
             onChanged: (v) => redibujar(() => incluir = v),
           ),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('El día de corte cierra el período'),
+            subtitle: const Text('Si está apagado, cada período termina el día anterior al corte.'),
+            value: cierra,
+            onChanged: (v) => redibujar(() => cierra = v),
+          ),
         ],
       ),
       alGuardar: () async {
@@ -99,6 +108,7 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
           if (dia != _config['dia_facturacion']) 'dia_facturacion': dia,
           if (hora != _config['hora_corte_despacho']) 'hora_corte_despacho': hora,
           if (incluir != (_config['incluir_dia_recepcion'] != false)) 'incluir_dia_recepcion': incluir,
+          if (cierra != (_config['corte_cierra_periodo'] != false)) 'corte_cierra_periodo': cierra,
         };
         if (cambios.isEmpty) return;
         await ApiClient.instance.put('/api/facturacion/configuracion', cambios);
@@ -137,6 +147,7 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
     final dia = _config['dia_facturacion'] ?? 5;
     final hora = ((_config['hora_corte_despacho'] as num?)?.toInt() ?? 13).toString().padLeft(2, '0');
     final incluye = _config['incluir_dia_recepcion'] != false ? 'sí' : 'no';
+    final cierra = _config['corte_cierra_periodo'] != false ? 'sí' : 'no';
     final quien = _config['actualizado_por'];
     return Card(
       child: Padding(
@@ -152,7 +163,7 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
                 children: [
                   const Text('Reglas de cobro', style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 4),
-                  Text('Día de facturación: $dia · Corte del despacho: $hora:00 · El día de la recepción cuenta: $incluye'),
+                  Text('Día de facturación: $dia · Corte del despacho: $hora:00 · El día de la recepción cuenta: $incluye · El corte cierra el período: $cierra'),
                   if (quien != null)
                     Text(
                       'Cambiado por $quien el ${Formato.fecha(_config['actualizado_at'])}',
@@ -168,10 +179,25 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
     );
   }
 
+  Future<void> _facturarPeriodo(Map<String, dynamic> a) async {
+    await showDialog(
+      context: context,
+      builder: (_) => FacturaPendienteDialog(item: {
+        'tipo': 'arriendo',
+        'id': a['guia_despacho_id'],
+        'guia_despacho_id': a['guia_despacho_id'],
+        'titulo': '${a['maquinaria_codigo']} · Arriendo',
+        'cliente_nombre': a['cliente_nombre'],
+      }),
+    );
+    _cargar();
+  }
+
   Widget _tarjetaArriendo(Map<String, dynamic> a) {
     final periodos = (a['periodos_sin_facturar'] as num?)?.toInt() ?? 0;
     final aviso = a['aviso'] == true;
     final proximo = a['proximo_corte'];
+    final puedeFacturar = context.watch<AuthService>().esAdministrativo && (a['opciones_hasta'] as List?)?.isNotEmpty == true;
     return Card(
       child: ListTile(
         leading: Icon(Icons.local_shipping, color: aviso ? GomaqColors.estadoAdvertencia : GomaqColors.primario),
@@ -191,6 +217,15 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
                 label: Text(periodos == 1 ? '1 período sin facturar' : '$periodos períodos sin facturar'),
               ),
             ],
+            if (puedeFacturar)
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: () => _facturarPeriodo(a),
+                  icon: const Icon(Icons.receipt_long, size: 18),
+                  label: const Text('Facturar período'),
+                ),
+              ),
           ],
         ),
       ),

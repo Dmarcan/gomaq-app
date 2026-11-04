@@ -67,7 +67,7 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
   }
 
   Future<void> _abrirDialogo(Map<String, dynamic> item) async {
-    await showDialog(context: context, builder: (_) => _FacturaPendienteDialog(item: item));
+    await showDialog(context: context, builder: (_) => FacturaPendienteDialog(item: item));
     _cargar();
   }
 
@@ -105,10 +105,18 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
       for (final a in _arriendos)
         {
           'tipo': 'arriendo',
-          'id': a['guia_recepcion_id'],
+          'id': a['guia_recepcion_id'] ?? a['guia_despacho_id'],
+          'guia_despacho_id': a['guia_despacho_id'],
           'titulo': '${a['maquinaria_codigo']} · Arriendo',
           'cliente_nombre': a['cliente_nombre'],
-          'subtitulo': '${a['dias']} día(s) de arriendo · Cliente: ${a['cliente_nombre'] ?? '-'}',
+          'facturado_de_mas': a['facturado_de_mas'] == true,
+          'subtitulo': a['facturado_de_mas'] == true
+              ? 'Facturado de más hasta ${Formato.fecha(a['facturado_hasta'])}: la recepción es anterior. '
+                  'Emite una nota de crédito en el SII · Cliente: ${a['cliente_nombre'] ?? '-'}'
+              : '${a['dias']} día(s) por facturar'
+              '${a['desde'] != null ? ' desde ${Formato.fecha(a['desde'])}' : ''}'
+              ' · Cliente: ${a['cliente_nombre'] ?? '-'}'
+              '${a['falta_recepcion'] == true ? ' · Sin recepción registrada' : ''}',
         },
       for (final r in _listas)
         {
@@ -137,14 +145,18 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
           final puedeFacturar = context.watch<AuthService>().esAdministrativo;
           return Card(
             child: ListTile(
-              leading: Icon(esArriendo ? Icons.local_shipping : Icons.build, color: GomaqColors.primario),
+              leading: Icon(
+                item['facturado_de_mas'] == true ? Icons.warning_amber : (esArriendo ? Icons.local_shipping : Icons.build),
+                color: item['facturado_de_mas'] == true ? GomaqColors.estadoAdvertencia : GomaqColors.primario,
+              ),
               title: Text(item['titulo'] as String),
               subtitle: Text(
                 puedeFacturar
                     ? item['subtitulo'] as String
                     : '${item['subtitulo']} · Administrativo emite la factura',
               ),
-              onTap: puedeFacturar ? () => _abrirDialogo(item) : null,
+              // un arriendo facturado de más no admite otra factura: se corrige con nota de crédito en el SII
+              onTap: (puedeFacturar && item['facturado_de_mas'] != true) ? () => _abrirDialogo(item) : null,
             ),
           );
         },
@@ -186,15 +198,15 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
 /// Dialogo unico para ambos tipos de pendiente (arriendo/reparacion): subir PDF, detectar
 /// datos (mejor esfuerzo), confirmar/editar, crear la factura, y armar la vista previa
 /// del correo antes de autorizar el envio.
-class _FacturaPendienteDialog extends StatefulWidget {
+class FacturaPendienteDialog extends StatefulWidget {
   final Map<String, dynamic> item;
-  const _FacturaPendienteDialog({required this.item});
+  const FacturaPendienteDialog({super.key, required this.item});
 
   @override
-  State<_FacturaPendienteDialog> createState() => _FacturaPendienteDialogState();
+  State<FacturaPendienteDialog> createState() => _FacturaPendienteDialogState();
 }
 
-class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
+class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
   final _folioCtrl = TextEditingController();
   final _montoCtrl = TextEditingController();
   PlatformFile? _archivo;
@@ -209,6 +221,13 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
   Map<String, dynamic>? _facturaCreada;
   final _folioEditCtrl = TextEditingController();
   final _montoEditCtrl = TextEditingController();
+  // periodo de un arriendo: lo propone el servidor y el administrativo elige hasta cuando
+  Map<String, dynamic>? _propuesta;
+  String? _hastaElegido;
+  String? _errorPropuesta;
+  bool _cargandoPropuesta = false;
+
+  bool get _facturaPorPeriodo => widget.item['tipo'] == 'arriendo' && widget.item['guia_despacho_id'] != null;
 
   @override
   void initState() {
@@ -216,7 +235,35 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
     if (widget.item['monto_sugerido'] != null) {
       _montoCtrl.text = numeroParaEditar(widget.item['monto_sugerido']);
     }
+    if (_facturaPorPeriodo) _cargarPropuesta();
   }
+
+  /// Pide al servidor el periodo que toca facturar; se vuelve a pedir si cambió mientras tanto.
+  Future<void> _cargarPropuesta() async {
+    setState(() {
+      _cargandoPropuesta = true;
+      _errorPropuesta = null;
+    });
+    try {
+      final p = await ApiClient.instance.get('/api/facturacion/arriendos/${widget.item['guia_despacho_id']}/propuesta');
+      if (!mounted) return;
+      final opciones = List<String>.from(p['opciones_hasta'] ?? const []);
+      // si el desde cambio (otra factura de por medio), la eleccion anterior ya no vale: vuelve la sugerida
+      final mismoDesde = _propuesta != null && _propuesta!['desde'] == p['desde'];
+      setState(() {
+        _propuesta = Map<String, dynamic>.from(p as Map);
+        _hastaElegido = (mismoDesde && opciones.contains(_hastaElegido)) ? _hastaElegido : p['hasta_sugerido'] as String?;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _errorPropuesta = mensajeErrorCarga(e));
+    } finally {
+      if (mounted) setState(() => _cargandoPropuesta = false);
+    }
+  }
+
+  /// Días entre dos fechas AAAA-MM-DD, ambas incluidas.
+  int _diasEntre(String desde, String hasta) =>
+      DateTime.parse('${hasta}T00:00:00Z').difference(DateTime.parse('${desde}T00:00:00Z')).inDays + 1;
 
   Future<void> _elegirArchivo() async {
     final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
@@ -251,6 +298,10 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
       _errorMonto = (_montoCtrl.text.trim().isNotEmpty && monto == null) ? 'Escribe un monto válido, por ejemplo 249.900.' : null;
     });
     if (_errorArchivo != null || _errorFolio != null || _errorMonto != null) return;
+    if (_facturaPorPeriodo && (_propuesta == null || _hastaElegido == null)) {
+      setState(() => _errorPropuesta = 'No hay un período por facturar en este arriendo.');
+      return;
+    }
     setState(() => _procesando = true);
     try {
       final esArriendo = widget.item['tipo'] == 'arriendo';
@@ -260,7 +311,12 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
         bytes: _archivo!.bytes!,
         filename: _archivo!.name,
         fields: {
-          if (esArriendo) 'guia_recepcion_id': widget.item['id'].toString(),
+          if (esArriendo && !_facturaPorPeriodo) 'guia_recepcion_id': widget.item['id'].toString(),
+          if (_facturaPorPeriodo) ...{
+            'guia_despacho_id': widget.item['guia_despacho_id'].toString(),
+            'periodo_desde': _propuesta!['desde'] as String,
+            'periodo_hasta': _hastaElegido!,
+          },
           'folio': _folioCtrl.text.trim(),
           if (monto != null) 'monto': '$monto',
         },
@@ -274,6 +330,16 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
       }
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      // el periodo pudo cambiar (otra factura, una recepción nueva): se muestra el vigente
+      if (mounted && e.statusCode == 409 && _facturaPorPeriodo) _cargarPropuesta();
+    } catch (_) {
+      // plazo vencido o sin red: el servidor pudo haber creado la factura, asi que no se asume nada
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No se pudo confirmar la subida; revisa si la factura quedó cargada.'),
+        ));
+        if (_facturaPorPeriodo) _cargarPropuesta();
+      }
     } finally {
       if (mounted) setState(() => _procesando = false);
     }
@@ -337,7 +403,7 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
         TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
         if (subiendo)
           FilledButton(
-            onPressed: (_procesando || _detectando) ? null : _subirFactura,
+            onPressed: (_procesando || _detectando || (_facturaPorPeriodo && (_propuesta?['nada_que_facturar'] ?? true) == true)) ? null : _subirFactura,
             child: _procesando
                 ? const SizedBox(height: 16, width: 16, child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
                 : const Text('Subir factura'),
@@ -352,8 +418,79 @@ class _FacturaPendienteDialogState extends State<_FacturaPendienteDialog> {
     );
   }
 
+  Widget _construirPeriodo() {
+    if (_cargandoPropuesta && _propuesta == null) {
+      return const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: LinearProgressIndicator());
+    }
+    final p = _propuesta;
+    if (p == null) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(_errorPropuesta ?? 'No se pudo calcular el período.', style: const TextStyle(color: GomaqColors.estadoNegativo)),
+          TextButton.icon(onPressed: _cargarPropuesta, icon: const Icon(Icons.refresh), label: const Text('Reintentar')),
+          const SizedBox(height: 8),
+        ],
+      );
+    }
+    final opciones = List<String>.from(p['opciones_hasta'] ?? const []);
+    final final_ = _hastaElegido != null && _hastaElegido == p['fin'];
+    final avisos = <String>[
+      if (p['falta_recepcion'] == true) 'Falta registrar la recepción: el arriendo se cerró al despachar el equipo a otro cliente.',
+      if (p['facturado_de_mas'] == true) 'Ya se facturó más allá de la recepción. Si corresponde, emite una nota de crédito en el SII.',
+      ?_errorPropuesta,
+    ];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const TituloSeccion('Período a facturar'),
+        if (p['nada_que_facturar'] == true)
+          const Text('No hay días por facturar en este arriendo.')
+        else ...[
+          LayoutBuilder(builder: (context, caja) {
+            final desdeCampo = InputDecorator(
+              decoration: decoracionCampo('Desde'),
+              child: Text(Formato.fecha(p['desde'])),
+            );
+            final hastaCampo = DropdownButtonFormField<String>(
+              key: ValueKey(_hastaElegido),
+              initialValue: _hastaElegido,
+              isExpanded: true,
+              decoration: decoracionCampo('Hasta'),
+              items: [for (final o in opciones) DropdownMenuItem(value: o, child: Text(Formato.fecha(o)))],
+              onChanged: (v) => setState(() => _hastaElegido = v),
+            );
+            // bajo 600 px (el cuadro mide menos) cada campo en su propia fila: lado a lado quedan de ~115 px
+            if (MediaQuery.sizeOf(context).width < 600 || caja.maxWidth < 360) {
+              return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [desdeCampo, const SizedBox(height: 12), hastaCampo]);
+            }
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [Expanded(child: desdeCampo), const SizedBox(width: 12), Expanded(child: hastaCampo)],
+            );
+          }),
+          if (_hastaElegido != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                '${_diasEntre(p['desde'] as String, _hastaElegido!)} día(s) · ${final_ ? 'Último período del arriendo' : 'Período parcial: el arriendo sigue'}',
+                style: const TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+            ),
+        ],
+        for (final aviso in avisos)
+          Padding(
+            padding: const EdgeInsets.only(top: 6),
+            child: Text(aviso, style: const TextStyle(fontSize: 12, color: GomaqColors.estadoAdvertencia)),
+          ),
+        const SizedBox(height: 16),
+      ],
+    );
+  }
+
   List<Widget> _construirFormulario() {
     return [
+      if (_facturaPorPeriodo) _construirPeriodo(),
       const TituloSeccion('Documento PDF de la factura'),
       OutlinedButton.icon(
         onPressed: _elegirArchivo,

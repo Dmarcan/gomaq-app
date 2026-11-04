@@ -5,8 +5,9 @@ const assert = require('node:assert');
 
 const {
     calcularDiasTranscurridos, calcularInicioCobro, diaSantiago, horaSantiago, sumarDias, diasEntre,
-    inicioCobroDia, fechasDeCorte, proximoCorte, resumirArriendoEnCurso,
+    inicioCobroDia, fechasDeCorte, proximoCorte,
 } = require('../src/utils/diasArriendo');
+const { resumirArriendoEnCurso } = require('../src/utils/periodosArriendo');
 const { DEFAULTS, validarCambioConfiguracion } = require('../src/utils/configuracion');
 
 describe('inicioCobroDia (independiente de la zona del proceso)', () => {
@@ -176,6 +177,6 @@ describe('validarCambioConfiguracion', () => {
     });
 
     test('los valores por defecto son los de siempre', () => {
-        assert.deepEqual({ ...DEFAULTS }, { dia_facturacion: 5, hora_corte_despacho: 13, incluir_dia_recepcion: true });
+        assert.deepEqual({ ...DEFAULTS }, { dia_facturacion: 5, hora_corte_despacho: 13, incluir_dia_recepcion: true, corte_cierra_periodo: true });
     });
 });
