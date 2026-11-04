@@ -2,6 +2,8 @@ const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 
+const { TIPOS_INTERNOS } = require('../utils/avisos');
+
 const router = express.Router();
 
 // GET /api/dashboard/resumen - estadisticas y atajos para la pantalla "Estado de la Flota"
@@ -28,8 +30,12 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
         const solicitudesPendientes = await pool.query(
             `SELECT COUNT(*) AS n FROM solicitudes WHERE estado = 'pendiente'`
         );
+        // los avisos internos (mecanico y gerente) no cuentan: mientras el proveedor sea un stub todos terminan en
+        // error y taparian la alarma de los avisos al cliente
         const notificacionesError = await pool.query(
-            `SELECT COUNT(*) AS n FROM notificaciones_pendientes WHERE estado = 'error'`
+            `SELECT COUNT(*) AS n FROM notificaciones_pendientes
+             WHERE estado = 'error' AND COALESCE(payload->>'tipo', '') <> ALL($1::text[])`,
+            [TIPOS_INTERNOS]
         );
         // pendientes que llevan mas de 10 min vencidos sin que nadie los tome: el worker esta caido
         const notificacionesAtrasadas = await pool.query(

@@ -8,6 +8,8 @@ const { dejarEvento } = require('../utils/eventosOt');
 const { validarMotivo, detalleFacturaAnulada, esIdPositivo } = require('../utils/auditoriaLinea');
 const { cancelarCorreosFactura, encolarCorreoFactura, validarFolio } = require('../utils/correoFactura');
 
+const { avisarFacturaAnulada } = require('../utils/avisos');
+
 const router = express.Router();
 
 // un monto 0 es un monto valido: `monto || null` lo convertia en nulo
@@ -186,6 +188,8 @@ router.post('/:id/factura/:facturaId/anular', verifyToken, requireRole('administ
         // el correo que ya estaba encolado y no salio se cancela en la misma transaccion
         await cancelarCorreosFactura(client, factura.rows[0]);
         await client.query('DELETE FROM facturas WHERE id = $1', [facturaId]);
+        // aviso al gerente en la misma transaccion; la repeticion con la misma Idempotency-Key salio arriba
+        await avisarFacturaAnulada(client, { factura: factura.rows[0], excluirUsuarioId: req.user.id });
         await client.query('COMMIT');
         res.json({ ok: true, factura_id: factura.rows[0].id, folio: factura.rows[0].folio });
     } catch (err) {

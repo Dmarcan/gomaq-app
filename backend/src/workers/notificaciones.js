@@ -19,6 +19,9 @@ const LATIDO_MS = 10 * 60 * 1000;
 // El resto del patron Outbox (reintentos, backoff, estado de error) no necesita cambiar.
 // Los correos de factura llevan `payload.asunto` y `payload.cuerpo`: el cuerpo es TEXTO PLANO (text/plain).
 // Si algun dia se arma un correo HTML con ese texto, hay que escaparlo antes de insertarlo.
+// Los avisos internos (ot_asignada, ot_reasignada, ot_por_valorizar, factura_anulada, ajuste_inventario; ver
+// utils/avisos.js) no tienen plantilla todavia: al conectar el proveedor, un tipo sin plantilla debe lanzar un
+// error explicito (por ejemplo `Sin plantilla para ${payload.tipo}`) en vez de mandar un mensaje vacio.
 async function enviarNotificacion(notificacion, signal) {
     throw new Error(`Proveedor de ${notificacion.canal} no configurado todavia`);
 }

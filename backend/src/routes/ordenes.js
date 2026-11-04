@@ -10,6 +10,7 @@ const { rutaPerteneceAOrden } = require('../utils/rutaArchivo');
 const {
     dejarEvento, leerUuidTarea, sincronizadoTarde, decidirEventoDiagnostico, decidirEventoAsignacion, esMismoTecnico,
 } = require('../utils/eventosOt');
+const { avisarAsignacion, avisarPorValorizar } = require('../utils/avisos');
 
 const {
     validarEstadoEquipoCierre, aplicarEntradaEquipo, aplicarCierreEquipo, origenDeCliente,
@@ -412,6 +413,9 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
         }
 
         await encolarAvisoAsignacion(client, orden, mecanico.rows[0]);
+        // aviso interno al mecanico nuevo y, si habia otro, al anterior ("ya no vayas"). Solo llega aca
+        // si el tecnico cambio: el doble clic salio arriba sin encolar nada
+        await avisarAsignacion(client, { ordenId: orden.id, nuevoId: mecanico_id, anteriorId: actual.rows[0].mecanico_id });
 
         await client.query('COMMIT');
         res.json(orden);
@@ -727,6 +731,12 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
                     observacion_final: orden.observacion_final,
                 })]
             );
+        }
+
+        // una orden con repuestos facturables queda esperando que el gerente apruebe el monto. El reintento
+        // de un cierre ya aplicado salio antes (yaFinalizada) y no llega aca
+        if (orden.facturable === true && (orden.valorizacion === null || orden.valorizacion === undefined)) {
+            await avisarPorValorizar(client, orden.id, 'Orden finalizada');
         }
 
         // el cierre y su evento van juntos; el reintento de un cierre ya aplicado salio antes y no

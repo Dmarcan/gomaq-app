@@ -2,6 +2,7 @@ const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularFacturableOt } = require('../utils/facturableOt');
+const { avisarPorValorizar, avisarAjusteInventario } = require('../utils/avisos');
 const { evaluarCompuertas, difLinea, debeAnularValorizacion, validarPrecioUnitario, esIdPositivo } = require('../utils/auditoriaLinea');
 const { dejarEvento } = require('../utils/eventosOt');
 const { validarTransferencia, validarMotivoAjuste, calcularAjuste, reconstruirDescuadre, MOTIVOS_CONTEO } = require('../utils/stock');
@@ -447,6 +448,12 @@ router.post('/ajuste', verifyToken, requireRole('administrativo'), async (req, r
                 calculo.delta >= 0 ? ubicacion_id : null,
                 nota || null, uuid, motivo_codigo]
         );
+        // perdida o merma (diferencia negativa): el gerente lo revisa. Un conteo normal, uno que suma stock o uno sin
+        // diferencia no avisa. El reintento salio antes (respuestaPrevia) y no llega aca
+        await avisarAjusteInventario(client, {
+            insumoId: insumo_id, ubicacionId: ubicacion_id, delta: calculo.delta,
+            motivoCodigo: motivo_codigo, usuarioId: req.user.id,
+        });
         await client.query('COMMIT');
         if (calculo.delta === 0) return res.json({ ok: true, sin_cambios: true, delta: 0, movimiento_id: mov.rows[0].id });
         res.status(201).json({ ok: true, delta: calculo.delta, movimiento_id: mov.rows[0].id });
@@ -690,11 +697,23 @@ function detalleDeLinea({ lineaId, insumo, campo, antes, despues, compuertas }) 
 }
 
 /**
+ * Una OT finalizada que no era facturable y no esta valorizada pasa a facturable por un cambio de lineas: queda
+ * esperando al gerente y antes no habia aviso (la valorizacion no se "anulo" porque nunca existio).
+ * `orden` trae el facturable ANTERIOR (bloquearOrden); `facturableOt` es el recalculado.
+ */
+async function avisarSiPasoAPorValorizar(client, req, orden, facturableOt) {
+    if (orden.estado === 'finalizada' && (orden.valorizacion === null || orden.valorizacion === undefined)
+        && orden.facturable !== true && facturableOt === true) {
+        await avisarPorValorizar(client, orden.id, 'Cambio en las líneas facturables', { excluirUsuarioId: req.user.id });
+    }
+}
+
+/**
  * Si el cambio altero lo facturable y la OT estaba valorizada, la valorizacion se anula (queda en
  * NULL): la OT vuelve a la lista de pendientes del gerente. Deja el evento 'valorizacion'.
  * `antes` son las lineas vigentes ANTES del cambio; las de despues se leen aca.
  */
-async function anularValorizacionSiCorresponde(client, req, orden, antes, { tipoCambio, lineaId, compuertas }) {
+async function anularValorizacionSiCorresponde(client, req, orden, antes, { tipoCambio, lineaId, compuertas, facturableOt }) {
     if (orden.valorizacion === null || orden.valorizacion === undefined) return false;
     const despues = await lineasVigentes(client, orden.id);
     if (!debeAnularValorizacion({ valorizacion: orden.valorizacion, antes, despues })) return false;
@@ -715,6 +734,11 @@ async function anularValorizacionSiCorresponde(client, req, orden, antes, { tipo
             motivo: compuertas.motivo,
         },
     });
+    // la OT vuelve a los pendientes del gerente SOLO si sigue siendo facturable (si el cambio la dejo sin nada que
+    // cobrar, no hay nada que valorizar): se le avisa una sola vez, cuando de verdad se anulo
+    if (facturableOt === true) {
+        await avisarPorValorizar(client, orden.id, 'Cambio en las líneas facturables', { excluirUsuarioId: req.user.id });
+    }
     return true;
 }
 
@@ -859,8 +883,9 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
             }),
         });
         await anularValorizacionSiCorresponde(client, req, orden, antes, {
-            tipoCambio: 'linea_agregada', lineaId: linea.id, compuertas,
+            tipoCambio: 'linea_agregada', lineaId: linea.id, compuertas, facturableOt,
         });
+        await avisarSiPasoAPorValorizar(client, req, orden, facturableOt);
         await client.query('COMMIT');
         res.status(201).json({ ...linea, orden_facturable: facturableOt });
     } catch (err) {
@@ -959,8 +984,9 @@ router.post('/orden/:ordenId/linea/:lineaId/anular', verifyToken, requireRole('m
             }),
         });
         await anularValorizacionSiCorresponde(client, req, orden, antes, {
-            tipoCambio: 'linea_anulada', lineaId: linea.id, compuertas,
+            tipoCambio: 'linea_anulada', lineaId: linea.id, compuertas, facturableOt,
         });
+        await avisarSiPasoAPorValorizar(client, req, orden, facturableOt);
         await client.query('COMMIT');
         res.json({ ...anulada.rows[0], orden_facturable: facturableOt });
     } catch (err) {
@@ -1098,8 +1124,9 @@ router.patch('/orden/:ordenId/linea/:lineaId', verifyToken, requireRole('adminis
             }
         }
         await anularValorizacionSiCorresponde(client, req, orden, antes, {
-            tipoCambio: 'linea_modificada', lineaId: linea.id, compuertas,
+            tipoCambio: 'linea_modificada', lineaId: linea.id, compuertas, facturableOt,
         });
+        await avisarSiPasoAPorValorizar(client, req, orden, facturableOt);
         await client.query('COMMIT');
         res.json({ ...result.rows[0], orden_facturable: facturableOt });
     } catch (err) {
