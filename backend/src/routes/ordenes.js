@@ -751,6 +751,13 @@ router.patch('/:id/valorizacion', verifyToken, requireRole('gerente'), async (re
             await client.query('ROLLBACK');
             return res.status(409).json({ error: 'Solo se valoriza una orden ya finalizada' });
         }
+        // una orden ya facturada no cambia de monto: el valor facturado esta en el SII (facturas.js
+        // bloquea esta misma fila al subir la factura, asi que no hay carrera entre las dos)
+        const facturada = await client.query('SELECT 1 FROM facturas WHERE orden_trabajo_id = $1', [req.params.id]);
+        if (facturada.rows.length > 0) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'La orden ya está facturada: para cambiar el monto hay que emitir una nota de crédito' });
+        }
         // facturable NO se toca aca: se deriva de las lineas de repuesto (utils/facturableOt.js)
         const result = await client.query(
             `UPDATE ordenes_trabajo

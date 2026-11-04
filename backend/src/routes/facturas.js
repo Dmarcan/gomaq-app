@@ -203,7 +203,7 @@ router.post('/:id/factura/:facturaId/autorizar-envio', verifyToken, requireRole(
             `SELECT f.folio, f.archivo_url, f.monto, ot.id AS orden_trabajo_id, c.nombre AS cliente_nombre, c.email AS cliente_email
              FROM facturas f
              JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
-             LEFT JOIN clientes c ON c.id = ot.cliente_id
+             LEFT JOIN clientes c ON c.id = COALESCE(f.cliente_id, ot.cliente_id)
              WHERE f.id = $1 AND f.orden_trabajo_id = $2`,
             [facturaId, id]
         );

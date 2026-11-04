@@ -22,7 +22,8 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
 
         const pendientesFacturar = await pool.query(
             `SELECT COUNT(*) AS n FROM ordenes_trabajo
-             WHERE facturable = true AND valorizacion IS NULL AND estado = 'finalizada'`
+             WHERE facturable = true AND valorizacion IS NULL AND estado = 'finalizada'
+               AND NOT EXISTS (SELECT 1 FROM facturas f WHERE f.orden_trabajo_id = ordenes_trabajo.id)`
         );
         const solicitudesPendientes = await pool.query(
             `SELECT COUNT(*) AS n FROM solicitudes WHERE estado = 'pendiente'`
@@ -74,7 +75,7 @@ router.get('/ventas-por-ejecutivo', verifyToken, requireRole('administrativo', '
              FROM facturas f
              LEFT JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
              LEFT JOIN guias g ON g.id = f.guia_recepcion_id
-             LEFT JOIN clientes c ON c.id = COALESCE(ot.cliente_id, g.cliente_id)
+             LEFT JOIN clientes c ON c.id = COALESCE(f.cliente_id, ot.cliente_id, g.cliente_id)
              LEFT JOIN ejecutivos e ON e.id = c.ejecutivo_id
              WHERE ($1::date IS NULL OR f.fecha_emision >= $1::date)
                AND ($2::date IS NULL OR f.fecha_emision <= $2::date)

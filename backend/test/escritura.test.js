@@ -2939,3 +2939,271 @@ describe('bloque 2a: configuracion de cobro, inicio de cobro y arriendos en curs
         assert.equal(trig.rows[0].n, 1);
     });
 });
+
+describe('bloque 2b (parte 1): la factura guarda despacho, periodo y cliente', () => {
+    const SQL_023 = () => require('fs').readFileSync(
+        require('path').join(__dirname, '../../db/migrations/023_facturas_periodo.sql'), 'utf8');
+
+    const guia = async (equipoId, tipo, fecha, clienteId) => (await pool.query(
+        `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, $2::tipo_guia, 'x', $3, $4) RETURNING id`,
+        [equipoId, tipo, fecha, clienteId])).rows[0].id;
+
+    /** Inserta una factura de arriendo como lo hacia el servidor anterior: solo con la recepcion. */
+    const facturaAntigua = async (equipoId, recepcionId, folio) => (await pool.query(
+        `INSERT INTO facturas (maquinaria_id, guia_recepcion_id, folio, archivo_url, monto) VALUES ($1, $2, $3, 'x', 1000) RETURNING *`,
+        [equipoId, recepcionId, folio])).rows[0];
+
+    const fila = async (id) => (await pool.query(
+        `SELECT guia_despacho_id, to_char(periodo_desde, 'YYYY-MM-DD') AS desde, to_char(periodo_hasta, 'YYYY-MM-DD') AS hasta, cliente_id
+         FROM facturas WHERE id = $1`, [id])).rows[0];
+
+    test('una factura de arriendo insertada como el servidor anterior recibe despacho, periodo y cliente', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const d = await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
+        const r = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
+        const f = await facturaAntigua(equipo.id, r, 'T-2301');
+        const datosFila = await fila(f.id);
+        assert.equal(datosFila.guia_despacho_id, d);
+        assert.equal(datosFila.desde, '2026-03-01');
+        assert.equal(datosFila.hasta, '2026-03-05');
+        assert.equal(datosFila.cliente_id, cliente);
+    });
+
+    test('arriendo de 0 dias: recibe el despacho pero no periodo', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const d = await guia(equipo.id, 'despacho', '2026-03-01T15:00:00-03:00', cliente); // cobra desde el 2
+        const r = await guia(equipo.id, 'recepcion', '2026-03-01T17:00:00-03:00', cliente);
+        const datosFila = await fila((await facturaAntigua(equipo.id, r, 'T-2302')).id);
+        assert.equal(datosFila.guia_despacho_id, d);
+        assert.equal(datosFila.desde, null);
+        assert.equal(datosFila.hasta, null);
+    });
+
+    test('con el dia de recepcion apagado el periodo termina el dia anterior', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
+        const r = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
+        try {
+            await pool.query("UPDATE configuracion SET valor = 'false' WHERE clave = 'incluir_dia_recepcion'");
+            assert.equal((await fila((await facturaAntigua(equipo.id, r, 'T-2303')).id)).hasta, '2026-03-04');
+        } finally {
+            await pool.query("UPDATE configuracion SET valor = 'true', actualizado_por = NULL WHERE clave = 'incluir_dia_recepcion'");
+        }
+    });
+
+    test('dos recepciones del mismo despacho: la segunda factura se inserta sin despacho y sin error', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const d = await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
+        const r1 = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
+        const r2 = await guia(equipo.id, 'recepcion', '2026-03-06T10:00:00-03:00', cliente);
+        const f1 = await fila((await facturaAntigua(equipo.id, r1, 'T-2304')).id);
+        const f2 = await fila((await facturaAntigua(equipo.id, r2, 'T-2305')).id);
+        assert.equal(f1.guia_despacho_id, d);
+        assert.equal(f2.guia_despacho_id, null, 'el despacho ya tiene factura');
+        assert.equal(f2.cliente_id, cliente, 'el cliente si se completa');
+    });
+
+    test('recepcion sin despacho anterior: factura sin despacho y con el cliente de la recepcion', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const r = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
+        const datosFila = await fila((await facturaAntigua(equipo.id, r, 'T-2306')).id);
+        assert.equal(datosFila.guia_despacho_id, null);
+        assert.equal(datosFila.cliente_id, cliente);
+    });
+
+    test('una factura de reparacion toma el cliente de la OT', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt();
+        await facturarDirecto(ot, 'T-2307');
+        const r = await pool.query(
+            `SELECT f.cliente_id, ot.cliente_id AS cliente_ot FROM facturas f JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
+             WHERE f.orden_trabajo_id = $1`, [ot]);
+        assert.equal(r.rows[0].cliente_id, r.rows[0].cliente_ot);
+    });
+
+    test('el indice unico impide dos facturas del mismo periodo de un despacho', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const d = await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
+        const insertar = (folio) => pool.query(
+            `INSERT INTO facturas (maquinaria_id, guia_despacho_id, periodo_desde, periodo_hasta, folio, archivo_url)
+             VALUES ($1, $2, '2026-03-01', '2026-03-05', $3, 'x')`, [equipo.id, d, folio]);
+        await insertar('T-2308');
+        await assert.rejects(() => insertar('T-2309'), /facturas_despacho_periodo_unico/);
+        // otro periodo del mismo despacho si
+        await pool.query(
+            `INSERT INTO facturas (maquinaria_id, guia_despacho_id, periodo_desde, periodo_hasta, folio, archivo_url)
+             VALUES ($1, $2, '2026-03-06', '2026-04-05', 'T-2310', 'x')`, [equipo.id, d]);
+    });
+
+    test('correr la migracion 023 otra vez rellena lo que falte y no rompe nada', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const d = await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
+        const r = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
+        const f = await facturaAntigua(equipo.id, r, 'T-2311');
+        // se simula una factura anterior a la migracion
+        await pool.query('UPDATE facturas SET guia_despacho_id = NULL, periodo_desde = NULL, periodo_hasta = NULL, cliente_id = NULL WHERE id = $1', [f.id]);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(SQL_023());
+            await client.query('COMMIT');
+        } catch (err) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw err;
+        } finally {
+            client.release();
+        }
+        const datosFila = await fila(f.id);
+        assert.equal(datosFila.guia_despacho_id, d);
+        assert.equal(datosFila.desde, '2026-03-01');
+        assert.equal(datosFila.hasta, '2026-03-05');
+        assert.equal(datosFila.cliente_id, cliente);
+        const trig = await pool.query("SELECT count(*)::int AS n FROM pg_trigger WHERE tgname = 'facturas_completar'");
+        assert.equal(trig.rows[0].n, 1);
+    });
+
+    test('valorizar una OT ya facturada da 409 y no cambia el monto', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt();
+        await agregarLinea(ot, { facturable: 'si', precio_unitario: 1000 });
+        await cerrarOt(ot, 1000);
+        await facturarDirecto(ot, 'T-2312');
+        const r = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/valorizacion`, 'gerente', { valorizacion: 5000 });
+        assert.equal(r.status, 409);
+        assert.match(r.body.error, /facturada/);
+        const v = await pool.query('SELECT valorizacion FROM ordenes_trabajo WHERE id = $1', [ot]);
+        assert.equal(Number(v.rows[0].valorizacion), 1000);
+    });
+
+    test('autorizar el envio usa el cliente de la propia factura', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await pool.query("SELECT id, email FROM clientes WHERE email IS NOT NULL ORDER BY id LIMIT 1");
+        if (cliente.rows.length === 0) return t.skip('no hay un cliente con correo en la semilla');
+        const equipo = await crearEquipo(null);
+        const f = (await pool.query(
+            `INSERT INTO facturas (maquinaria_id, folio, archivo_url, cliente_id) VALUES ($1, 'T-2313', 'x', $2) RETURNING id`,
+            [equipo.id, cliente.rows[0].id])).rows[0];
+        const marca = new Date();
+        const r = await pedir('POST', `/api/facturacion/${f.id}/autorizar-envio`, 'administrativo', {});
+        assert.equal(r.status, 200);
+        const n = await pool.query(
+            `SELECT id, destinatario FROM notificaciones_pendientes WHERE created_at >= $1 AND payload->>'folio' = 'T-2313'`, [marca]);
+        try {
+            assert.equal(n.rows.length, 1);
+            assert.equal(n.rows[0].destinatario, cliente.rows[0].email);
+        } finally {
+            await pool.query('DELETE FROM notificaciones_pendientes WHERE id = ANY($1)', [n.rows.map((x) => x.id)]);
+        }
+    });
+});
+
+describe('bloque 2b (parte 1): correcciones de la revision experta', () => {
+    const SQL_023 = () => require('fs').readFileSync(
+        require('path').join(__dirname, '../../db/migrations/023_facturas_periodo.sql'), 'utf8');
+    const guia = async (equipoId, tipo, fecha, clienteId) => (await pool.query(
+        `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, $2::tipo_guia, 'x', $3, $4) RETURNING id`,
+        [equipoId, tipo, fecha, clienteId])).rows[0].id;
+
+    test('una OT facturada sin valorizar no queda en los pendientes de valorizar', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt();
+        await agregarLinea(ot, { facturable: 'si', precio_unitario: 1000 });
+        await cerrarOt(ot, null);
+        assert.ok((await pendientesDeValorizar()).includes(ot), 'antes de facturar, pendiente');
+        assert.equal((await subirFactura(ot, 'administrativo', { folio: 'T-2401' })).status, 201);
+        assert.ok(!(await pendientesDeValorizar()).includes(ot), 'facturada: ya no esta pendiente');
+        const r = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/valorizacion`, 'gerente', { valorizacion: 1000 });
+        assert.equal(r.status, 409);
+    });
+
+    test('el relleno da el despacho a la recepcion mas antigua, aunque otra se haya facturado antes', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const d = await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
+        const r1 = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
+        const r2 = await guia(equipo.id, 'recepcion', '2026-03-08T10:00:00-03:00', cliente);
+        // la posterior se factura primero (id menor)
+        const f2 = (await pool.query(`INSERT INTO facturas (maquinaria_id, guia_recepcion_id, folio, archivo_url) VALUES ($1, $2, 'T-2402', 'x') RETURNING id`, [equipo.id, r2])).rows[0].id;
+        const f1 = (await pool.query(`INSERT INTO facturas (maquinaria_id, guia_recepcion_id, folio, archivo_url) VALUES ($1, $2, 'T-2403', 'x') RETURNING id`, [equipo.id, r1])).rows[0].id;
+        await pool.query('UPDATE facturas SET guia_despacho_id = NULL, periodo_desde = NULL, periodo_hasta = NULL WHERE id = ANY($1)', [[f1, f2]]);
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(SQL_023());
+            await client.query('COMMIT');
+        } finally {
+            client.release();
+        }
+        const r = await pool.query(
+            `SELECT id, guia_despacho_id, to_char(periodo_hasta, 'YYYY-MM-DD') AS hasta FROM facturas WHERE id = ANY($1)`, [[f1, f2]]);
+        const por = Object.fromEntries(r.rows.map((x) => [x.id, x]));
+        assert.equal(por[f1].guia_despacho_id, d, 'la recepcion mas antigua se queda con el despacho');
+        assert.equal(por[f1].hasta, '2026-03-05');
+        assert.equal(por[f2].guia_despacho_id, null);
+    });
+
+    test('el relleno usa la regla historica aunque la configuracion cambie despues', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
+        const r = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
+        const f = (await pool.query(`INSERT INTO facturas (maquinaria_id, guia_recepcion_id, folio, archivo_url) VALUES ($1, $2, 'T-2404', 'x') RETURNING id`, [equipo.id, r])).rows[0].id;
+        await pool.query('UPDATE facturas SET guia_despacho_id = NULL, periodo_desde = NULL, periodo_hasta = NULL WHERE id = $1', [f]);
+        try {
+            await pool.query("UPDATE configuracion SET valor = 'false' WHERE clave = 'incluir_dia_recepcion'");
+            const client = await pool.connect();
+            try {
+                await client.query('BEGIN');
+                await client.query(SQL_023());
+                await client.query('COMMIT');
+            } finally {
+                client.release();
+            }
+        } finally {
+            await pool.query("UPDATE configuracion SET valor = 'true', actualizado_por = NULL WHERE clave = 'incluir_dia_recepcion'");
+        }
+        const fila = (await pool.query(`SELECT to_char(periodo_hasta, 'YYYY-MM-DD') AS hasta FROM facturas WHERE id = $1`, [f])).rows[0];
+        assert.equal(fila.hasta, '2026-03-05');
+    });
+
+    test('la factura de una guia que no es recepcion no recibe despacho ni periodo', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const d = await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
+        const f = (await pool.query(`INSERT INTO facturas (maquinaria_id, guia_recepcion_id, folio, archivo_url) VALUES ($1, $2, 'T-2405', 'x') RETURNING guia_despacho_id, periodo_desde`, [equipo.id, d])).rows[0];
+        assert.equal(f.guia_despacho_id, null);
+        assert.equal(f.periodo_desde, null);
+    });
+
+    test('dos facturas simultaneas del mismo despacho no dan un error de unicidad', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        for (let vuelta = 0; vuelta < 5; vuelta++) {
+            const equipo = await crearEquipo(null);
+            await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
+            const r1 = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
+            const r2 = await guia(equipo.id, 'recepcion', '2026-03-06T10:00:00-03:00', cliente);
+            const insertar = (r, folio) => pool.query(
+                `INSERT INTO facturas (maquinaria_id, guia_recepcion_id, folio, archivo_url) VALUES ($1, $2, $3, 'x') RETURNING id`, [equipo.id, r, folio]);
+            const resultados = await Promise.allSettled([insertar(r1, `T-25${vuelta}1`), insertar(r2, `T-25${vuelta}2`)]);
+            assert.deepEqual(resultados.map((x) => x.status), ['fulfilled', 'fulfilled'], JSON.stringify(resultados.map((x) => x.reason && x.reason.message)));
+        }
+    });
+});

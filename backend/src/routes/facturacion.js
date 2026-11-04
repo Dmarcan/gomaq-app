@@ -55,6 +55,8 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
             JOIN maquinarias m ON m.id = ot.maquinaria_id
             LEFT JOIN clientes c ON c.id = ot.cliente_id
             WHERE ot.facturable = true AND ot.valorizacion IS NULL
+              -- una orden ya facturada (se puede facturar sin valorizar) no queda pendiente de valorizar
+              AND NOT EXISTS (SELECT 1 FROM facturas f WHERE f.orden_trabajo_id = ot.id)
               -- solo trabajo terminado: una OT en curso todavia puede sumar o anular repuestos
               AND ot.estado = 'finalizada'
             ORDER BY ot.fecha_creacion DESC
@@ -252,18 +254,16 @@ router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (r
 // sea de reparacion (orden_trabajo_id) o de arriendo (maquinaria_id)
 router.post('/:facturaId/autorizar-envio', verifyToken, requireRole('administrativo'), async (req, res) => {
     try {
-        // para facturas de arriendo, el cliente sale de la guia de recepcion (snapshot),
-        // no de la maquinaria (que ya fue liberada al recibir el equipo)
+        // el cliente es el de la propia factura (facturas.cliente_id, migracion 023); las anteriores a
+        // la migracion lo traen rellenado, y como respaldo se usa el de la OT o el de la guia de
+        // recepcion (snapshot), nunca el de la maquinaria, que ya fue liberada al recibir el equipo
         const result = await pool.query(
-            `SELECT f.*, m.codigo AS maquinaria_codigo,
-                    cot.nombre AS cliente_nombre_ot, cot.email AS cliente_email_ot,
-                    cm.nombre AS cliente_nombre_m, cm.email AS cliente_email_m
+            `SELECT f.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre, c.email AS cliente_email
              FROM facturas f
              LEFT JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
-             LEFT JOIN clientes cot ON cot.id = ot.cliente_id
-             LEFT JOIN maquinarias m ON m.id = f.maquinaria_id
              LEFT JOIN guias g ON g.id = f.guia_recepcion_id
-             LEFT JOIN clientes cm ON cm.id = g.cliente_id
+             LEFT JOIN clientes c ON c.id = COALESCE(f.cliente_id, ot.cliente_id, g.cliente_id)
+             LEFT JOIN maquinarias m ON m.id = f.maquinaria_id
              WHERE f.id = $1`,
             [req.params.facturaId]
         );
@@ -272,8 +272,8 @@ router.post('/:facturaId/autorizar-envio', verifyToken, requireRole('administrat
             return res.status(404).json({ error: 'Factura no encontrada' });
         }
 
-        const clienteNombre = factura.orden_trabajo_id ? factura.cliente_nombre_ot : factura.cliente_nombre_m;
-        const clienteEmail = factura.orden_trabajo_id ? factura.cliente_email_ot : factura.cliente_email_m;
+        const clienteNombre = factura.cliente_nombre;
+        const clienteEmail = factura.cliente_email;
         if (!clienteEmail) {
             return res.status(400).json({ error: 'El cliente no tiene un correo registrado' });
         }
