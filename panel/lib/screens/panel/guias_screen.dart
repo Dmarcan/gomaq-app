@@ -50,8 +50,20 @@ class _GuiasScreenState extends State<GuiasScreen> {
     super.dispose();
   }
 
+  /// Equipos que se pueden elegir. Un despacho no admite uno fuera de servicio, pero la recepción sí:
+  /// un equipo averiado donde el cliente se recibe de vuelta (y se despacha otro en su lugar).
   List<dynamic> get _maquinariasDisponibles =>
-      _maquinarias.where((m) => m['estado'] != 'fuera_de_servicio').toList();
+      _maquinarias.where((m) => _tipo == 'recepcion' || m['estado'] != 'fuera_de_servicio').toList();
+
+  /// Cambia despacho/recepción. Debe llamarse dentro de setState: si el equipo elegido ya no está en
+  /// la lista del tipo nuevo se limpia, o el desplegable fallaría por tener un valor que no existe.
+  void _fijarTipo(String tipo) {
+    _tipo = tipo;
+    final elegida = _seleccionada;
+    if (elegida != null && !_maquinariasDisponibles.any((m) => m['id'] == elegida['id'])) {
+      _seleccionada = null;
+    }
+  }
 
   /// Últimas guías subidas, para confirmar que quedó bien la que se acaba de guardar.
   Future<void> _cargarRecientes() async {
@@ -119,7 +131,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
       if (!mounted) return;
       setState(() {
         _huboDeteccion = true;
-        if (resultado['tipo_detectado'] != null) _tipo = resultado['tipo_detectado'];
+        if (resultado['tipo_detectado'] != null) _fijarTipo(resultado['tipo_detectado']);
         if (resultado['fecha_hora_detectada'] != null) {
           final detectada = DateTime.parse(resultado['fecha_hora_detectada']).toLocal();
           _fecha = detectada;
@@ -271,6 +283,8 @@ class _GuiasScreenState extends State<GuiasScreen> {
             const Text('EQUIPO ASOCIADO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
             DropdownButtonFormField<Map<String, dynamic>>(
+              // con otra clave se rearma al cambiar despacho/recepción (la lista de equipos cambia)
+              key: ValueKey(_tipo),
               initialValue: _seleccionada,
               items: _maquinariasDisponibles
                   .map<DropdownMenuItem<Map<String, dynamic>>>(
@@ -488,7 +502,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
   Widget _botonTipo(String valor, String etiqueta) {
     final activo = _tipo == valor;
     return OutlinedButton(
-      onPressed: () => setState(() => _tipo = valor),
+      onPressed: () => setState(() => _fijarTipo(valor)),
       style: OutlinedButton.styleFrom(
         backgroundColor: activo ? GomaqColors.accion : Colors.white,
         foregroundColor: activo ? Colors.white : GomaqColors.accion,

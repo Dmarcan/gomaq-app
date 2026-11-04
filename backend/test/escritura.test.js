@@ -87,7 +87,7 @@ before(async () => {
     datos.mecanicoDosId = porEmail['mecanico2@gomaq.test'].id;
 
     const maquinaria = await pool.query(
-        'SELECT id, alerta_mantencion_enviada, horometro_ultima_mantencion FROM maquinarias ORDER BY id LIMIT 1'
+        'SELECT id, estado, estado_origen, alerta_mantencion_enviada, horometro_ultima_mantencion FROM maquinarias ORDER BY id LIMIT 1'
     );
     datos.maquinariaId = maquinaria.rows[0].id;
     // la lectura de horometro de las pruebas puede disparar el aviso de mantencion: se guarda
@@ -147,8 +147,9 @@ after(async () => {
         [datos.inicio, datos.maquinariaId]
     );
     await pool.query(
-        'UPDATE maquinarias SET alerta_mantencion_enviada = $1, horometro_ultima_mantencion = $2 WHERE id = $3',
-        [datos.maquinariaOriginal.alerta_mantencion_enviada, datos.maquinariaOriginal.horometro_ultima_mantencion, datos.maquinariaId]
+        'UPDATE maquinarias SET alerta_mantencion_enviada = $1, horometro_ultima_mantencion = $2, estado = $4, estado_origen = $5 WHERE id = $3',
+        [datos.maquinariaOriginal.alerta_mantencion_enviada, datos.maquinariaOriginal.horometro_ultima_mantencion, datos.maquinariaId,
+         datos.maquinariaOriginal.estado, datos.maquinariaOriginal.estado_origen]
     );
     if (datos.insumos.length) {
         await pool.query('DELETE FROM movimientos_insumo WHERE insumo_id = ANY($1)', [datos.insumos]);
@@ -990,7 +991,8 @@ describe('historial de la orden: un evento por cada cambio', () => {
         // que otras pruebas o procesos escriban a la vez
         const marcador = `creacion-fallida-${crypto.randomUUID()}`;
         const r = await pedir('POST', '/api/ordenes-trabajo', 'administrativo', {
-            maquinaria_id: datos.maquinariaId, origen: 'no_existe', motivo: marcador,
+            // un cliente que no existe rompe el INSERT (clave foranea) despues de empezar la transaccion
+            maquinaria_id: datos.maquinariaId, cliente_id: 99999999, motivo: marcador,
         });
         assert.equal(r.status, 500);
         const ots = await pool.query('SELECT id FROM ordenes_trabajo WHERE motivo = $1', [marcador]);
@@ -3490,5 +3492,264 @@ describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
             assert.ok(campo in fila, `falta ${campo}`);
         }
         assert.equal(fila.dias, 5);
+    });
+});
+
+describe('bloque 3: estado del equipo derivado de las ordenes, cierre con estado y origen comercial', () => {
+    const estadoDe = async (equipoId) => (await pool.query('SELECT estado, estado_origen FROM maquinarias WHERE id = $1', [equipoId])).rows[0];
+    const diagnostico = (ot, cuerpo, rol = 'mecanico') => pedir('PATCH', `/api/ordenes-trabajo/${ot}/diagnostico`, rol, cuerpo);
+    const finalizar = (ot, cuerpo = {}, rol = 'mecanico') => pedir('PATCH', `/api/ordenes-trabajo/${ot}/finalizar`, rol, { sin_persona: true, ...cuerpo });
+    const fijarEstado = (equipoId, estado, origen) =>
+        pool.query('UPDATE maquinarias SET estado = $2, estado_origen = $3 WHERE id = $1', [equipoId, estado, origen]);
+    /** OT asignada al mecanico sobre un equipo propio de la prueba. */
+    const otDeEquipo = async (equipoId, estado = 'asignada') => crearOt(estado, datos.mecanicoId, equipoId);
+
+    test('llegar a terreno por diagnostico deja el equipo en mantencion por la orden', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const ot = await otDeEquipo(equipo.id);
+        assert.deepEqual(await estadoDe(equipo.id), { estado: 'operativa', estado_origen: null });
+        assert.equal((await diagnostico(ot, { estado: 'aceptada' })).status, 200);
+        assert.equal((await estadoDe(equipo.id)).estado, 'operativa', 'aceptar no toca el equipo');
+        assert.equal((await diagnostico(ot, { estado: 'en_terreno' })).status, 200);
+        assert.deepEqual(await estadoDe(equipo.id), { estado: 'en_mantencion', estado_origen: 'ot' });
+    });
+
+    test('pasar de terreno a reparacion no repite la entrada: un operativa puesto a mano se respeta', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const ot = await otDeEquipo(equipo.id);
+        assert.equal((await diagnostico(ot, { estado: 'en_terreno' })).status, 200);
+        await fijarEstado(equipo.id, 'operativa', 'panel');
+        assert.equal((await diagnostico(ot, { estado: 'en_reparacion' })).status, 200);
+        assert.deepEqual(await estadoDe(equipo.id), { estado: 'operativa', estado_origen: 'panel' });
+        assert.equal((await diagnostico(ot, { estado: 'en_terreno' })).status, 200);
+        assert.deepEqual(await estadoDe(equipo.id), { estado: 'operativa', estado_origen: 'panel' });
+    });
+
+    test('un en_mantencion o fuera_de_servicio puestos a mano no se tocan al llegar a terreno', async (t) => {
+        if (!requiereBase(t)) return;
+        for (const estado of ['en_mantencion', 'fuera_de_servicio']) {
+            const equipo = await crearEquipo(null);
+            await fijarEstado(equipo.id, estado, 'panel');
+            const ot = await otDeEquipo(equipo.id);
+            assert.equal((await diagnostico(ot, { estado: 'en_terreno' })).status, 200);
+            assert.deepEqual(await estadoDe(equipo.id), { estado, estado_origen: 'panel' });
+        }
+    });
+
+    test('una OT creada en terreno (/en-terreno) deja el equipo en mantencion', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const r = await pedir('POST', '/api/ordenes-trabajo/en-terreno', 'mecanico', { maquinaria_id: equipo.id, uuid_cliente: crypto.randomUUID() });
+        assert.equal(r.status, 201);
+        datos.ordenes.push(r.body.id);
+        assert.deepEqual(await estadoDe(equipo.id), { estado: 'en_mantencion', estado_origen: 'ot' });
+    });
+
+    test('cierre sin estado_equipo (APK antiguo): vuelve a operativa si la mantencion la puso la orden', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const ot = await otDeEquipo(equipo.id);
+        await diagnostico(ot, { estado: 'en_terreno' });
+        assert.equal((await finalizar(ot)).status, 200);
+        assert.deepEqual(await estadoDe(equipo.id), { estado: 'operativa', estado_origen: 'ot' });
+    });
+
+    test('cierre sin estado_equipo nunca pisa un fuera_de_servicio ni un en_mantencion del panel', async (t) => {
+        if (!requiereBase(t)) return;
+        for (const estado of ['fuera_de_servicio', 'en_mantencion']) {
+            const equipo = await crearEquipo(null);
+            const ot = await otDeEquipo(equipo.id);
+            await diagnostico(ot, { estado: 'en_terreno' });
+            await fijarEstado(equipo.id, estado, 'panel');
+            assert.equal((await finalizar(ot)).status, 200);
+            assert.deepEqual(await estadoDe(equipo.id), { estado, estado_origen: 'panel' });
+        }
+    });
+
+    test('cierre con estado_equipo = operativa deja el equipo operativo', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const ot = await otDeEquipo(equipo.id);
+        await diagnostico(ot, { estado: 'en_terreno' });
+        assert.equal((await finalizar(ot, { estado_equipo: 'operativa' })).status, 200);
+        assert.deepEqual(await estadoDe(equipo.id), { estado: 'operativa', estado_origen: 'mecanico' });
+    });
+
+    test('cierre con estado_equipo = operativa no levanta un en_mantencion puesto a mano', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const ot = await otDeEquipo(equipo.id);
+        await diagnostico(ot, { estado: 'en_terreno' });
+        await fijarEstado(equipo.id, 'en_mantencion', 'panel');
+        assert.equal((await finalizar(ot, { estado_equipo: 'operativa' })).status, 200);
+        assert.deepEqual(await estadoDe(equipo.id), { estado: 'en_mantencion', estado_origen: 'panel' });
+    });
+
+    test('cierre con fuera_de_servicio se aplica siempre, aunque el panel haya puesto otro estado o haya otra OT abierta', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const ot = await otDeEquipo(equipo.id);
+        const otra = await otDeEquipo(equipo.id);
+        await diagnostico(ot, { estado: 'en_terreno' });
+        await diagnostico(otra, { estado: 'en_terreno' });
+        await fijarEstado(equipo.id, 'operativa', 'panel');
+        assert.equal((await finalizar(ot, { estado_equipo: 'fuera_de_servicio' })).status, 200);
+        assert.deepEqual(await estadoDe(equipo.id), { estado: 'fuera_de_servicio', estado_origen: 'mecanico' });
+    });
+
+    test('dos OT del mismo equipo: la primera en cerrarse lo deja en mantencion y la segunda operativo', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const a = await otDeEquipo(equipo.id);
+        const b = await otDeEquipo(equipo.id);
+        await diagnostico(a, { estado: 'en_terreno' });
+        await diagnostico(b, { estado: 'en_reparacion' });
+        assert.equal((await estadoDe(equipo.id)).estado, 'en_mantencion');
+        assert.equal((await finalizar(a, { estado_equipo: 'operativa' })).status, 200);
+        assert.equal((await estadoDe(equipo.id)).estado, 'en_mantencion', 'queda otra OT abierta');
+        assert.equal((await finalizar(b, { estado_equipo: 'operativa' })).status, 200);
+        assert.equal((await estadoDe(equipo.id)).estado, 'operativa');
+    });
+
+    test('dos cierres simultaneos del mismo equipo no lo dejan pegado en mantencion', async (t) => {
+        if (!requiereBase(t)) return;
+        for (let vuelta = 0; vuelta < 5; vuelta++) {
+            const equipo = await crearEquipo(null);
+            const a = await otDeEquipo(equipo.id);
+            const b = await otDeEquipo(equipo.id);
+            await diagnostico(a, { estado: 'en_terreno' });
+            await diagnostico(b, { estado: 'en_terreno' });
+            const [ra, rb] = await Promise.all([
+                finalizar(a, { estado_equipo: 'operativa' }),
+                finalizar(b, { estado_equipo: 'operativa' }),
+            ]);
+            assert.deepEqual([ra.status, rb.status], [200, 200]);
+            assert.equal((await estadoDe(equipo.id)).estado, 'operativa', `vuelta ${vuelta}`);
+        }
+    });
+
+    test('el cierre deja el estado del equipo en el historial y el reintento no lo repite ni cambia nada', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const ot = await otDeEquipo(equipo.id);
+        await diagnostico(ot, { estado: 'en_terreno' });
+        const uuid = crypto.randomUUID();
+        const primera = await finalizar(ot, { estado_equipo: 'fuera_de_servicio', uuid });
+        assert.equal(primera.status, 200);
+        // el panel recibe el equipo de vuelta y lo deja operativo a mano; el reintento no lo pisa
+        await fijarEstado(equipo.id, 'operativa', 'panel');
+        const segunda = await finalizar(ot, { estado_equipo: 'fuera_de_servicio', uuid });
+        assert.equal(segunda.status, 200);
+        assert.deepEqual(await estadoDe(equipo.id), { estado: 'operativa', estado_origen: 'panel' });
+        const cierres = await eventosTipo(ot, 'cierre');
+        assert.equal(cierres.length, 1);
+        assert.deepEqual(
+            [cierres[0].detalle.estado_equipo_pedido, cierres[0].detalle.estado_equipo_anterior, cierres[0].detalle.estado_equipo_nuevo],
+            ['fuera_de_servicio', 'en_mantencion', 'fuera_de_servicio']);
+    });
+
+    test('estado_equipo invalido da 400 y la OT sigue abierta', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const ot = await otDeEquipo(equipo.id);
+        await diagnostico(ot, { estado: 'en_terreno' });
+        for (const invalido of ['en_mantencion', 'OPERATIVA', 'roto', 1, true]) {
+            const r = await finalizar(ot, { estado_equipo: invalido });
+            assert.equal(r.status, 400, JSON.stringify(invalido));
+        }
+        assert.equal((await pool.query('SELECT estado FROM ordenes_trabajo WHERE id = $1', [ot])).rows[0].estado, 'en_terreno');
+        assert.equal((await estadoDe(equipo.id)).estado, 'en_mantencion');
+    });
+
+    test('ocurrio_en del cierre: se respeta, no puede ser futuro ni anterior a la creacion', async (t) => {
+        if (!requiereBase(t)) return;
+        const cerrarCon = async (ocurrio) => {
+            const equipo = await crearEquipo(null);
+            const ot = await otDeEquipo(equipo.id);
+            await pool.query("UPDATE ordenes_trabajo SET fecha_creacion = now() - interval '1 day' WHERE id = $1", [ot]);
+            await diagnostico(ot, { estado: 'en_terreno' });
+            const r = await finalizar(ot, { ocurrio_en: ocurrio });
+            assert.equal(r.status, 200);
+            const fila = (await pool.query('SELECT fecha_cierre, fecha_creacion FROM ordenes_trabajo WHERE id = $1', [ot])).rows[0];
+            return { fila, evento: (await eventosTipo(ot, 'cierre'))[0] };
+        };
+        const hace = new Date(Date.now() - 60 * 1000);
+        const valido = await cerrarCon(hace.toISOString());
+        assert.ok(Math.abs(new Date(valido.fila.fecha_cierre) - hace) < 1000, 'usa la hora del telefono');
+        assert.ok(valido.evento.ocurrio_en);
+        const futuro = await cerrarCon(new Date(Date.now() + 3600 * 1000).toISOString());
+        assert.ok(new Date(futuro.fila.fecha_cierre) <= Date.now() + 2000, 'nunca en el futuro (la hora pedida era 1 h adelante)');
+        const antiguo = await cerrarCon('2001-01-01T00:00:00Z');
+        assert.ok(new Date(antiguo.fila.fecha_cierre) >= new Date(antiguo.fila.fecha_creacion), 'no antes de la creacion');
+        const basura = await cerrarCon('no-es-fecha');
+        assert.ok(Math.abs(new Date(basura.fila.fecha_cierre) - new Date()) < 5000, 'invalida: hora del servidor');
+    });
+
+    test('PATCH /maquinarias/:id/estado deja quien lo fijo', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        assert.equal((await pedir('PATCH', `/api/maquinarias/${equipo.id}/estado`, 'administrativo', { estado: 'fuera_de_servicio' })).status, 200);
+        assert.deepEqual(await estadoDe(equipo.id), { estado: 'fuera_de_servicio', estado_origen: 'panel' });
+        assert.equal((await pedir('PATCH', `/api/maquinarias/${equipo.id}/estado`, 'mecanico', { estado: 'operativa' })).status, 200);
+        assert.deepEqual(await estadoDe(equipo.id), { estado: 'operativa', estado_origen: 'mecanico' });
+    });
+
+    test('origen de la OT: externo si el cliente tiene ejecutivo, directo si no, en las tres rutas', async (t) => {
+        if (!requiereBase(t)) return;
+        const ejecutivo = (await pool.query('SELECT id FROM ejecutivos ORDER BY id LIMIT 1')).rows[0];
+        const cliente = await algunCliente();
+        if (!ejecutivo || !cliente) return t.skip('la semilla no trae ejecutivos o clientes');
+        const original = (await pool.query('SELECT ejecutivo_id FROM clientes WHERE id = $1', [cliente])).rows[0].ejecutivo_id;
+        const origenDe = async (ot) => (await pool.query('SELECT origen FROM ordenes_trabajo WHERE id = $1', [ot])).rows[0].origen;
+        try {
+            for (const [ejecutivoId, esperado] of [[ejecutivo.id, 'externo'], [null, 'directo']]) {
+                await pool.query('UPDATE clientes SET ejecutivo_id = $2 WHERE id = $1', [cliente, ejecutivoId]);
+                // panel: POST /, aunque el body diga otra cosa
+                const eq1 = await crearEquipo(cliente);
+                const panel = await pedir('POST', '/api/ordenes-trabajo', 'administrativo', { maquinaria_id: eq1.id, origen: ejecutivoId ? 'directo' : 'externo' });
+                assert.equal(panel.status, 201);
+                datos.ordenes.push(panel.body.id);
+                assert.equal(await origenDe(panel.body.id), esperado, 'panel');
+                // terreno: /en-terreno
+                const eq2 = await crearEquipo(cliente);
+                const terreno = await pedir('POST', '/api/ordenes-trabajo/en-terreno', 'mecanico', { maquinaria_id: eq2.id, uuid_cliente: crypto.randomUUID() });
+                assert.equal(terreno.status, 201);
+                datos.ordenes.push(terreno.body.id);
+                assert.equal(await origenDe(terreno.body.id), esperado, 'terreno');
+            }
+        } finally {
+            await pool.query('UPDATE clientes SET ejecutivo_id = $2 WHERE id = $1', [cliente, original]);
+        }
+    });
+
+    test('un equipo sin cliente da una OT de origen directo', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const r = await pedir('POST', '/api/ordenes-trabajo', 'administrativo', { maquinaria_id: equipo.id });
+        assert.equal(r.status, 201);
+        datos.ordenes.push(r.body.id);
+        assert.equal(r.body.origen, 'directo');
+    });
+
+    test('la migracion 024 rellena el estado de los equipos con una orden abierta y se puede repetir', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        await otDeEquipo(equipo.id, 'en_terreno');
+        // un equipo con orden abierta que sigue operativo (como estaba antes de la migracion)
+        assert.deepEqual(await estadoDe(equipo.id), { estado: 'operativa', estado_origen: null });
+        const sql = require('fs').readFileSync(require('path').join(__dirname, '../../db/migrations/024_estado_equipo_origen.sql'), 'utf8');
+        for (let i = 0; i < 2; i++) {
+            const client = await pool.connect();
+            try {
+                await client.query('BEGIN');
+                await client.query(sql);
+                await client.query('COMMIT');
+            } finally {
+                client.release();
+            }
+        }
+        assert.deepEqual(await estadoDe(equipo.id), { estado: 'en_mantencion', estado_origen: 'ot' });
     });
 });

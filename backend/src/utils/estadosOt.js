@@ -76,5 +76,5 @@ function evaluarCierre(estado) {
 }
 
 module.exports = {
-    FINALIZADA, VIAJE, estadoTrasAsignar, mecanicoPuedeEditar, puedeCambiarEstadoA, evaluarCambioEstado, evaluarCierre,
+    FINALIZADA, VIAJE, EN_CURSO, estadoTrasAsignar, mecanicoPuedeEditar, puedeCambiarEstadoA, evaluarCambioEstado, evaluarCierre,
 };

@@ -314,8 +314,9 @@ router.patch('/:id/estado', verifyToken, requireRole('mecanico', 'administrativo
     }
     try {
         const result = await pool.query(
-            'UPDATE maquinarias SET estado = $1 WHERE id = $2 RETURNING *',
-            [estado, id]
+            // quien lo fijo: el cierre de una orden no pisa un estado puesto a mano desde el panel
+            'UPDATE maquinarias SET estado = $1, estado_origen = $3 WHERE id = $2 RETURNING *',
+            [estado, id, req.user.rol === 'mecanico' ? 'mecanico' : 'panel']
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Maquinaria no encontrada' });

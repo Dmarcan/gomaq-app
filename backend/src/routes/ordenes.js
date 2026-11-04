@@ -11,6 +11,11 @@ const {
     dejarEvento, leerUuidTarea, sincronizadoTarde, decidirEventoDiagnostico, decidirEventoAsignacion, esMismoTecnico,
 } = require('../utils/eventosOt');
 
+const {
+    validarEstadoEquipoCierre, aplicarEntradaEquipo, aplicarCierreEquipo, origenDeCliente,
+} = require('../utils/estadoEquipo');
+const { EN_CURSO } = require('../utils/estadosOt');
+
 const router = express.Router();
 
 // Los seis tipos del talonario. Los marca el mecanico en terreno, que es quien sabe de que
@@ -22,7 +27,7 @@ const TIPOS_SERVICIO = [
 
 // POST /api/ordenes-trabajo - crear OT
 router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
-    const { maquinaria_id, cliente_id, origen, motivo } = req.body;
+    const { maquinaria_id, cliente_id, motivo } = req.body;
     if (!maquinaria_id) {
         return res.status(400).json({ error: 'maquinaria_id es requerido' });
     }
@@ -42,11 +47,13 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
         // de repuesto de la OT (ver utils/facturableOt.js), como en el talonario de papel.
         // La OT y su evento de creacion van en la misma transaccion (historial, migracion 020).
         await client.query('BEGIN');
+        // el origen ya no lo manda quien llama a la API: lo da el cliente de la orden (con ejecutivo = externo)
+        const clienteOrden = cliente_id || equipo.rows[0].cliente_id || null;
         const result = await client.query(
             `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, origen, motivo)
-             VALUES ($1, $2, COALESCE($3::origen_orden, 'directo'), $4)
+             VALUES ($1, $2, $3::origen_orden, $4)
              RETURNING *`,
-            [maquinaria_id, cliente_id || equipo.rows[0].cliente_id || null, origen || null, motivo || null]
+            [maquinaria_id, clienteOrden, await origenDeCliente(client, clienteOrden), motivo || null]
         );
         const orden = result.rows[0];
         await dejarEvento(client, {
@@ -105,11 +112,14 @@ router.post('/en-terreno', verifyToken, requireRole('mecanico'), async (req, res
         await client.query('BEGIN');
         const result = await client.query(
             `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, mecanico_id, origen, motivo, estado, uuid_cliente, llegada_at)
-             VALUES ($1, $2, $3, 'directo', $4, 'en_terreno', $5, now())
+             VALUES ($1, $2, $3, $6::origen_orden, $4, 'en_terreno', $5, now())
              RETURNING *`,
-            [maquinaria_id, maquinaria.rows[0].cliente_id, req.user.id, motivo || 'Equipo intervenido durante otra visita', uuid]
+            [maquinaria_id, maquinaria.rows[0].cliente_id, req.user.id, motivo || 'Equipo intervenido durante otra visita', uuid,
+             await origenDeCliente(client, maquinaria.rows[0].cliente_id)]
         );
         const orden = result.rows[0];
+        // la OT nace ya en terreno: un equipo operativo pasa a en_mantencion
+        await aplicarEntradaEquipo(client, orden.maquinaria_id);
         await dejarEvento(client, {
             ordenId: orden.id, tipo: 'creacion', origen: 'terreno', estadoNuevo: orden.estado,
             usuario: req.user, uuidCliente: uuid,
@@ -478,6 +488,11 @@ router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (re
         // no moviera nada. Un reintento con el mismo uuid no duplica (ON CONFLICT DO NOTHING).
         // Sin uuid, repetir el estado actual es un reintento puro y no se registra (la regla esta
         // en utils/eventosOt.js).
+        // primera llegada a trabajo (de un estado que no es de trabajo a en_terreno o en_reparacion): el
+        // equipo pasa a mantencion. Ir y volver entre terreno y reparacion no lo repite.
+        if (cambio === 'cambiar' && EN_CURSO.includes(estado) && !EN_CURSO.includes(check.estado)) {
+            await aplicarEntradaEquipo(client, result.rows[0].maquinaria_id);
+        }
         const decision = decidirEventoDiagnostico({ cambio, estadoActual: check.estado, estadoPedido: estado, uuid: uuidTarea });
         if (decision.registrar) {
             await dejarEvento(client, {
@@ -639,7 +654,14 @@ router.post('/:id/tramos', verifyToken, requireRole('mecanico'), async (req, res
 // Ya NO recibe `facturable`: en el talonario esa marca es por linea de repuesto, asi que el
 // campo de la orden lo deriva insumos.js al cambiar una linea (ver utils/facturableOt.js).
 router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req, res) => {
-    const { persona_recibe, sin_persona, firma_path } = req.body;
+    const { persona_recibe, sin_persona, firma_path, ocurrio_en } = req.body;
+    // como queda el equipo al cerrar: 'operativa' o 'fuera_de_servicio'. Ausente = APK anterior.
+    const equipoPedido = validarEstadoEquipoCierre(req.body.estado_equipo);
+    if (!equipoPedido.valido) {
+        return res.status(400).json({ error: 'estado_equipo debe ser operativa o fuera_de_servicio' });
+    }
+    // hora real del cierre en el telefono (la cola offline puede enviarlo mucho despues); nunca en el futuro
+    const momento = ocurrio_en && !Number.isNaN(Date.parse(ocurrio_en)) ? new Date(ocurrio_en).toISOString() : null;
     // Datos de recepcion opcionales: los APK anteriores al rediseño no los envian.
     const tieneRecepcion = persona_recibe !== undefined || sin_persona !== undefined || firma_path !== undefined;
     if (tieneRecepcion && !sin_persona && !persona_recibe) {
@@ -671,9 +693,10 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
         }
         const result = await client.query(
             `UPDATE ordenes_trabajo
-             SET estado = 'finalizada', fecha_cierre = now()
+             SET estado = 'finalizada',
+                 fecha_cierre = GREATEST(LEAST(COALESCE($2::timestamptz, now()), now()), fecha_creacion)
              WHERE id = $1 RETURNING *`,
-            [req.params.id]
+            [req.params.id, momento]
         );
         if (tieneRecepcion) {
             // ON CONFLICT: la cola offline puede reintentar el PATCH; no debe duplicar ni fallar
@@ -708,10 +731,18 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
 
         // el cierre y su evento van juntos; el reintento de un cierre ya aplicado salio antes y no
         // deja evento. La hora es la del servidor hasta que el APK mande la suya.
+        // el equipo queda como diga la regla (ver utils/estadoEquipo.js); su estado anterior y nuevo van al historial
+        const equipo = await aplicarCierreEquipo(client, orden.maquinaria_id, orden.id, equipoPedido.estado);
         await dejarEvento(client, {
             ordenId: orden.id, tipo: 'cierre', origen: 'terreno',
             estadoAnterior: actual.rows[0].estado, estadoNuevo: 'finalizada', usuario: req.user,
             uuidCliente: leerUuidTarea(req.body.uuid_cliente) || leerUuidTarea(req.body.uuid),
+            ocurrioEn: momento, creadaEn: check.creadaEn, nacioPorSincronizacion: check.nacioPorSincronizacion,
+            detalle: {
+                estado_equipo_pedido: equipoPedido.estado,
+                estado_equipo_anterior: equipo.anterior,
+                estado_equipo_nuevo: equipo.nuevo,
+            },
         });
 
         await client.query('COMMIT');

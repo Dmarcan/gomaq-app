@@ -6,6 +6,8 @@ const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { rutaAdjuntoSolicitud } = require('../utils/rutaArchivo');
 const { dejarEvento } = require('../utils/eventosOt');
 
+const { origenDeCliente } = require('../utils/estadoEquipo');
+
 const router = express.Router();
 
 const TIPOS_VALIDOS = ['falla', 'mantencion_preventiva'];
@@ -131,8 +133,8 @@ router.patch('/:id/convertir', verifyToken, requireRole('administrativo', 'geren
 
         const otResult = await client.query(
             `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, origen, motivo)
-             VALUES ($1, $2, 'directo', $3) RETURNING *`,
-            [solicitud.maquinaria_id, solicitud.cliente_id, solicitud.descripcion]
+             VALUES ($1, $2, $4::origen_orden, $3) RETURNING *`,
+            [solicitud.maquinaria_id, solicitud.cliente_id, solicitud.descripcion, await origenDeCliente(client, solicitud.cliente_id)]
         );
         const orden = otResult.rows[0];
         // la OT nace en la misma transaccion que su evento de creacion (historial, migracion 020)
