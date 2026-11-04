@@ -1,5 +1,6 @@
 import '../theme/gomaq_theme.dart';
 import 'formato.dart';
+import 'motivo_cambio.dart';
 
 /// Textos de la línea de tiempo de una orden (GET /api/ordenes-trabajo/:id/historial).
 ///
@@ -38,19 +39,68 @@ String textoEventoOt(Map<String, dynamic> evento) {
     case 'cierre':
       return 'Cerrada';
     case 'valorizacion':
+      // el servidor anula la valorización cuando un cambio de líneas altera lo que se cobra
+      if (detalle['anulada'] == true) return 'Valorización anulada por un cambio en las líneas facturables';
       final monto = Formato.clp(num.tryParse('${detalle['valorizacion_nueva']}'));
       final antes = num.tryParse('${detalle['valorizacion_anterior']}');
       return antes == null ? 'Valorizada en $monto' : 'Valorización cambiada de ${Formato.clp(antes)} a $monto';
     case 'linea_agregada':
-      return 'Repuesto agregado';
+      return 'Repuesto agregado: ${_nombreLinea(detalle)}${_motivoDelCambio(detalle)}';
     case 'linea_modificada':
-      return 'Repuesto modificado';
+      return '${_cambioDeLinea(detalle)}${_motivoDelCambio(detalle)}';
     case 'linea_anulada':
-      return 'Repuesto anulado';
+      return 'Repuesto anulado: ${_nombreLinea(detalle)}${_motivoDelCambio(detalle)}';
     case 'factura_cargada':
-      return 'Factura cargada';
+      final folio = detalle['folio'];
+      return folio == null || '$folio'.isEmpty ? 'Factura cargada' : 'Factura folio $folio cargada';
+    case 'factura_anulada':
+      final folioAnulada = detalle['folio'];
+      final nombre = folioAnulada == null || '$folioAnulada'.isEmpty ? 'Factura' : 'Factura folio $folioAnulada';
+      return '$nombre anulada${_motivoDelCambio(detalle)}';
     default:
       return 'Evento registrado';
+  }
+}
+
+String _nombreLinea(Map detalle) {
+  final nombre = detalle['insumo'];
+  return nombre == null || '$nombre'.trim().isEmpty ? 'sin nombre' : '$nombre';
+}
+
+/// ". Motivo: Garantía: texto" cuando el cambio lo registró; vacío si no hubo motivo.
+String _motivoDelCambio(Map detalle) {
+  final etiqueta = etiquetaMotivo(detalle['motivo_codigo'] as String?);
+  final texto = (detalle['motivo'] as String?)?.trim() ?? '';
+  if (etiqueta == null && texto.isEmpty) return '';
+  if (etiqueta == null) return '. Motivo: $texto';
+  return texto.isEmpty ? '. Motivo: $etiqueta' : '. Motivo: $etiqueta: $texto';
+}
+
+String _valorFacturable(dynamic valor) => switch (valor) {
+      'si' => 'Sí',
+      'no' => 'No',
+      'pendiente' => 'Por decidir',
+      _ => '$valor',
+    };
+
+/// Qué cambió en una línea: un evento por campo, con el valor de antes y el de después.
+String _cambioDeLinea(Map detalle) {
+  final nombre = _nombreLinea(detalle);
+  final antes = detalle['antes'];
+  final despues = detalle['despues'];
+  switch (detalle['campo']) {
+    case 'facturable':
+      return 'Facturable de $nombre: ${_valorFacturable(antes)} a ${_valorFacturable(despues)}';
+    case 'precio_unitario':
+      final de = Formato.clp(num.tryParse('$antes'), siVacio: 'sin precio');
+      final a = Formato.clp(num.tryParse('$despues'), siVacio: 'sin precio');
+      return 'Precio de $nombre: $de a $a';
+    case 'cantidad':
+      return 'Cantidad de $nombre: $antes a $despues';
+    case 'descripcion':
+      return 'Descripción de $nombre cambiada';
+    default:
+      return 'Repuesto modificado: $nombre';
   }
 }
 

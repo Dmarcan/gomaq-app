@@ -2,6 +2,8 @@ const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularFacturableOt } = require('../utils/facturableOt');
+const { evaluarCompuertas, difLinea, debeAnularValorizacion, validarPrecioUnitario, esIdPositivo } = require('../utils/auditoriaLinea');
+const { dejarEvento } = require('../utils/eventosOt');
 const { validarTransferencia } = require('../utils/stock');
 const { verificarDuenoOrden, MENSAJE_OT_CERRADA } = require('../utils/ordenes');
 const { parsearPaginacion, envolver } = require('../utils/paginacion');
@@ -391,11 +393,122 @@ async function recalcularFacturableOt(client, ordenId) {
     return facturable;
 }
 
+// ---- Cambios a las lineas de una OT (bloque 1b) ----
+//
+// Agregar, anular y modificar una linea cambian lo que se cobra, asi que las tres rutas siguen el
+// mismo camino, todo dentro de UNA transaccion:
+//   1. bloquear la fila de la OT (FOR UPDATE). Es obligatorio: el historial se ordena por el id de
+//      los eventos y eso solo es el orden real si todo evento se escribe con la OT bloqueada; ademas
+//      impide que la factura se suba en medio de un cambio de linea
+//   2. leer estado, valorizacion y factura de la OT
+//   3. compuertas (utils/auditoriaLinea.js): 409 si ya hay factura, 400 si la OT esta cerrada y el
+//      motivo falta o no sirve
+//   4. aplicar el cambio y recalcular el facturable de la OT
+//   5. si la OT estaba valorizada y el cambio altera lo facturable, anular la valorizacion
+//   6. dejar los eventos en el historial (utils/eventosOt.js)
+
+const UUID_ESTRICTO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/** terreno si lo hace el mecanico; panel si lo hace administrativo o gerente. */
+const origenDelCambio = (req) => (req.user.rol === 'mecanico' ? 'terreno' : 'panel');
+
+/**
+ * Bloquea la fila de la OT y lee lo que deciden las compuertas: estado, valorizacion y el folio
+ * de su factura (null si no tiene). Null si la OT no existe.
+ *
+ * La factura se lee en una SEGUNDA consulta, ya con el bloqueo tomado. En READ COMMITTED cada
+ * sentencia ve lo confirmado hasta que empieza: si el folio fuera una subconsulta del mismo
+ * SELECT ... FOR UPDATE, quien espero el bloqueo mientras otra transaccion subia la factura no la
+ * veria (la fila de la OT no cambia, asi que Postgres no la vuelve a evaluar) y el cambio de
+ * linea pasaria sobre una OT ya facturada.
+ */
+async function bloquearOrden(client, ordenId) {
+    const r = await client.query(
+        `SELECT id, mecanico_id, estado, facturable, valorizacion
+         FROM ordenes_trabajo
+         WHERE id = $1
+         FOR UPDATE`,
+        [ordenId]
+    );
+    if (!r.rows[0]) return null;
+    const factura = await client.query(
+        'SELECT folio FROM facturas WHERE orden_trabajo_id = $1 ORDER BY id LIMIT 1',
+        [r.rows[0].id]
+    );
+    return { ...r.rows[0], factura_folio: factura.rows[0] ? factura.rows[0].folio : null };
+}
+
+/** Las lineas que cuentan hoy en la OT (sin las anuladas), para decidir sobre la valorizacion. */
+async function lineasVigentes(client, ordenId) {
+    const r = await client.query(
+        `SELECT id, facturable, cantidad, precio_unitario FROM movimientos_insumo
+         WHERE orden_trabajo_id = $1 AND tipo = 'salida' AND anulada_at IS NULL`,
+        [ordenId]
+    );
+    return r.rows;
+}
+
+/** Como se llama la linea en el historial: el insumo del catalogo o lo que se escribio a mano. */
+async function nombreDeLinea(client, linea) {
+    if (linea.insumo_id) {
+        const r = await client.query('SELECT nombre FROM insumos WHERE id = $1', [linea.insumo_id]);
+        if (r.rows[0]) return r.rows[0].nombre;
+    }
+    return linea.descripcion || null;
+}
+
+/** Detalle del evento de una linea: lo que cambio, el motivo y si la OT ya estaba cerrada. */
+function detalleDeLinea({ lineaId, insumo, campo, antes, despues, compuertas }) {
+    return {
+        linea_id: lineaId,
+        insumo,
+        campo,
+        antes,
+        despues,
+        motivo_codigo: compuertas.motivoCodigo,
+        motivo: compuertas.motivo,
+        orden_cerrada: compuertas.ordenCerrada,
+    };
+}
+
+/**
+ * Si el cambio altero lo facturable y la OT estaba valorizada, la valorizacion se anula (queda en
+ * NULL): la OT vuelve a la lista de pendientes del gerente. Deja el evento 'valorizacion'.
+ * `antes` son las lineas vigentes ANTES del cambio; las de despues se leen aca.
+ */
+async function anularValorizacionSiCorresponde(client, req, orden, antes, { tipoCambio, lineaId, compuertas }) {
+    if (orden.valorizacion === null || orden.valorizacion === undefined) return false;
+    const despues = await lineasVigentes(client, orden.id);
+    if (!debeAnularValorizacion({ valorizacion: orden.valorizacion, antes, despues })) return false;
+    await client.query(
+        'UPDATE ordenes_trabajo SET valorizacion = NULL, valorizacion_aprobada_por = NULL WHERE id = $1',
+        [orden.id]
+    );
+    await dejarEvento(client, {
+        ordenId: orden.id, tipo: 'valorizacion', origen: origenDelCambio(req), usuario: req.user,
+        detalle: {
+            valorizacion_anterior: Number(orden.valorizacion),
+            valorizacion_nueva: null,
+            anulada: true,
+            causa: 'Cambio en las líneas facturables',
+            evento_causa: tipoCambio,
+            linea_id: lineaId,
+            motivo_codigo: compuertas.motivoCodigo,
+            motivo: compuertas.motivo,
+        },
+    });
+    return true;
+}
+
 // POST /api/insumos/orden/:ordenId - agregar una linea de repuesto a la OT.
 // Replica la tabla del talonario: cantidad, insumo del catalogo o descripcion escrita a mano,
 // precio, y el facturable SI/NO/? de esa linea.
+//
+// Con la OT cerrada solo la agrega el panel y exige motivo (motivo_codigo y motivo); con la OT
+// facturada nadie. El mecanico no manda motivo: solo agrega a OT abiertas.
 router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrativo'), async (req, res) => {
     const { insumo_id, cantidad, descripcion, precio_unitario, facturable } = req.body;
+    if (!esIdPositivo(req.params.ordenId)) return res.status(400).json({ error: 'Id de orden inválido' });
     if (!cantidad || isNaN(cantidad) || Number(cantidad) <= 0) {
         return res.status(400).json({ error: 'Indica una cantidad mayor a 0' });
     }
@@ -407,6 +520,8 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
     if (facturable !== undefined && !FACTURABLE_VALIDOS.includes(facturable)) {
         return res.status(400).json({ error: `facturable debe ser uno de: ${FACTURABLE_VALIDOS.join(', ')}` });
     }
+    const errorPrecio = validarPrecioUnitario(precio_unitario);
+    if (errorPrecio) return res.status(400).json({ error: errorPrecio });
     const { valido: uuidValido, uuid } = leerUuidCliente(req.body);
     if (!uuidValido) {
         return res.status(400).json({ error: 'uuid_cliente no es un UUID valido' });
@@ -421,26 +536,64 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
     }
 
     /** Reintento de una linea ya registrada: se responde lo mismo sin tocar el stock otra vez. */
-    const responderExistente = async (existente) => {
-        const orden = await pool.query('SELECT facturable FROM ordenes_trabajo WHERE id = $1', [existente.orden_trabajo_id]);
-        return res.status(200).json({ ...existente, orden_facturable: orden.rows[0] ? orden.rows[0].facturable : null });
+    const cuerpoExistente = async (db, existente) => {
+        const orden = await db.query('SELECT facturable FROM ordenes_trabajo WHERE id = $1', [existente.orden_trabajo_id]);
+        return { ...existente, orden_facturable: orden.rows[0] ? orden.rows[0].facturable : null };
     };
+    const responderExistente = async (existente, db = pool) => res.status(200).json(await cuerpoExistente(db, existente));
     const yaRegistrada = await buscarPorUuid(pool, 'movimientos_insumo', uuid);
     if (yaRegistrada) return responderExistente(yaRegistrada);
 
-    const client = await pool.connect();
+    let client = null;
     try {
+        client = await pool.connect();
         await client.query('BEGIN');
+        const orden = await bloquearOrden(client, req.params.ordenId);
+        if (!orden) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+        }
+        // lo que se reviso arriba sin bloqueo se confirma con la OT bloqueada: entre una cosa y la
+        // otra se pudo cerrar o reasignar
+        if (req.user.rol === 'mecanico') {
+            if (orden.mecanico_id !== req.user.id) {
+                await client.query('ROLLBACK');
+                return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
+            }
+            if (orden.estado === 'finalizada') {
+                await client.query('ROLLBACK');
+                return res.status(409).json({ error: MENSAJE_OT_CERRADA });
+            }
+        }
+        // dos reintentos de la misma tarea: el segundo espera el bloqueo y encuentra la linea
+        const yaGuardada = await buscarPorUuid(client, 'movimientos_insumo', uuid);
+        if (yaGuardada) {
+            // con el cliente de la transaccion: el bloqueo de la OT sigue tomado mientras se lee
+            const cuerpo = await cuerpoExistente(client, yaGuardada);
+            await client.query('ROLLBACK');
+            return res.status(200).json(cuerpo);
+        }
+        const compuertas = evaluarCompuertas({
+            estado: orden.estado, facturaFolio: orden.factura_folio,
+            motivoCodigo: req.body.motivo_codigo, motivo: req.body.motivo,
+        });
+        if (!compuertas.ok) {
+            await client.query('ROLLBACK');
+            return res.status(compuertas.status).json({ error: compuertas.error });
+        }
+
         // El repuesto sale de donde estaba fisicamente: del furgon si lo registra el mecanico,
         // de la bodega si lo registra el administrativo. Se permite dejar el furgon en negativo
         // (ver utils/stock.js): la pieza ya se instalo y el descuadre queda visible para bodega.
         let ubicacionOrigen = null;
+        let nombreInsumo = null;
         if (insumo_id) {
-            const insumoResult = await client.query('SELECT id FROM insumos WHERE id = $1', [insumo_id]);
+            const insumoResult = await client.query('SELECT id, nombre FROM insumos WHERE id = $1', [insumo_id]);
             if (insumoResult.rows.length === 0) {
                 await client.query('ROLLBACK');
                 return res.status(404).json({ error: 'Insumo no encontrado' });
             }
+            nombreInsumo = insumoResult.rows[0].nombre;
             ubicacionOrigen = req.user.rol === 'mecanico'
                 ? await furgonDe(client, req.user.id)
                 : await bodegaCentral(client);
@@ -450,6 +603,7 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
             // sin furgon asignado el consumo igual se registra: la OT no puede quedar bloqueada
             // porque a un mecanico todavia no le hayan cargado su vehiculo en el sistema
         }
+        const antes = orden.valorizacion === null ? [] : await lineasVigentes(client, orden.id);
         const movimiento = await client.query(
             `INSERT INTO movimientos_insumo
                 (insumo_id, orden_trabajo_id, cantidad, tipo, usuario_id, descripcion, precio_unitario, facturable,
@@ -468,20 +622,40 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
                 uuid,
             ]
         );
+        const linea = movimiento.rows[0];
         const facturableOt = await recalcularFacturableOt(client, req.params.ordenId);
+        await dejarEvento(client, {
+            ordenId: orden.id, tipo: 'linea_agregada', origen: origenDelCambio(req), usuario: req.user,
+            uuidCliente: uuid,
+            detalle: detalleDeLinea({
+                lineaId: linea.id,
+                insumo: nombreInsumo || linea.descripcion,
+                campo: 'linea',
+                antes: null,
+                despues: {
+                    cantidad: Number(linea.cantidad),
+                    precio_unitario: linea.precio_unitario === null ? null : Number(linea.precio_unitario),
+                    facturable: linea.facturable,
+                },
+                compuertas,
+            }),
+        });
+        await anularValorizacionSiCorresponde(client, req, orden, antes, {
+            tipoCambio: 'linea_agregada', lineaId: linea.id, compuertas,
+        });
         await client.query('COMMIT');
-        res.status(201).json({ ...movimiento.rows[0], orden_facturable: facturableOt });
+        res.status(201).json({ ...linea, orden_facturable: facturableOt });
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (client) await client.query('ROLLBACK').catch(() => {});
         if (esUuidDuplicado(err)) {
             // otro reintento de la misma tarea gano la carrera; el ROLLBACK ya devolvio el stock
-            const existente = await buscarPorUuid(pool, 'movimientos_insumo', uuid);
-            if (existente) return responderExistente(existente);
+            const existente = await buscarPorUuid(client, 'movimientos_insumo', uuid);
+            if (existente) return responderExistente(existente, client);
         }
         console.error(err);
         res.status(500).json({ error: 'Error al registrar la línea de repuesto' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 
@@ -491,28 +665,29 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
 // repuesto vuelve a la ubicacion de donde salio (furgon o bodega) y la linea deja de contar como
 // gasto del equipo y para el facturable de la OT.
 //
-// El mecanico anula las suyas mientras la OT sigue abierta; cerrada la OT, solo el panel.
+// El mecanico anula las suyas mientras la OT sigue abierta; cerrada la OT, solo el panel y con
+// motivo (motivo_codigo y motivo). Con la OT facturada nadie: 409.
 // Es idempotente: anular una linea ya anulada responde 200 sin volver a mover stock, que es lo
 // que necesita la cola offline ante un reintento.
 router.post('/orden/:ordenId/linea/:lineaId/anular', verifyToken, requireRole('mecanico', 'administrativo', 'gerente'), async (req, res) => {
     const { ordenId, lineaId } = req.params;
-    const client = await pool.connect();
+    if (!esIdPositivo(ordenId)) return res.status(400).json({ error: 'Id de orden inválido' });
+    if (!esIdPositivo(lineaId)) return res.status(400).json({ error: 'Id de línea inválido' });
+    let client = null;
     try {
+        client = await pool.connect();
         await client.query('BEGIN');
-        const orden = await client.query(
-            'SELECT id, mecanico_id, estado FROM ordenes_trabajo WHERE id = $1 FOR UPDATE',
-            [ordenId]
-        );
-        if (orden.rows.length === 0) {
+        const orden = await bloquearOrden(client, ordenId);
+        if (!orden) {
             await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         }
         if (req.user.rol === 'mecanico') {
-            if (orden.rows[0].mecanico_id !== req.user.id) {
+            if (orden.mecanico_id !== req.user.id) {
                 await client.query('ROLLBACK');
                 return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
             }
-            if (orden.rows[0].estado === 'finalizada') {
+            if (orden.estado === 'finalizada') {
                 await client.query('ROLLBACK');
                 return res.status(409).json({ error: 'La orden ya está cerrada: pide al administrativo que anule la línea' });
             }
@@ -532,7 +707,16 @@ router.post('/orden/:ordenId/linea/:lineaId/anular', verifyToken, requireRole('m
             await client.query('ROLLBACK');
             return res.json(linea);
         }
+        const compuertas = evaluarCompuertas({
+            estado: orden.estado, facturaFolio: orden.factura_folio,
+            motivoCodigo: req.body ? req.body.motivo_codigo : undefined, motivo: req.body ? req.body.motivo : undefined,
+        });
+        if (!compuertas.ok) {
+            await client.query('ROLLBACK');
+            return res.status(compuertas.status).json({ error: compuertas.error });
+        }
 
+        const antes = orden.valorizacion === null ? [] : await lineasVigentes(client, orden.id);
         if (linea.insumo_id && linea.ubicacion_origen_id) {
             await moverStock(client, {
                 ubicacionId: linea.ubicacion_origen_id,
@@ -545,28 +729,115 @@ router.post('/orden/:ordenId/linea/:lineaId/anular', verifyToken, requireRole('m
             [req.user.id, lineaId]
         );
         const facturableOt = await recalcularFacturableOt(client, ordenId);
+        await dejarEvento(client, {
+            ordenId: orden.id, tipo: 'linea_anulada', origen: origenDelCambio(req), usuario: req.user,
+            detalle: detalleDeLinea({
+                lineaId: linea.id,
+                insumo: await nombreDeLinea(client, linea),
+                campo: 'anulada',
+                antes: false,
+                despues: true,
+                compuertas,
+            }),
+        });
+        await anularValorizacionSiCorresponde(client, req, orden, antes, {
+            tipoCambio: 'linea_anulada', lineaId: linea.id, compuertas,
+        });
         await client.query('COMMIT');
         res.json({ ...anulada.rows[0], orden_facturable: facturableOt });
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al anular la línea' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 
 // PATCH /api/insumos/orden/:ordenId/linea/:lineaId - resolver el "?" del papel o corregir el
 // precio. Es la decision que describio el jefe de taller (entrevista, punto 9): clientes antiguos a los
 // que se decide despues no cobrarles, aunque el trabajo se haya hecho.
+//
+// Con la OT cerrada exige motivo (motivo_codigo y motivo); con la OT facturada responde 409.
+// Cabecera opcional Idempotency-Key (UUID): si ya hay un evento con ese uuid, el cambio ya se
+// hizo y se responde 200 con el estado actual de la linea sin repetirlo. Un PATCH que no cambia
+// nada no escribe nada ni deja evento.
 router.patch('/orden/:ordenId/linea/:lineaId', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { facturable, precio_unitario, descripcion } = req.body;
+    if (!esIdPositivo(req.params.ordenId)) return res.status(400).json({ error: 'Id de orden inválido' });
+    if (!esIdPositivo(req.params.lineaId)) return res.status(400).json({ error: 'Id de línea inválido' });
     if (facturable !== undefined && !FACTURABLE_VALIDOS.includes(facturable)) {
         return res.status(400).json({ error: `facturable debe ser uno de: ${FACTURABLE_VALIDOS.join(', ')}` });
     }
-    const client = await pool.connect();
+    const errorPrecio = validarPrecioUnitario(precio_unitario);
+    if (errorPrecio) return res.status(400).json({ error: errorPrecio });
+    const cabecera = req.get('Idempotency-Key');
+    if (cabecera !== undefined && !UUID_ESTRICTO.test(cabecera.trim())) {
+        return res.status(400).json({ error: 'Idempotency-Key no es un UUID valido' });
+    }
+    const llave = cabecera === undefined ? null : cabecera.trim().toLowerCase();
+    const mensajeNoEncontrada = 'Línea no encontrada en esta orden de trabajo, o ya anulada';
+    let client = null;
     try {
+        client = await pool.connect();
         await client.query('BEGIN');
+        const orden = await bloquearOrden(client, req.params.ordenId);
+        if (!orden) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: mensajeNoEncontrada });
+        }
+
+        // el reintento de un cambio que ya se hizo (la respuesta se perdio): se responde el estado
+        // actual. La llave solo vale para esta linea; usada en otra cosa es un error del cliente.
+        if (llave) {
+            const previo = await client.query(
+                `SELECT orden_trabajo_id, detalle->>'linea_id' AS linea_id FROM ordenes_eventos
+                 WHERE uuid_cliente = $1 AND tipo = 'linea_modificada'`,
+                [llave]
+            );
+            if (previo.rows[0]) {
+                if (previo.rows[0].orden_trabajo_id !== orden.id || previo.rows[0].linea_id !== String(req.params.lineaId)) {
+                    await client.query('ROLLBACK');
+                    return res.status(409).json({ error: 'Idempotency-Key ya fue usada en otra operación' });
+                }
+                const actual = await client.query(
+                    'SELECT * FROM movimientos_insumo WHERE id = $1 AND orden_trabajo_id = $2',
+                    [req.params.lineaId, req.params.ordenId]
+                );
+                await client.query('ROLLBACK');
+                if (actual.rows.length === 0) return res.status(404).json({ error: mensajeNoEncontrada });
+                return res.json({ ...actual.rows[0], orden_facturable: orden.facturable, ya_registrada: true });
+            }
+        }
+
+        const lineaResult = await client.query(
+            `SELECT * FROM movimientos_insumo
+             WHERE id = $1 AND orden_trabajo_id = $2 AND anulada_at IS NULL FOR UPDATE`,
+            [req.params.lineaId, req.params.ordenId]
+        );
+        const linea = lineaResult.rows[0];
+        if (!linea) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: mensajeNoEncontrada });
+        }
+
+        const cambios = difLinea(linea, { facturable, precio_unitario, descripcion });
+        const campos = Object.keys(cambios);
+        if (campos.length === 0) {
+            // nada cambia: ni la linea ni el historial se tocan
+            await client.query('ROLLBACK');
+            return res.json({ ...linea, orden_facturable: orden.facturable });
+        }
+        const compuertas = evaluarCompuertas({
+            estado: orden.estado, facturaFolio: orden.factura_folio,
+            motivoCodigo: req.body.motivo_codigo, motivo: req.body.motivo,
+        });
+        if (!compuertas.ok) {
+            await client.query('ROLLBACK');
+            return res.status(compuertas.status).json({ error: compuertas.error });
+        }
+
+        const antes = orden.valorizacion === null ? [] : await lineasVigentes(client, orden.id);
         const result = await client.query(
             `UPDATE movimientos_insumo
              SET facturable = COALESCE($1::estado_facturable_linea, facturable),
@@ -582,19 +853,43 @@ router.patch('/orden/:ordenId/linea/:lineaId', verifyToken, requireRole('adminis
                 req.params.ordenId,
             ]
         );
-        if (result.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Línea no encontrada en esta orden de trabajo, o ya anulada' });
-        }
         const facturableOt = await recalcularFacturableOt(client, req.params.ordenId);
+        // un evento por campo que cambio; la llave de idempotencia va en el primero (el indice
+        // unico es por uuid y tipo, asi que no puede repetirse en los demas)
+        const insumo = await nombreDeLinea(client, linea);
+        // "despues" sale de la fila ya guardada, no de lo pedido: es lo que de verdad quedo
+        const guardada = result.rows[0];
+        const valorGuardado = (campo) => {
+            const v = guardada[campo];
+            return (campo === 'precio_unitario' || campo === 'cantidad') && v !== null ? Number(v) : v;
+        };
+        for (const [i, campo] of campos.entries()) {
+            const registrado = await dejarEvento(client, {
+                ordenId: orden.id, tipo: 'linea_modificada', origen: origenDelCambio(req), usuario: req.user,
+                uuidCliente: i === 0 ? llave : null,
+                detalle: detalleDeLinea({
+                    lineaId: linea.id, insumo, campo,
+                    antes: cambios[campo].antes, despues: valorGuardado(campo), compuertas,
+                }),
+            });
+            if (!registrado) {
+                // el evento ya existia (misma llave y tipo): no se deja un cambio sin su rastro,
+                // se deshace todo y se avisa
+                await client.query('ROLLBACK');
+                return res.status(409).json({ error: 'Idempotency-Key ya fue usada en otra operación' });
+            }
+        }
+        await anularValorizacionSiCorresponde(client, req, orden, antes, {
+            tipoCambio: 'linea_modificada', lineaId: linea.id, compuertas,
+        });
         await client.query('COMMIT');
         res.json({ ...result.rows[0], orden_facturable: facturableOt });
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al actualizar la línea' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 

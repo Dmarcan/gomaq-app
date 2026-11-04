@@ -6,8 +6,9 @@
 //
 // Quien escribe cada tipo: creacion, asignacion, toma, cambio_estado, cierre y valorizacion los
 // escriben las rutas de ordenes.js y solicitudes.js (bloque 1a). linea_agregada, linea_modificada,
-// linea_anulada y factura_cargada los escribe el bloque 1b (insumos.js y facturas.js); el CHECK de
-// la tabla ya los admite para no tener que tocar la migracion despues.
+// linea_anulada, factura_cargada y factura_anulada los escribe el bloque 1b (insumos.js y
+// facturas.js). Los cuatro primeros ya los admitia el CHECK de la migracion 020; factura_anulada lo
+// agrega la 021.
 //
 // Orden del historial: el endpoint ordena por id (orden de escritura = llegada al servidor), con la
 // creacion siempre primero. ocurrio_en es la hora del evento que se muestra, pero no ordena: la hora
@@ -25,7 +26,7 @@
 
 const TIPOS_EVENTO = [
     'creacion', 'asignacion', 'toma', 'cambio_estado', 'cierre', 'valorizacion',
-    'linea_agregada', 'linea_modificada', 'linea_anulada', 'factura_cargada',
+    'linea_agregada', 'linea_modificada', 'linea_anulada', 'factura_cargada', 'factura_anulada',
 ];
 const ORIGENES_EVENTO = ['terreno', 'panel', 'sistema', 'migracion'];
 

@@ -53,8 +53,10 @@ class ApiClient {
   Future<String?> leerUsuario() => _storage.read(key: 'usuario_json');
 
   Future<dynamic> get(String path) => _api.get(path);
-  Future<dynamic> post(String path, Map<String, dynamic> body) => _api.post(path, body);
-  Future<dynamic> patch(String path, Map<String, dynamic> body) => _api.patch(path, body);
+  Future<dynamic> post(String path, Map<String, dynamic> body, {Map<String, String>? cabeceras}) =>
+      _api.post(path, body, cabeceras: cabeceras);
+  Future<dynamic> patch(String path, Map<String, dynamic> body, {Map<String, String>? cabeceras}) =>
+      _api.patch(path, body, cabeceras: cabeceras);
 
   /// Subida de archivo (PDF de guia/factura, foto de equipo) via multipart, usando los
   /// campos de texto en [fields]. El archivo es opcional (ej. crear un equipo sin foto todavia).

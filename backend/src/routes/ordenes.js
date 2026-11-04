@@ -228,10 +228,14 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
 router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     try {
         const result = await pool.query(
-            `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre
+            // factura_id y factura_folio: el panel avisa que una orden facturada no admite cambios de
+            // lineas (bloque 1b). Hay a lo mas una factura por OT (indice unico de la migracion 016).
+            `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre,
+                    f.id AS factura_id, f.folio AS factura_folio
              FROM ordenes_trabajo ot
              JOIN maquinarias m ON m.id = ot.maquinaria_id
              LEFT JOIN clientes c ON c.id = ot.cliente_id
+             LEFT JOIN facturas f ON f.orden_trabajo_id = ot.id
              WHERE ot.id = $1`,
             [req.params.id]
         );

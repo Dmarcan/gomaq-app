@@ -79,6 +79,100 @@ void main() {
       );
     });
 
+    test('valorización anulada por un cambio de líneas', () {
+      expect(
+        textoEventoOt({
+          'tipo': 'valorizacion',
+          'detalle': {'anulada': true, 'valorizacion_anterior': 7000, 'valorizacion_nueva': null},
+        }),
+        'Valorización anulada por un cambio en las líneas facturables',
+      );
+    });
+
+    test('línea agregada con y sin motivo', () {
+      expect(
+        textoEventoOt({'tipo': 'linea_agregada', 'detalle': {'insumo': 'Filtro de aceite', 'motivo_codigo': null, 'motivo': null}}),
+        'Repuesto agregado: Filtro de aceite',
+      );
+      expect(
+        textoEventoOt({
+          'tipo': 'linea_agregada',
+          'detalle': {'insumo': 'Correa', 'motivo_codigo': 'error_registro', 'motivo': 'Faltaba en el talonario'},
+        }),
+        'Repuesto agregado: Correa. Motivo: Error de registro: Faltaba en el talonario',
+      );
+      expect(textoEventoOt({'tipo': 'linea_agregada', 'detalle': null}), 'Repuesto agregado: sin nombre');
+    });
+
+    test('facturable modificado dice de qué a qué y el motivo', () {
+      expect(
+        textoEventoOt({
+          'tipo': 'linea_modificada',
+          'detalle': {
+            'insumo': 'Filtro', 'campo': 'facturable', 'antes': 'si', 'despues': 'no',
+            'motivo_codigo': 'garantia', 'motivo': 'Cambio por garantía del fabricante',
+          },
+        }),
+        'Facturable de Filtro: Sí a No. Motivo: Garantía: Cambio por garantía del fabricante',
+      );
+      expect(
+        textoEventoOt({'tipo': 'linea_modificada', 'detalle': {'insumo': 'Filtro', 'campo': 'facturable', 'antes': 'pendiente', 'despues': 'si'}}),
+        'Facturable de Filtro: Por decidir a Sí',
+      );
+    });
+
+    test('precio, cantidad y descripción modificados', () {
+      expect(
+        textoEventoOt({'tipo': 'linea_modificada', 'detalle': {'insumo': 'Filtro', 'campo': 'precio_unitario', 'antes': 1000, 'despues': 1500}}),
+        'Precio de Filtro: \$1.000 a \$1.500',
+      );
+      expect(
+        textoEventoOt({'tipo': 'linea_modificada', 'detalle': {'insumo': 'Filtro', 'campo': 'precio_unitario', 'antes': null, 'despues': 900}}),
+        'Precio de Filtro: sin precio a \$900',
+      );
+      expect(
+        textoEventoOt({'tipo': 'linea_modificada', 'detalle': {'insumo': 'Filtro', 'campo': 'cantidad', 'antes': 2, 'despues': 3}}),
+        'Cantidad de Filtro: 2 a 3',
+      );
+      expect(
+        textoEventoOt({'tipo': 'linea_modificada', 'detalle': {'insumo': 'Filtro', 'campo': 'descripcion'}}),
+        'Descripción de Filtro cambiada',
+      );
+      expect(textoEventoOt({'tipo': 'linea_modificada', 'detalle': null}), 'Repuesto modificado: sin nombre');
+    });
+
+    test('línea anulada con motivo; solo el texto si el código no es de la lista', () {
+      expect(
+        textoEventoOt({
+          'tipo': 'linea_anulada',
+          'detalle': {'insumo': 'Correa', 'motivo_codigo': 'cliente_antiguo', 'motivo': 'Cliente antiguo, no se cobra'},
+        }),
+        'Repuesto anulado: Correa. Motivo: Cliente antiguo: Cliente antiguo, no se cobra',
+      );
+      expect(
+        textoEventoOt({'tipo': 'linea_anulada', 'detalle': {'insumo': 'Correa', 'motivo_codigo': 'raro', 'motivo': 'Texto libre'}}),
+        'Repuesto anulado: Correa. Motivo: Texto libre',
+      );
+      expect(textoEventoOt({'tipo': 'linea_anulada', 'detalle': {'insumo': 'Correa'}}), 'Repuesto anulado: Correa');
+    });
+
+    test('factura cargada con folio', () {
+      expect(textoEventoOt({'tipo': 'factura_cargada', 'detalle': {'folio': 'F-5001', 'monto': 119000}}), 'Factura folio F-5001 cargada');
+      expect(textoEventoOt({'tipo': 'factura_cargada', 'detalle': {'folio': 1234}}), 'Factura folio 1234 cargada');
+      expect(textoEventoOt({'tipo': 'factura_cargada', 'detalle': null}), 'Factura cargada');
+    });
+
+    test('factura anulada con motivo', () {
+      expect(
+        textoEventoOt({
+          'tipo': 'factura_anulada',
+          'detalle': {'folio': 'F-1001', 'motivo_codigo': 'error_registro', 'motivo': 'Se subió la factura equivocada'},
+        }),
+        'Factura folio F-1001 anulada. Motivo: Error de registro: Se subió la factura equivocada',
+      );
+      expect(textoEventoOt({'tipo': 'factura_anulada', 'detalle': null}), 'Factura anulada');
+    });
+
     test('un tipo desconocido no rompe la pantalla', () {
       expect(textoEventoOt({'tipo': 'algo_nuevo'}), 'Evento registrado');
     });

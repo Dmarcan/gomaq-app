@@ -7,11 +7,13 @@ import '../../services/api_client.dart';
 import '../../widgets/dialogos.dart';
 import '../../utils/formato.dart';
 import '../../utils/historial_ot.dart';
+import '../../utils/motivo_cambio.dart';
 import '../../utils/numeros.dart';
 import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../widgets/estado_chip.dart';
 import '../../widgets/estado_vacio.dart';
+import '../../widgets/motivo_cambio_dialogo.dart';
 
 class OrdenesScreen extends StatefulWidget {
   /// Abre el formulario de nueva OT al entrar (el botón del Dashboard llega con ?nueva=1).
@@ -291,15 +293,63 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
   String? _errorValorizacion;
   String? _errorFolio;
 
+  // La orden como la entrega el servidor. La lista trae una copia que se queda vieja: un cambio de
+  // líneas puede anular la valorización, y la orden puede recibir su factura mientras el cuadro
+  // está abierto.
+  late Map<String, dynamic> _orden = Map<String, dynamic>.from(widget.orden);
+
+  // Llave de idempotencia de los cambios de línea (cabecera Idempotency-Key). Se genera al abrir el
+  // cuadro y se renueva tras cada cambio hecho: si la respuesta se pierde y el usuario reintenta el
+  // mismo cambio, el servidor no lo repite. Si lo que se reintenta es otro cambio, la llave cambia.
+  String _llave = nuevoUuid();
+  String? _firmaLlave;
+
+  bool get _cerrada => _orden['estado'] == 'finalizada';
+  Object? get _folioFactura => _orden['factura_folio'];
+  bool get _facturada => _folioFactura != null;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _cargarMecanicos();
       _cargarLineas();
+      _cargarOrden();
       final auth = context.read<AuthService>();
       if (auth.esAdministrativo || auth.esGerente) _cargarHistorial();
     });
+  }
+
+  /// Trae la orden al día: estado, valorización y, sobre todo, si ya tiene factura y su folio.
+  /// Si falla se queda con lo que traía la lista; el servidor igual rechaza lo que no corresponda.
+  Future<void> _cargarOrden() async {
+    try {
+      final data = await ApiClient.instance.get('/api/ordenes-trabajo/${widget.orden['id']}');
+      if (mounted && data is Map) setState(() => _orden = {..._orden, ...Map<String, dynamic>.from(data)});
+    } catch (_) {}
+  }
+
+  /// Tras un cambio de líneas se actualiza todo lo que pudo moverse: las líneas, la orden (la
+  /// valorización puede haberse anulado), el historial y la lista de atrás.
+  Future<void> _refrescarTrasCambio() async {
+    final auth = context.read<AuthService>();
+    await Future.wait([
+      _cargarLineas(),
+      _cargarOrden(),
+      if (auth.esAdministrativo || auth.esGerente) _cargarHistorial(),
+    ]);
+    widget.onCambio();
+  }
+
+  String _llavePara(String cambio) {
+    if (_firmaLlave != null && _firmaLlave != cambio) _llave = nuevoUuid();
+    _firmaLlave = cambio;
+    return _llave;
+  }
+
+  void _renovarLlave() {
+    _llave = nuevoUuid();
+    _firmaLlave = null;
   }
 
   Future<void> _cargarHistorial() async {
@@ -341,15 +391,45 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
 
   /// Resuelve el "?" del papel. Al cambiar una línea el backend recalcula el facturable de
   /// la OT, así que se refresca el listado para que Facturación quede consistente.
-  Future<void> _resolverLinea(dynamic lineaId, String facturable) async {
+  ///
+  /// Con la orden cerrada pide el motivo (lo exige el servidor y queda en el historial); con la orden
+  /// facturada no se llega acá: los controles de la línea quedan apagados con el aviso de la nota de
+  /// crédito, y si el servidor igual responde 409 se muestra su mensaje.
+  Future<void> _resolverLinea(dynamic linea, String facturable) async {
+    final actual = linea['facturable'] as String? ?? 'pendiente';
+    if (facturable == actual) return;
+    final ruta = '/api/insumos/orden/${widget.orden['id']}/linea/${linea['id']}';
+    final cambio = 'facturable:${linea['id']}:$facturable';
+
+    Future<void> enviar(Map<String, String> motivo) async {
+      try {
+        await ApiClient.instance.patch(
+          ruta,
+          {'facturable': facturable, ...motivo},
+          cabeceras: {'Idempotency-Key': _llavePara(cambio)},
+        );
+        _renovarLlave();
+        if (mounted) await _refrescarTrasCambio();
+      } on ApiException catch (e) {
+        // 409: la factura se subió mientras tanto; 400: la orden se cerró y ahora exige motivo. Se actualiza la orden
+        if (e.statusCode == 409 || e.statusCode == 400) unawaited(_cargarOrden());
+        rethrow;
+      }
+    }
+
+    if (_cerrada) {
+      await mostrarCambioConMotivo(
+        context,
+        titulo: 'Cambiar lo facturable',
+        resumen: '${_nombreLinea(linea)}\nDe «${_etiquetaFacturable(actual)}» a «${_etiquetaFacturable(facturable)}».',
+        textoAccion: 'Guardar cambio',
+        alEnviar: enviar,
+      );
+      return;
+    }
     setState(() => _cargandoAccion = true);
     try {
-      await ApiClient.instance.patch(
-        '/api/insumos/orden/${widget.orden['id']}/linea/$lineaId',
-        {'facturable': facturable},
-      );
-      await _cargarLineas();
-      widget.onCambio();
+      await enviar(const {});
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
     } finally {
@@ -357,24 +437,53 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
     }
   }
 
+  String _nombreLinea(dynamic linea) => '${linea['insumo_nombre'] ?? linea['descripcion'] ?? 'Repuesto'} · ${linea['cantidad']}';
+
+  static String _etiquetaFacturable(String valor) => switch (valor) {
+        'si' => 'Se cobra',
+        'no' => 'No se cobra',
+        _ => 'Por decidir',
+      };
+
   /// Anula una línea mal ingresada: queda tachada y el repuesto vuelve a su ubicación.
-  /// Desde el panel se puede incluso con la OT cerrada, para corregir lo que el mecánico no alcanzó.
+  /// Desde el panel se puede incluso con la OT cerrada, para corregir lo que el mecánico no alcanzó;
+  /// en ese caso el servidor exige el motivo y queda en el historial.
   Future<void> _anularLinea(dynamic linea) async {
+    final ruta = '/api/insumos/orden/${widget.orden['id']}/linea/${linea['id']}/anular';
+    const advertencia = 'La línea queda tachada, el repuesto vuelve a su ubicación y deja de contar como gasto del equipo. '
+        'No se puede deshacer.';
+
+    Future<void> enviar(Map<String, String> motivo) async {
+      try {
+        await ApiClient.instance.post(ruta, {...motivo});
+        if (mounted) await _refrescarTrasCambio();
+      } on ApiException catch (e) {
+        if (e.statusCode == 409 || e.statusCode == 400) unawaited(_cargarOrden());
+        rethrow;
+      }
+    }
+
+    if (_cerrada) {
+      await mostrarCambioConMotivo(
+        context,
+        titulo: '¿Anular esta línea?',
+        resumen: '${_nombreLinea(linea)}\n\n$advertencia',
+        textoAccion: 'Anular línea',
+        alEnviar: enviar,
+      );
+      return;
+    }
     final confirmado = await mostrarConfirmacion(
       context,
       titulo: '¿Anular esta línea?',
-      mensaje: '${linea['insumo_nombre'] ?? linea['descripcion'] ?? 'Repuesto'} · ${linea['cantidad']}\n\n'
-          'La línea queda tachada, el repuesto vuelve a su ubicación y deja de contar como gasto del equipo. '
-          'No se puede deshacer.',
+      mensaje: '${_nombreLinea(linea)}\n\n$advertencia',
       textoAccion: 'Anular línea',
       peligro: true,
     );
     if (!confirmado) return;
     setState(() => _cargandoAccion = true);
     try {
-      await ApiClient.instance.post('/api/insumos/orden/${widget.orden['id']}/linea/${linea['id']}/anular', {});
-      await _cargarLineas();
-      widget.onCambio();
+      await enviar(const {});
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
     } finally {
@@ -431,17 +540,72 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
 
     setState(() => _cargandoAccion = true);
     try {
-      await ApiClient.instance.postMultipart(
+      final factura = await ApiClient.instance.postMultipart(
         '/api/ordenes-trabajo/${widget.orden['id']}/factura',
         bytes: archivo.bytes!,
         filename: archivo.name,
         fields: {'folio': _folioCtrl.text.trim()},
       );
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Factura subida correctamente')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Factura subida correctamente')));
+        // desde ahora la orden no admite cambios de líneas: se muestra el aviso y el historial al día
+        if (factura is Map) setState(() => _orden = {..._orden, 'factura_id': factura['id'], 'factura_folio': factura['folio']});
+        unawaited(_cargarHistorial());
+      }
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      // 409: ya tenía su factura (subida desde otra pantalla)
+      if (e.statusCode == 409) unawaited(_cargarOrden());
     } finally {
       if (mounted) setState(() => _cargandoAccion = false);
+    }
+  }
+
+  /// Anula una factura subida por error: el servidor la borra del registro (el PDF queda de respaldo),
+  /// deja el motivo en el historial y la orden vuelve a admitir cambios. Pide el mismo motivo que los
+  /// cambios de líneas. La factura real se anula en el SII con una nota de crédito.
+  Future<void> _anularFactura() async {
+    final facturaId = _orden['factura_id'];
+    if (facturaId == null) return;
+    final cambio = 'anular-factura:$facturaId';
+    var yaNoEstaba = false;
+    await mostrarCambioConMotivo(
+      context,
+      titulo: '¿Anular la factura folio $_folioFactura?',
+      subtitulo: 'Se borra del registro de GOMAQ',
+      resumen: 'Esto solo corrige el registro en GOMAQ. La factura también debe anularse en el SII con una '
+          'nota de crédito. El PDF queda guardado como respaldo y la orden vuelve a admitir cambios.',
+      textoAccion: 'Anular factura',
+      alEnviar: (motivo) async {
+        try {
+          await ApiClient.instance.post(
+            '/api/ordenes-trabajo/${widget.orden['id']}/factura/$facturaId/anular',
+            {...motivo},
+            cabeceras: {'Idempotency-Key': _llavePara(cambio)},
+          );
+          _renovarLlave();
+          if (mounted) {
+            setState(() => _orden = {..._orden, 'factura_id': null, 'factura_folio': null});
+            await _refrescarTrasCambio();
+          }
+        } on ApiException catch (e) {
+          if (e.statusCode == 404) {
+            // la factura ya no estaba (la anuló otra persona): no hay nada que reintentar, el cuadro
+            // se cierra y se actualiza la orden
+            yaNoEstaba = true;
+            if (mounted) await _refrescarTrasCambio();
+            return;
+          }
+          // 400/409: el cuadro sigue abierto con el mensaje; se actualiza la orden por si cambió
+          if (e.statusCode == 409 || e.statusCode == 400) unawaited(_cargarOrden());
+          rethrow;
+        }
+      },
+    );
+    if (yaNoEstaba && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Esa factura ya había sido anulada por otra persona. Se actualizó la orden.')),
+      );
     }
   }
 
@@ -466,11 +630,18 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
         child: Text('Sin repuestos registrados', style: TextStyle(color: Colors.black54)),
       );
     }
-    final puedeResolver = auth.esGerente || auth.esAdministrativo;
+    // con la orden facturada las líneas no se tocan: para dejar de cobrar hay que emitir una nota
+    // de crédito en el SII (el servidor también lo rechaza con un 409)
+    final puedeResolver = (auth.esGerente || auth.esAdministrativo) && !_facturada;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         const Text('Repuestos utilizados', style: TextStyle(fontWeight: FontWeight.bold)),
+        if (_facturada) ...[
+          const SizedBox(height: 8),
+          LineaInfo(icono: Icons.receipt_long, texto: avisoOrdenFacturada(_folioFactura!)),
+          const SizedBox(height: 4),
+        ],
         for (final l in _lineas)
           if (l['anulada_at'] != null)
             // tachada, como en el talonario: queda la constancia de que se anuló
@@ -504,7 +675,7 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
                             DropdownMenuItem(value: 'no', child: Text('No se cobra')),
                             DropdownMenuItem(value: 'pendiente', child: Text('Por decidir')),
                           ],
-                          onChanged: _cargandoAccion ? null : (v) => _resolverLinea(l['id'], v!),
+                          onChanged: _cargandoAccion ? null : (v) => _resolverLinea(l, v!),
                         ),
                         IconButton(
                           tooltip: 'Anular línea',
@@ -513,7 +684,7 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
                         ),
                       ],
                     )
-                  : Text(l['facturable']?.toString() ?? 'pendiente'),
+                  : Text(_etiquetaFacturable(l['facturable']?.toString() ?? 'pendiente'), style: const TextStyle(fontSize: 13)),
             ),
         const Divider(height: 32),
       ],
@@ -618,7 +789,7 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
-    final o = widget.orden;
+    final o = _orden;
     final valorizacion = o['valorizacion'];
 
     return CuadroDialogo(
@@ -695,7 +866,19 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
             const SizedBox(height: 20),
           ],
 
-          if (auth.esAdministrativo && o['facturable'] == true) ...[
+          if ((auth.esAdministrativo || auth.esGerente) && _facturada) ...[
+            const TituloSeccion('Factura'),
+            LineaInfo(icono: Icons.receipt_long, texto: 'Factura folio $_folioFactura cargada'),
+            const SizedBox(height: 8),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: OutlinedButton.icon(
+                onPressed: _cargandoAccion ? null : _anularFactura,
+                icon: const Icon(Icons.cancel_outlined),
+                label: const Text('Anular factura'),
+              ),
+            ),
+          ] else if (auth.esAdministrativo && o['facturable'] == true && _cerrada && o['valorizacion'] != null) ...[
             const TituloSeccion('Factura'),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,

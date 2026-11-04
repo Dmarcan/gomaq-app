@@ -12,8 +12,9 @@ const AHORA = new Date('2026-11-03T12:00:00Z');
 const CREADA = '2026-11-03T08:00:00Z';
 
 describe('esTipoValido', () => {
-    test('acepta los diez tipos del historial y nada mas', () => {
-        assert.equal(TIPOS_EVENTO.length, 10);
+    test('acepta los once tipos del historial y nada mas', () => {
+        assert.equal(TIPOS_EVENTO.length, 11);
+        assert.ok(TIPOS_EVENTO.includes('factura_anulada'));
         for (const tipo of TIPOS_EVENTO) assert.equal(esTipoValido(tipo), true, tipo);
         assert.equal(esTipoValido('inventado'), false);
         assert.equal(esTipoValido(undefined), false);

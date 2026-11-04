@@ -80,14 +80,19 @@ class ClienteApi {
     return _procesar(await envio.timeout(timeout));
   }
 
-  Future<dynamic> post(String path, Map<String, dynamic> body) => _conCuerpo('POST', path, body);
+  /// [cabeceras] suma cabeceras propias de la llamada (por ejemplo `Idempotency-Key`); no pisan
+  /// el token ni el tipo de contenido.
+  Future<dynamic> post(String path, Map<String, dynamic> body, {Map<String, String>? cabeceras}) =>
+      _conCuerpo('POST', path, body, cabeceras);
 
-  Future<dynamic> patch(String path, Map<String, dynamic> body) => _conCuerpo('PATCH', path, body);
+  Future<dynamic> patch(String path, Map<String, dynamic> body, {Map<String, String>? cabeceras}) =>
+      _conCuerpo('PATCH', path, body, cabeceras);
 
-  Future<dynamic> put(String path, Map<String, dynamic> body) => _conCuerpo('PUT', path, body);
+  Future<dynamic> put(String path, Map<String, dynamic> body, {Map<String, String>? cabeceras}) =>
+      _conCuerpo('PUT', path, body, cabeceras);
 
-  Future<dynamic> _conCuerpo(String metodo, String path, Map<String, dynamic> body) async {
-    final headers = await _headers();
+  Future<dynamic> _conCuerpo(String metodo, String path, Map<String, dynamic> body, Map<String, String>? cabeceras) async {
+    final headers = {...?cabeceras, ...await _headers()};
     final cuerpo = jsonEncode(body);
     final uri = _uri(path);
     final c = _cliente;

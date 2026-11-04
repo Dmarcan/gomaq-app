@@ -4,6 +4,8 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { rutaArchivo } = require('../utils/rutaArchivo');
+const { dejarEvento } = require('../utils/eventosOt');
+const { validarMotivo, detalleFacturaAnulada, esIdPositivo } = require('../utils/auditoriaLinea');
 
 const router = express.Router();
 
@@ -12,13 +14,26 @@ const montoONulo = (v) => (v === undefined || v === null || v === '' ? null : v)
 const URL_EXPIRACION_SEGUNDOS = 3600;
 
 // POST /api/ordenes-trabajo/:id/factura - subir PDF de factura ya emitida en el SII (va a Supabase Storage)
+//
+// La fila de la OT se bloquea (FOR UPDATE) en la misma transaccion que inserta la factura: asi un
+// cambio de linea que corre al mismo tiempo (routes/insumos.js, que tambien bloquea la OT) termina
+// antes o empieza despues, y la factura nunca queda sobre lineas distintas a las que se cobraron.
+// La subida del PDF va antes, fuera de la transaccion: no conviene tener la OT bloqueada mientras
+// se espera a Supabase, y si algo falla despues el archivo se borra.
 router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
     const { id } = req.params;
     const { folio, monto, fecha_emision } = req.body;
+    if (!esIdPositivo(id)) return res.status(400).json({ error: 'Id de orden inválido' });
     if (!folio || !req.file) {
         return res.status(400).json({ error: 'folio y archivo (PDF) son requeridos' });
     }
     let rutaStorage = null;
+    let client = null;
+    const borrarArchivo = async () => {
+        if (rutaStorage) {
+            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+        }
+    };
     try {
         rutaStorage = rutaArchivo(['facturas', Number(id)], req.file.originalname);
         const { error: errorSubida } = await supabase.storage
@@ -26,22 +41,54 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPd
             .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });
         if (errorSubida) throw errorSubida;
 
-        const result = await pool.query(
+        client = await pool.connect();
+        await client.query('BEGIN');
+        const orden = await client.query('SELECT id, estado, valorizacion FROM ordenes_trabajo WHERE id = $1 FOR UPDATE', [id]);
+        if (orden.rows.length === 0) {
+            await client.query('ROLLBACK');
+            await borrarArchivo();
+            return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+        }
+        // Una factura congela las lineas de la OT (desde ahi no admite cambios). Solo tiene sentido
+        // sobre trabajo terminado y valorizado: con la OT abierta el mecanico todavia agrega o anula
+        // repuestos, y sin valorizacion el gerente aun no aprobo lo que se cobra.
+        const rechazo = orden.rows[0].estado !== 'finalizada'
+            ? 'Solo se factura una orden ya finalizada: la orden sigue abierta y todavía puede cambiar sus repuestos'
+            : (orden.rows[0].valorizacion === null
+                ? 'La orden aún no está valorizada: pide al gerente que apruebe la valorización antes de subir la factura'
+                : null);
+        if (rechazo) {
+            await client.query('ROLLBACK');
+            await borrarArchivo();
+            return res.status(409).json({ error: rechazo });
+        }
+        const result = await client.query(
             `INSERT INTO facturas (orden_trabajo_id, folio, archivo_url, monto, fecha_emision)
              VALUES ($1, $2, $3, $4, $5)
              RETURNING *`,
             [id, folio, rutaStorage, montoONulo(monto), fecha_emision || null]
         );
-        res.status(201).json(result.rows[0]);
+        const factura = result.rows[0];
+        await dejarEvento(client, {
+            ordenId: factura.orden_trabajo_id, tipo: 'factura_cargada', origen: 'panel', usuario: req.user,
+            detalle: {
+                factura_id: factura.id,
+                folio: factura.folio,
+                monto: factura.monto === null ? null : Number(factura.monto),
+            },
+        });
+        await client.query('COMMIT');
+        res.status(201).json(factura);
     } catch (err) {
-        if (rutaStorage) {
-            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
-        }
+        if (client) await client.query('ROLLBACK').catch(() => {});
+        await borrarArchivo();
         if (err.code === '23505') {
             return res.status(409).json({ error: 'Esta orden de trabajo ya tiene su factura' });
         }
         console.error(err);
         res.status(500).json({ error: 'Error al subir factura' });
+    } finally {
+        if (client) client.release();
     }
 });
 
@@ -62,6 +109,88 @@ router.get('/:id/factura', verifyToken, requireRole('administrativo', 'gerente')
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar facturas' });
+    }
+});
+
+const UUID_ESTRICTO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+// POST /api/ordenes-trabajo/:id/factura/:facturaId/anular - anula una factura subida por error.
+//
+// Borra la fila de facturas y, antes, deja el evento en el historial de la OT con folio, monto,
+// archivo, motivo y quien la anulo (evento 'factura_anulada', migracion 021). El PDF NO se borra de Supabase: queda de respaldo. Desde ahi
+// la OT vuelve a admitir cambios de lineas y, si esta valorizada, a poder facturarse de nuevo.
+// Esto solo corrige el registro en GOMAQ: la factura real se anula en el SII con una nota de credito.
+//
+// El motivo es obligatorio, igual que al cambiar una linea de una OT cerrada. Bloquea la fila de la
+// OT y despues la factura, en el mismo orden que el resto de las rutas de la OT. Idempotency-Key
+// opcional: si ya hay un evento con esa llave, el cambio se hizo y se responde 200 sin repetirlo.
+router.post('/:id/factura/:facturaId/anular', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    const { id, facturaId } = req.params;
+    if (!esIdPositivo(id)) return res.status(400).json({ error: 'Id de orden inválido' });
+    if (!esIdPositivo(facturaId)) return res.status(400).json({ error: 'Id de factura inválido' });
+    const cabecera = req.get('Idempotency-Key');
+    if (cabecera !== undefined && !UUID_ESTRICTO.test(cabecera.trim())) {
+        return res.status(400).json({ error: 'Idempotency-Key no es un UUID valido' });
+    }
+    const llave = cabecera === undefined ? null : cabecera.trim().toLowerCase();
+    // anular una factura siempre exige motivo, esté la OT como esté
+    const motivo = validarMotivo({
+        ordenCerrada: true,
+        motivoCodigo: req.body ? req.body.motivo_codigo : undefined,
+        motivo: req.body ? req.body.motivo : undefined,
+    });
+    if (!motivo.valido) return res.status(400).json({ error: motivo.error });
+
+    let client = null;
+    try {
+        client = await pool.connect();
+        await client.query('BEGIN');
+        const orden = await client.query('SELECT id FROM ordenes_trabajo WHERE id = $1 FOR UPDATE', [id]);
+        if (orden.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+        }
+        if (llave) {
+            const previo = await client.query(
+                `SELECT orden_trabajo_id, detalle->>'factura_id' AS factura_id FROM ordenes_eventos
+                 WHERE uuid_cliente = $1 AND tipo = 'factura_anulada'`,
+                [llave]
+            );
+            if (previo.rows[0]) {
+                await client.query('ROLLBACK');
+                if (previo.rows[0].orden_trabajo_id !== orden.rows[0].id || previo.rows[0].factura_id !== String(facturaId)) {
+                    return res.status(409).json({ error: 'Idempotency-Key ya fue usada en otra operación' });
+                }
+                return res.json({ ok: true, ya_registrada: true });
+            }
+        }
+        const factura = await client.query(
+            // fecha_emision_texto: la fecha como la guarda la base, sin pasar por la zona del servidor
+            'SELECT *, fecha_emision::text AS fecha_emision_texto FROM facturas WHERE id = $1 AND orden_trabajo_id = $2 FOR UPDATE',
+            [facturaId, id]
+        );
+        if (factura.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Factura no encontrada para esta orden de trabajo' });
+        }
+        const registrado = await dejarEvento(client, {
+            ordenId: orden.rows[0].id, tipo: 'factura_anulada', origen: 'panel', usuario: req.user,
+            uuidCliente: llave,
+            detalle: detalleFacturaAnulada(factura.rows[0], { motivoCodigo: motivo.motivoCodigo, motivo: motivo.motivo }),
+        });
+        if (!registrado) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'Idempotency-Key ya fue usada en otra operación' });
+        }
+        await client.query('DELETE FROM facturas WHERE id = $1', [facturaId]);
+        await client.query('COMMIT');
+        res.json({ ok: true, factura_id: factura.rows[0].id, folio: factura.rows[0].folio });
+    } catch (err) {
+        if (client) await client.query('ROLLBACK').catch(() => {});
+        console.error(err);
+        res.status(500).json({ error: 'Error al anular la factura' });
+    } finally {
+        if (client) client.release();
     }
 });
 

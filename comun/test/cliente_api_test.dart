@@ -44,6 +44,20 @@ void main() {
       expect(visto.headers['Authorization'], 'Bearer tok');
     });
 
+    test('patch y post suman las cabeceras de la llamada sin pisar el token', () async {
+      final vistos = <http.Request>[];
+      final api = _api((r) async {
+        vistos.add(r);
+        return _json({});
+      });
+      await api.patch('/a', {'n': 1}, cabeceras: {'Idempotency-Key': 'abc', 'Authorization': 'intruso'});
+      await api.post('/b', {'n': 2});
+      expect(vistos[0].headers['Idempotency-Key'], 'abc');
+      expect(vistos[0].headers['Authorization'], 'Bearer tok');
+      expect(vistos[0].headers['Content-Type'], contains('application/json'));
+      expect(vistos[1].headers.containsKey('Idempotency-Key'), isFalse);
+    });
+
     test('sin token no manda Authorization', () async {
       late http.Request visto;
       final api = _api((r) async {
