@@ -71,7 +71,9 @@ class _NotificacionesScreenState extends State<NotificacionesScreen> {
                               subtitle: Text(
                                 n['estado'] == 'error'
                                     ? 'Error tras ${n['intentos']} intentos: ${n['ultimo_error'] ?? ''}'
-                                    : 'Estado: ${n['estado']} (${n['intentos']} intentos)',
+                                    : n['estado'] == 'cancelado'
+                                        ? 'Cancelada: ${n['ultimo_error'] ?? 'ya no corresponde enviarla'}'
+                                        : 'Estado: ${n['estado']} (${n['intentos']} intentos)',
                               ),
                               trailing: n['estado'] == 'error'
                                   ? OutlinedButton.icon(

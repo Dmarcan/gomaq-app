@@ -8,6 +8,7 @@ import '../../utils/numeros.dart';
 import '../../utils/formato.dart';
 import '../../widgets/dialogos.dart';
 import '../../widgets/estado_vacio.dart';
+import '../../widgets/fotos_orden.dart';
 import 'arriendos_en_curso_tab.dart';
 import 'ordenes_screen.dart' show abrirDetalleOrden;
 
@@ -226,6 +227,12 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
   String? _hastaElegido;
   String? _errorPropuesta;
   bool _cargandoPropuesta = false;
+  // texto del correo: lo propone el servidor y el administrativo lo puede editar antes de autorizar
+  final _asuntoCtrl = TextEditingController();
+  final _cuerpoCtrl = TextEditingController();
+  Map<String, dynamic>? _vista;
+  bool _cargandoVista = false;
+  String? _errorVista;
 
   bool get _facturaPorPeriodo => widget.item['tipo'] == 'arriendo' && widget.item['guia_despacho_id'] != null;
 
@@ -236,6 +243,17 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
       _montoCtrl.text = numeroParaEditar(widget.item['monto_sugerido']);
     }
     if (_facturaPorPeriodo) _cargarPropuesta();
+  }
+
+  @override
+  void dispose() {
+    _folioCtrl.dispose();
+    _montoCtrl.dispose();
+    _folioEditCtrl.dispose();
+    _montoEditCtrl.dispose();
+    _asuntoCtrl.dispose();
+    _cuerpoCtrl.dispose();
+    super.dispose();
   }
 
   /// Pide al servidor el periodo que toca facturar; se vuelve a pedir si cambió mientras tanto.
@@ -327,6 +345,7 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
           _folioEditCtrl.text = resultado['folio']?.toString() ?? '';
           _montoEditCtrl.text = numeroParaEditar(resultado['monto']);
         });
+        _cargarVistaPrevia();
       }
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
@@ -359,20 +378,104 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
       });
       if (mounted) {
         setState(() => _facturaCreada = actualizada);
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Datos actualizados')));
+        final textoEditado = await _recalcularTextoCorreo();
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(textoEditado
+              ? 'Datos actualizados. Habías editado el texto del correo: revísalo, el folio o el monto pueden haber cambiado.'
+              : 'Datos actualizados. El texto del correo se actualizó con los datos nuevos.'),
+        ));
       }
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    } catch (_) {
+      // plazo vencido o sin red: la correccion pudo haberse guardado o no
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No se pudo confirmar el cambio (sin conexión o tardó demasiado). Revisa los datos y vuelve a guardar.'),
+        ));
+      }
     } finally {
       if (mounted) setState(() => _guardandoEdicion = false);
     }
   }
 
+  /// Después de corregir folio o monto vuelve a pedir el texto por defecto. Si el administrativo no había
+  /// tocado el texto, lo repone; si lo había editado, lo deja como está y devuelve true para avisarle.
+  Future<bool> _recalcularTextoCorreo() async {
+    final antes = _vista;
+    final sinEditar = antes != null &&
+        _asuntoCtrl.text == (antes['asunto']?.toString() ?? '') &&
+        _cuerpoCtrl.text == (antes['cuerpo']?.toString() ?? '');
+    try {
+      final id = _facturaCreada!['id'];
+      final v = Map<String, dynamic>.from(await ApiClient.instance.get('/api/facturacion/$id/vista-previa') as Map);
+      if (!mounted) return false;
+      setState(() {
+        _vista = v;
+        if (sinEditar || antes == null) {
+          _asuntoCtrl.text = v['asunto']?.toString() ?? '';
+          _cuerpoCtrl.text = v['cuerpo']?.toString() ?? '';
+        }
+      });
+    } catch (_) {
+      // sin red: queda el texto anterior; el aviso de abajo le pide revisarlo
+      return true;
+    }
+    return !(sinEditar || antes == null);
+  }
+
+  /// Pide al servidor el texto por defecto del correo (asunto, cuerpo y periodo) de la factura creada.
+  Future<void> _cargarVistaPrevia() async {
+    final id = _facturaCreada?['id'];
+    if (id == null) return;
+    setState(() {
+      _cargandoVista = true;
+      _errorVista = null;
+    });
+    try {
+      final v = await ApiClient.instance.get('/api/facturacion/$id/vista-previa');
+      if (!mounted) return;
+      setState(() {
+        _vista = Map<String, dynamic>.from(v as Map);
+        _asuntoCtrl.text = _vista!['asunto']?.toString() ?? '';
+        _cuerpoCtrl.text = _vista!['cuerpo']?.toString() ?? '';
+      });
+    } catch (e) {
+      if (mounted) setState(() => _errorVista = mensajeErrorCarga(e));
+    } finally {
+      if (mounted) setState(() => _cargandoVista = false);
+    }
+  }
+
+  void _restaurarTexto() {
+    if (_vista == null) return;
+    setState(() {
+      _asuntoCtrl.text = _vista!['asunto']?.toString() ?? '';
+      _cuerpoCtrl.text = _vista!['cuerpo']?.toString() ?? '';
+    });
+  }
+
+  String? _periodoTexto() {
+    final d = _vista?['periodo_desde'];
+    final h = _vista?['periodo_hasta'];
+    if (d == null || h == null) return null;
+    return '${Formato.fecha(d)} al ${Formato.fecha(h)}';
+  }
+
   Future<void> _autorizarEnvio() async {
     if (_facturaCreada == null) return;
     setState(() => _procesando = true);
+    // solo se manda el texto si el administrativo lo cambio: si coincide con el que el servidor acaba de
+    // proponer, el servidor lo arma de nuevo (con los datos vigentes de la factura)
+    final cambioAsunto = _vista == null || _asuntoCtrl.text != (_vista!['asunto']?.toString() ?? '');
+    final cambioCuerpo = _vista == null || _cuerpoCtrl.text != (_vista!['cuerpo']?.toString() ?? '');
+    final cuerpo = <String, dynamic>{
+      if (cambioAsunto) 'asunto': _asuntoCtrl.text,
+      if (cambioCuerpo) 'cuerpo': _cuerpoCtrl.text,
+    };
     try {
-      await ApiClient.instance.post('/api/facturacion/${_facturaCreada!['id']}/autorizar-envio', {});
+      await ApiClient.instance.post('/api/facturacion/${_facturaCreada!['id']}/autorizar-envio', cuerpo);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Envío autorizado. Quedó encolado (se procesará cuando el correo esté configurado).')),
@@ -380,7 +483,23 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
         Navigator.pop(context);
       }
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (!mounted) return;
+      if (e.statusCode == 409 && e.message.contains('envío pendiente')) {
+        // ya estaba autorizado (por ejemplo, un clic repetido o un reintento tras un corte): no es un error
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Esta factura ya tenía un envío pendiente: no hace falta autorizarlo de nuevo.')),
+        );
+        Navigator.pop(context);
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      }
+    } catch (_) {
+      // plazo vencido o sin red: el servidor pudo haber encolado el correo
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('No se pudo confirmar el envío (sin conexión o tardó demasiado). Vuelve a intentarlo: si ya estaba autorizado, el sistema lo avisará.'),
+        ));
+      }
     } finally {
       if (mounted) setState(() => _procesando = false);
     }
@@ -410,7 +529,7 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
           )
         else
           FilledButton.icon(
-            onPressed: _procesando ? null : _autorizarEnvio,
+            onPressed: (_procesando || _vista == null || _vista?['envio_pendiente'] == true) ? null : _autorizarEnvio,
             icon: const Icon(Icons.send, size: 16),
             label: const Text('Enviar factura por correo'),
           ),
@@ -542,7 +661,6 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
   }
 
   List<Widget> _construirVistaPrevia() {
-    final f = _facturaCreada!;
     final cliente = widget.item['cliente_nombre'] ?? '-';
     return [
       const LineaInfo(icono: Icons.info_outline, texto: 'Si algo no se detectó bien, corrígelo y guarda antes de enviar el correo.'),
@@ -585,19 +703,49 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
         ),
       ),
       const SizedBox(height: 16),
-      const TituloSeccion('Vista previa del correo'),
-      Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(border: Border.all(color: Colors.grey.shade300), borderRadius: BorderRadius.circular(10)),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Factura folio ${f['folio']} — GOMAQ Maquinarias', style: const TextStyle(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
-            Text('Adjuntamos la factura correspondiente a ${widget.item['titulo']}. Ante cualquier consulta, puede responder directamente este correo.'),
-          ],
+      const TituloSeccion('Correo al cliente'),
+      if (_periodoTexto() != null)
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: LineaInfo(icono: Icons.date_range, texto: 'Período facturado: ${_periodoTexto()}'),
         ),
-      ),
+      if (_cargandoVista && _vista == null)
+        const Padding(padding: EdgeInsets.symmetric(vertical: 8), child: LinearProgressIndicator())
+      else if (_errorVista != null && _vista == null)
+        Row(
+          children: [
+            Expanded(child: Text('No se pudo preparar el correo: $_errorVista', style: const TextStyle(color: GomaqColors.estadoNegativo))),
+            TextButton(onPressed: _cargarVistaPrevia, child: const Text('Reintentar')),
+          ],
+        )
+      else ...[
+        if (_vista?['envio_pendiente'] == true)
+          const Padding(
+            padding: EdgeInsets.only(bottom: 8),
+            child: LineaInfo(icono: Icons.schedule_send, texto: 'Esta factura ya tiene un envío pendiente.'),
+          ),
+        TextField(
+          controller: _asuntoCtrl,
+          maxLength: 200,
+          decoration: decoracionCampo('Asunto'),
+        ),
+        const SizedBox(height: 8),
+        TextField(
+          controller: _cuerpoCtrl,
+          minLines: 5,
+          maxLines: 12,
+          maxLength: 5000,
+          decoration: decoracionCampo('Mensaje'),
+        ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: TextButton.icon(onPressed: _restaurarTexto, icon: const Icon(Icons.restore, size: 16), label: const Text('Restaurar texto')),
+        ),
+      ],
+      if (_vista?['orden_trabajo_id'] != null) ...[
+        const SizedBox(height: 8),
+        FotosOrden(ordenId: _vista!['orden_trabajo_id']),
+      ],
     ];
   }
 }

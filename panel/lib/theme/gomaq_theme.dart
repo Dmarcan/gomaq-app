@@ -38,6 +38,7 @@ class GomaqColors {
       case 'aprobada':
         return estadoPositivo;
       case 'pendiente':
+      case 'cancelado':
       case 'asignada':
       case 'aceptada':
         return estadoNeutro;

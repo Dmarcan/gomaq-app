@@ -8,6 +8,7 @@ const { diasEntre } = require('../utils/diasArriendo');
 const { resumirArriendoEnCurso, validarPeriodo } = require('../utils/periodosArriendo');
 const { cargarArriendos } = require('../utils/arriendos');
 const { leerConfiguracion, validarCambioConfiguracion } = require('../utils/configuracion');
+const { textoPorDefecto, leerFacturaParaCorreo, hayEnvioPendiente, encolarCorreoFactura, validarFolio, cancelarCorreosPrevios } = require('../utils/correoFactura');
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
 const { detectarCliente } = require('../utils/detectarCliente');
 const { parsearFactura } = require('../utils/parsearDocumento');
@@ -167,6 +168,8 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
     if ((!conPeriodo && !guia_recepcion_id) || !folio || !req.file) {
         return res.status(400).json({ error: 'guia_despacho_id (o guia_recepcion_id), folio y archivo (PDF) son requeridos' });
     }
+    const folioValido = validarFolio(folio);
+    if (folioValido.error) return res.status(400).json({ error: folioValido.error });
     if (conPeriodo && (!esDia(periodo_desde) || !esDia(periodo_hasta))) {
         return res.status(400).json({ error: 'periodo_desde y periodo_hasta son requeridos (AAAA-MM-DD)' });
     }
@@ -240,7 +243,7 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
                                    cliente_id, folio, archivo_url, monto)
              VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
             [arriendo.maquinaria_id, cierra ? arriendo.guia_recepcion_id : null, arriendo.guia_despacho_id, desde, hasta,
-             arriendo.cliente_id, folio, rutaStorage, montoONulo(monto)]
+             arriendo.cliente_id, folioValido.folio, rutaStorage, montoONulo(monto)]
         );
         await client.query('COMMIT');
         res.status(201).json(result.rows[0]);
@@ -349,64 +352,83 @@ router.get('/arriendos-en-curso', verifyToken, requireRole('administrativo', 'ge
 // PATCH /api/facturacion/:facturaId - corrige folio/monto despues de creada la factura
 // (por si la deteccion del PDF se equivoco), funciona para cualquier tipo de factura
 router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (req, res) => {
-    const { folio, monto } = req.body;
+    const { folio, monto } = req.body || {};
+    if (!/^\d{1,9}$/.test(String(req.params.facturaId))) return res.status(400).json({ error: 'Id de factura inválido' });
+    let folioNuevo = null;
+    if (folio !== undefined && folio !== null && folio !== '') {
+        const v = validarFolio(folio);
+        if (v.error) return res.status(400).json({ error: v.error });
+        folioNuevo = v.folio;
+    }
+    const client = await pool.connect();
     try {
-        const result = await pool.query(
-            `UPDATE facturas SET folio = COALESCE($1, folio), monto = COALESCE($2, monto) WHERE id = $3 RETURNING *`,
-            [folio || null, montoONulo(monto), req.params.facturaId]
-        );
-        if (result.rows.length === 0) {
+        await client.query('BEGIN');
+        // se bloquea la fila: serializa con encolarCorreoFactura (que tambien la bloquea), asi un envio no
+        // puede colarse entre la revision de abajo y el UPDATE
+        const fila = await client.query('SELECT id FROM facturas WHERE id = $1 FOR UPDATE', [req.params.facturaId]);
+        if (fila.rows.length === 0) {
+            await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Factura no encontrada' });
         }
+        // con un correo pendiente el texto ya quedo congelado como lo vio el administrativo:
+        // corregir folio o monto ahora lo dejaria distinto de la factura
+        if (await hayEnvioPendiente(client, req.params.facturaId)) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'La factura tiene un envío pendiente: espera a que salga o cancélalo antes de corregirla' });
+        }
+        const result = await client.query(
+            `UPDATE facturas SET folio = COALESCE($1, folio), monto = COALESCE($2, monto) WHERE id = $3 RETURNING *`,
+            [folioNuevo, montoONulo(monto), req.params.facturaId]
+        );
+        // un correo anterior que agoto sus reintentos (error) llevaba el folio y el monto viejos
+        await cancelarCorreosPrevios(client, req.params.facturaId, 'Factura corregida');
+        await client.query('COMMIT');
         res.json(result.rows[0]);
     } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al actualizar la factura' });
+    } finally {
+        client.release();
+    }
+});
+
+// GET /api/facturacion/:facturaId/vista-previa - asunto y cuerpo propuestos para el correo, el periodo
+// facturado y si ya hay un envio pendiente. El texto por defecto vive solo aca (utils/correoFactura.js).
+router.get('/:facturaId/vista-previa', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    if (!/^\d{1,9}$/.test(String(req.params.facturaId))) return res.status(400).json({ error: 'Id de factura inválido' });
+    try {
+        const factura = await leerFacturaParaCorreo(pool, req.params.facturaId);
+        if (!factura) return res.status(404).json({ error: 'Factura no encontrada' });
+        const texto = textoPorDefecto(factura);
+        res.json({
+            ...texto,
+            folio: factura.folio,
+            periodo_desde: factura.periodo_desde,
+            periodo_hasta: factura.periodo_hasta,
+            orden_trabajo_id: factura.orden_trabajo_id,
+            cliente_nombre: factura.cliente_nombre,
+            cliente_email: factura.cliente_email,
+            envio_pendiente: await hayEnvioPendiente(pool, factura.id),
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al armar la vista previa' });
     }
 });
 
 // POST /api/facturacion/:facturaId/autorizar-envio - version unificada de la que ya
 // existia en facturas.js (solo para reparaciones): funciona para cualquier factura,
-// sea de reparacion (orden_trabajo_id) o de arriendo (maquinaria_id)
+// sea de reparacion (orden_trabajo_id) o de arriendo (maquinaria_id). Acepta { asunto, cuerpo }
+// editados; sin ellos usa el texto por defecto. Ver encolarCorreoFactura (bloqueo contra la anulacion).
 router.post('/:facturaId/autorizar-envio', verifyToken, requireRole('administrativo'), async (req, res) => {
+    if (!/^\d{1,9}$/.test(String(req.params.facturaId))) return res.status(400).json({ error: 'Id de factura inválido' });
     try {
-        // el cliente es el de la propia factura (facturas.cliente_id, migracion 023); las anteriores a
-        // la migracion lo traen rellenado, y como respaldo se usa el de la OT o el de la guia de
-        // recepcion (snapshot), nunca el de la maquinaria, que ya fue liberada al recibir el equipo
-        const result = await pool.query(
-            `SELECT f.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre, c.email AS cliente_email
-             FROM facturas f
-             LEFT JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
-             LEFT JOIN guias g ON g.id = f.guia_recepcion_id
-             LEFT JOIN clientes c ON c.id = COALESCE(f.cliente_id, ot.cliente_id, g.cliente_id)
-             LEFT JOIN maquinarias m ON m.id = f.maquinaria_id
-             WHERE f.id = $1`,
-            [req.params.facturaId]
-        );
-        const factura = result.rows[0];
-        if (!factura) {
-            return res.status(404).json({ error: 'Factura no encontrada' });
-        }
-
-        const clienteNombre = factura.cliente_nombre;
-        const clienteEmail = factura.cliente_email;
-        if (!clienteEmail) {
-            return res.status(400).json({ error: 'El cliente no tiene un correo registrado' });
-        }
-
-        await pool.query(
-            `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ('email', $1, $2)`,
-            [clienteEmail, JSON.stringify({
-                tipo: 'factura_emitida',
-                orden_trabajo_id: factura.orden_trabajo_id,
-                maquinaria_codigo: factura.maquinaria_codigo,
-                folio: factura.folio,
-                monto: factura.monto,
-                cliente_nombre: clienteNombre,
-            })]
-        );
-
-        res.json({ ok: true, mensaje: 'Envio de correo encolado' });
+        const cuerpoPeticion = req.body || {};
+        const r = await encolarCorreoFactura(pool, {
+            facturaId: req.params.facturaId, asunto: cuerpoPeticion.asunto, cuerpo: cuerpoPeticion.cuerpo,
+        });
+        res.status(r.status).json(r.body);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al autorizar el envío de la factura' });

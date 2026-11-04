@@ -6,6 +6,7 @@ const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { dejarEvento } = require('../utils/eventosOt');
 const { validarMotivo, detalleFacturaAnulada, esIdPositivo } = require('../utils/auditoriaLinea');
+const { cancelarCorreosFactura, encolarCorreoFactura, validarFolio } = require('../utils/correoFactura');
 
 const router = express.Router();
 
@@ -27,6 +28,8 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPd
     if (!folio || !req.file) {
         return res.status(400).json({ error: 'folio y archivo (PDF) son requeridos' });
     }
+    const folioValido = validarFolio(folio);
+    if (folioValido.error) return res.status(400).json({ error: folioValido.error });
     let rutaStorage = null;
     let client = null;
     const borrarArchivo = async () => {
@@ -64,7 +67,7 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPd
             `INSERT INTO facturas (orden_trabajo_id, folio, archivo_url, monto, fecha_emision)
              VALUES ($1, $2, $3, $4, $5)
              RETURNING *`,
-            [id, folio, rutaStorage, montoONulo(monto), fecha_emision || null]
+            [id, folioValido.folio, rutaStorage, montoONulo(monto), fecha_emision || null]
         );
         const factura = result.rows[0];
         await dejarEvento(client, {
@@ -180,6 +183,8 @@ router.post('/:id/factura/:facturaId/anular', verifyToken, requireRole('administ
             await client.query('ROLLBACK');
             return res.status(409).json({ error: 'Idempotency-Key ya fue usada en otra operación' });
         }
+        // el correo que ya estaba encolado y no salio se cancela en la misma transaccion
+        await cancelarCorreosFactura(client, factura.rows[0]);
         await client.query('DELETE FROM facturas WHERE id = $1', [facturaId]);
         await client.query('COMMIT');
         res.json({ ok: true, factura_id: factura.rows[0].id, folio: factura.rows[0].folio });
@@ -198,35 +203,14 @@ router.post('/:id/factura/:facturaId/anular', verifyToken, requireRole('administ
 // hasta que se agregue el proveedor SMTP - mismo comportamiento que las notificaciones de WhatsApp.
 router.post('/:id/factura/:facturaId/autorizar-envio', verifyToken, requireRole('administrativo'), async (req, res) => {
     const { id, facturaId } = req.params;
+    if (!esIdPositivo(id)) return res.status(400).json({ error: 'Id de orden inválido' });
+    if (!esIdPositivo(facturaId)) return res.status(400).json({ error: 'Id de factura inválido' });
     try {
-        const result = await pool.query(
-            `SELECT f.folio, f.archivo_url, f.monto, ot.id AS orden_trabajo_id, c.nombre AS cliente_nombre, c.email AS cliente_email
-             FROM facturas f
-             JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
-             LEFT JOIN clientes c ON c.id = COALESCE(f.cliente_id, ot.cliente_id)
-             WHERE f.id = $1 AND f.orden_trabajo_id = $2`,
-            [facturaId, id]
-        );
-        const factura = result.rows[0];
-        if (!factura) {
-            return res.status(404).json({ error: 'Factura no encontrada para esta orden de trabajo' });
-        }
-        if (!factura.cliente_email) {
-            return res.status(400).json({ error: 'El cliente no tiene un correo registrado' });
-        }
-
-        await pool.query(
-            `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ('email', $1, $2)`,
-            [factura.cliente_email, JSON.stringify({
-                tipo: 'factura_emitida',
-                orden_trabajo_id: factura.orden_trabajo_id,
-                folio: factura.folio,
-                monto: factura.monto,
-                cliente_nombre: factura.cliente_nombre,
-            })]
-        );
-
-        res.json({ ok: true, mensaje: 'Envio de correo encolado' });
+        const cuerpoPeticion = req.body || {};
+        const r = await encolarCorreoFactura(pool, {
+            facturaId, ordenId: id, asunto: cuerpoPeticion.asunto, cuerpo: cuerpoPeticion.cuerpo,
+        });
+        res.status(r.status).json(r.body);
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al autorizar el envío de la factura' });
