@@ -258,7 +258,12 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
   }
 
   Future<void> _retirarDeCliente(Map<String, dynamic> m) async {
-    final hecho = await retirarEquipoDeCliente(context, maquinariaId: widget.maquinariaId, codigo: '${m['codigo']}');
+    final hecho = await retirarEquipoDeCliente(
+      context,
+      maquinariaId: widget.maquinariaId,
+      codigo: '${m['codigo']}',
+      clienteActual: m['cliente'] as String?,
+    );
     if (hecho && mounted) _cargar(silencioso: true);
   }
 
@@ -513,7 +518,8 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
               children: [
                 OutlinedButton.icon(onPressed: _cambiarEstado, icon: const Icon(Icons.swap_horiz, size: 18), label: const Text('Cambiar estado')),
                 OutlinedButton.icon(onPressed: _crearOrden, icon: const Icon(Icons.assignment_add, size: 18), label: const Text('Crear orden de trabajo')),
-                if (_vacio(m['cliente']))
+                // un equipo fuera de servicio no se despacha (misma regla que equiposParaGuia)
+                if (_vacio(m['cliente']) && m['estado'] != 'fuera_de_servicio')
                   OutlinedButton.icon(
                     onPressed: () => _asignarACliente(m),
                     icon: const Icon(Icons.business_center_outlined, size: 18),
