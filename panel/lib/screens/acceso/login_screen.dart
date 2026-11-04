@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart' show TextInput;
 import 'package:gomaq_comun/gomaq_comun.dart' show UsuarioDemo, usuarioDemoAdministrativo, usuarioDemoCliente;
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
@@ -17,15 +18,19 @@ class _LoginScreenState extends State<LoginScreen> {
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   bool _cargando = false;
+  bool _verPassword = false;
   String? _error;
 
   Future<void> _iniciarSesion() async {
+    if (_cargando) return;
     setState(() {
       _cargando = true;
       _error = null;
     });
     try {
       await context.read<AuthService>().login(_emailCtrl.text.trim(), _passwordCtrl.text);
+      // el navegador o el teléfono ofrecen guardar la contraseña solo si el ingreso salió bien
+      TextInput.finishAutofillContext();
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } catch (e) {
@@ -54,7 +59,8 @@ class _LoginScreenState extends State<LoginScreen> {
             child: SizedBox(
               width: 360,
               child: SingleChildScrollView(
-                child: Column(
+                child: AutofillGroup(
+                  child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
                   Container(
@@ -65,7 +71,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   ),
                   const SizedBox(height: 12),
                   const Text('GOMAQ', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-                  Text('Panel de Gestión', style: TextStyle(fontSize: 14, color: Colors.grey.shade700)),
+                  Text('Ingreso para clientes y personal de GOMAQ', textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: Colors.grey.shade700)),
                   const SizedBox(height: 32),
                   if (context.watch<AuthService>().mensajeSesion != null)
                     Container(
@@ -87,13 +93,25 @@ class _LoginScreenState extends State<LoginScreen> {
                     controller: _emailCtrl,
                     decoration: const InputDecoration(labelText: 'Correo', border: OutlineInputBorder()),
                     keyboardType: TextInputType.emailAddress,
-                    onSubmitted: (_) => _iniciarSesion(),
+                    autofillHints: const [AutofillHints.username, AutofillHints.email],
+                    textInputAction: TextInputAction.next,
+                    // «Siguiente» pasa a la contraseña (Flutter ya mueve el foco con TextInputAction.next;
+                    // llamar además a nextFocus lo movería dos veces). Antes intentaba entrar con ella vacía.
                   ),
                   const SizedBox(height: 16),
                   TextField(
                     controller: _passwordCtrl,
-                    decoration: const InputDecoration(labelText: 'Contraseña', border: OutlineInputBorder()),
-                    obscureText: true,
+                    decoration: InputDecoration(
+                      labelText: 'Contraseña',
+                      border: const OutlineInputBorder(),
+                      suffixIcon: IconButton(
+                        tooltip: _verPassword ? 'Ocultar contraseña' : 'Mostrar contraseña',
+                        icon: Icon(_verPassword ? Icons.visibility_off : Icons.visibility),
+                        onPressed: () => setState(() => _verPassword = !_verPassword),
+                      ),
+                    ),
+                    obscureText: !_verPassword,
+                    autofillHints: const [AutofillHints.password],
                     onSubmitted: (_) => _iniciarSesion(),
                   ),
                   const SizedBox(height: 24),
@@ -140,6 +158,7 @@ class _LoginScreenState extends State<LoginScreen> {
                     ],
                   ),
                 ],
+                  ),
                 ),
               ),
             ),

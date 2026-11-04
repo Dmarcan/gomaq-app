@@ -1,9 +1,13 @@
 import 'package:flutter/material.dart';
 import '../../services/api_client.dart';
 import '../../theme/gomaq_theme.dart';
+import '../../utils/seguimiento_cliente.dart';
 import '../../widgets/dialogos.dart';
 import '../../widgets/estado_chip.dart';
 import '../../widgets/estado_vacio.dart';
+
+// Se reexportan para que las pantallas y pruebas que ya importaban estas funciones desde aquí sigan igual.
+export '../../utils/seguimiento_cliente.dart';
 
 /// Lo que el cliente tiene abierto con GOMAQ: sus asistencias todavía sin orden de trabajo y
 /// todas sus órdenes en curso.
@@ -20,6 +24,7 @@ class ClienteSeguimientoScreen extends StatefulWidget {
 
 class _ClienteSeguimientoScreenState extends State<ClienteSeguimientoScreen> {
   List<Map<String, dynamic>> _abiertos = [];
+  DateTime? _actualizado;
   bool _cargando = true;
   String? _error;
 
@@ -39,24 +44,20 @@ class _ClienteSeguimientoScreenState extends State<ClienteSeguimientoScreen> {
       final ordenes = (await ApiClient.instance.get('/api/ordenes-trabajo/mias') as List).cast<Map<String, dynamic>>();
       if (!mounted) return;
       setState(() {
+        _actualizado = DateTime.now();
         _abiertos = [
           // una asistencia ya convertida aparece como su orden de trabajo, no dos veces
           for (final a in asistencias)
             if (a['orden_trabajo_id'] == null && a['estado'] == 'pendiente')
               {
-                'titulo': 'Asistencia #${a['id']} · ${a['maquinaria_codigo']}',
+                'titulo': tituloAsistencia(a),
                 'detalle': a['descripcion'],
                 'estado': null,
                 'mecanico_nombre': null,
+                'fecha_creacion': a['fecha_creacion'] ?? a['created_at'],
               },
           for (final o in ordenes)
-            if (o['estado'] != 'finalizada')
-              {
-                'titulo': 'OT #${o['id']} · ${o['maquinaria_codigo']}',
-                'detalle': o['motivo'],
-                'estado': o['estado'],
-                'mecanico_nombre': o['mecanico_nombre'],
-              },
+            if (o['estado'] != 'finalizada') {...o, 'titulo': tituloOrden(o), 'detalle': o['motivo']},
         ];
       });
     } catch (e) {
@@ -92,13 +93,25 @@ class _ClienteSeguimientoScreenState extends State<ClienteSeguimientoScreen> {
       onRefresh: _cargar,
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
-        itemCount: _abiertos.length,
+        itemCount: _abiertos.length + 1,
         itemBuilder: (context, i) {
-          final item = _abiertos[i];
+          if (i == 0) {
+            // cuándo se leyó por última vez: el seguimiento cambia solo por fuera de la pantalla
+            return Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                'Actualizado a las ${horaCorta(_actualizado) ?? '--:--'}',
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            );
+          }
+          final item = _abiertos[i - 1];
+          final lineas = _lineasResumen(item);
           return Card(
             child: ListTile(
+              isThreeLine: lineas.length >= 2,
               title: Text(item['titulo']),
-              subtitle: Text(item['detalle'] ?? ''),
+              subtitle: _resumen(lineas),
               trailing: EstadoChip(estado: item['estado'] ?? 'pendiente', etiqueta: etiquetaParaCliente(item['estado'])),
               onTap: () => showDialog(context: context, builder: (_) => _SeguimientoDialog(item: item)),
             ),
@@ -107,46 +120,33 @@ class _ClienteSeguimientoScreenState extends State<ClienteSeguimientoScreen> {
       ),
     );
   }
+
+  /// Paso actual con su hora, lo que viene y quién atiende.
+  List<String> _lineasResumen(Map<String, dynamic> item) {
+    final proximo = proximoPaso(item['estado'] as String?);
+    final tecnico = item['mecanico_nombre'] as String?;
+    final vehiculo = descripcionVehiculo(item);
+    final detalle = item['detalle'] as String?;
+    return [
+      resumenPaso(item),
+      if (proximo != null) 'Siguiente: $proximo',
+      if (tecnico != null && tecnico.isNotEmpty) (vehiculo == null ? 'Técnico: $tecnico' : 'Técnico: $tecnico · $vehiculo'),
+      if (detalle != null && detalle.isNotEmpty) detalle,
+    ];
+  }
+
+  Widget _resumen(List<String> lineas) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [for (final l in lineas) Text(l, maxLines: 2, overflow: TextOverflow.ellipsis)],
+      );
 }
-
-/// Estados contados desde el lado del cliente.
-String etiquetaParaCliente(String? estado) => switch (estado) {
-      null => 'Recibida',
-      'pendiente' => 'Recibida',
-      'asignada' => 'Técnico asignado',
-      'aceptada' => 'Técnico aceptó',
-      'en_camino' => 'Técnico en camino',
-      'en_terreno' || 'en_reparacion' => 'Trabajando en tu equipo',
-      'finalizada' => 'Finalizada',
-      _ => GomaqColors.etiquetaEstado(estado),
-    };
-
-/// Pasos del seguimiento tal como los ve el cliente, en orden.
-const pasosParaCliente = [
-  'Solicitud recibida',
-  'Técnico asignado',
-  'Técnico aceptó',
-  'Técnico en camino',
-  'Trabajando en tu equipo',
-  'Finalizada',
-];
-
-/// Índice en [pasosParaCliente] de un estado de la orden. En terreno y en reparación son un
-/// solo paso para el cliente; una asistencia sin orden (estado nulo) es la solicitud recibida.
-int pasoParaCliente(String? estado) => switch (estado) {
-      'asignada' => 1,
-      'aceptada' => 2,
-      'en_camino' => 3,
-      'en_terreno' || 'en_reparacion' => 4,
-      'finalizada' => 5,
-      _ => 0,
-    };
 
 class _SeguimientoDialog extends StatelessWidget {
   final Map<String, dynamic> item;
   const _SeguimientoDialog({required this.item});
 
-  int _pasoActual() => pasoParaCliente(item['estado'] as String?);
+  // null si el estado no está en la lista: el diálogo no marca ningún paso
+  int? _pasoActual() => pasoParaCliente(item['estado'] as String?);
 
   @override
   Widget build(BuildContext context) {
@@ -162,7 +162,7 @@ class _SeguimientoDialog extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
-              for (var i = 0; i < pasosParaCliente.length; i++) _pasoTimeline(i, i <= paso, i == paso),
+              for (var i = 0; i < pasosParaCliente.length; i++) _pasoTimeline(i, paso != null && i <= paso, i == paso, horaConDia(horaDePaso(item, i))),
               if (mecanico != null && mecanico.isNotEmpty) ...[
                 const SizedBox(height: 12),
                 const TituloSeccion('Técnico asignado'),
@@ -179,7 +179,15 @@ class _SeguimientoDialog extends StatelessWidget {
                         child: Text(mecanico.substring(0, 1), style: const TextStyle(color: Colors.white)),
                       ),
                       const SizedBox(width: 12),
-                      Text(mecanico, style: const TextStyle(fontWeight: FontWeight.bold)),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(mecanico, style: const TextStyle(fontWeight: FontWeight.bold)),
+                            if (descripcionVehiculo(item) != null) Text(descripcionVehiculo(item)!),
+                          ],
+                        ),
+                      ),
                     ],
                   ),
                 ),
@@ -194,10 +202,10 @@ class _SeguimientoDialog extends StatelessWidget {
     );
   }
 
-  Widget _pasoTimeline(int i, bool completado, bool actual) {
+  Widget _pasoTimeline(int i, bool completado, bool actual, String? hora) {
     final estado = actual ? 'actual' : (completado ? 'completado' : 'pendiente');
     return Semantics(
-      label: 'Paso ${i + 1} de ${pasosParaCliente.length}, $estado: ${pasosParaCliente[i]}',
+      label: 'Paso ${i + 1} de ${pasosParaCliente.length}, $estado: ${pasosParaCliente[i]}${completado && hora != null ? ', $hora' : ''}',
       excludeSemantics: true,
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 4),
@@ -213,7 +221,7 @@ class _SeguimientoDialog extends StatelessWidget {
             const SizedBox(width: 12),
             Expanded(
               child: Text(
-                pasosParaCliente[i],
+                completado && hora != null ? '${pasosParaCliente[i]} · $hora' : pasosParaCliente[i],
                 style: TextStyle(
                   fontWeight: completado ? FontWeight.bold : FontWeight.normal,
                   color: completado ? Colors.black87 : Colors.grey.shade700,

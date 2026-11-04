@@ -30,7 +30,7 @@ router.post('/login', limiteLogin, async (req, res) => {
             );
             const pendiente = solicitud.rows[0];
             if (pendiente && await bcrypt.compare(password, pendiente.password_hash)) {
-                return res.status(403).json({ error: 'Tu cuenta todavía no está aprobada. Intenta de nuevo más tarde' });
+                return res.status(403).json({ error: 'Tu cuenta está en revisión. GOMAQ la aprueba en horario hábil; podrás entrar con este correo apenas quede lista' });
             }
             return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
         }
@@ -43,7 +43,7 @@ router.post('/login', limiteLogin, async (req, res) => {
         // defensa en profundidad: hoy los usuarios solo se crean ya activos, pero si
         // alguna vez queda uno pendiente/rechazado en la tabla, no debe poder entrar
         if (usuario.estado_cuenta === 'pendiente') {
-            return res.status(403).json({ error: 'Tu cuenta todavía no está aprobada. Intenta de nuevo más tarde' });
+            return res.status(403).json({ error: 'Tu cuenta está en revisión. GOMAQ la aprueba en horario hábil; podrás entrar con este correo apenas quede lista' });
         }
         if (usuario.estado_cuenta === 'rechazado') {
             return res.status(403).json({ error: 'Tu cuenta está desactivada. Contacta a GOMAQ' });

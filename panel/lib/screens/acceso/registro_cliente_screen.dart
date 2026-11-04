@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/api_client.dart';
 import '../../theme/gomaq_theme.dart';
+import '../../utils/validadores_acceso.dart';
 
 class RegistroClienteScreen extends StatefulWidget {
   const RegistroClienteScreen({super.key});
@@ -22,22 +23,43 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
   final _horarioColacionCtrl = TextEditingController();
   final _direccionCtrl = TextEditingController();
 
+  final _formKey = GlobalKey<FormState>();
+  // una llave por campo, en el orden del formulario, para saber cuál es el primero con error
+  final _llaveNombre = GlobalKey<FormFieldState<String>>();
+  final _llaveCorreo = GlobalKey<FormFieldState<String>>();
+  final _llavePassword = GlobalKey<FormFieldState<String>>();
+  final _llaveConfirmar = GlobalKey<FormFieldState<String>>();
+  final _llaveEmpresa = GlobalKey<FormFieldState<String>>();
+  final _llaveRut = GlobalKey<FormFieldState<String>>();
+  final _llaveTelefono = GlobalKey<FormFieldState<String>>();
+  List<GlobalKey<FormFieldState<String>>> get _llavesCampos =>
+      [_llaveNombre, _llaveCorreo, _llavePassword, _llaveConfirmar, _llaveEmpresa, _llaveRut, _llaveTelefono];
   bool _enviando = false;
+  bool _verPassword = false;
   String? _error;
   bool _enviado = false;
 
+  /// Lleva la vista al primer campo con error: en un teléfono el formulario no cabe y el error
+  /// podía quedar fuera de pantalla sin que se viera por qué no se envió.
+  void _irAlPrimerError() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      for (final llave in _llavesCampos) {
+        final ctx = llave.currentContext;
+        if (ctx == null) continue;
+        final campo = llave.currentState;
+        if (campo != null && campo.hasError) {
+          Scrollable.ensureVisible(ctx, alignment: 0.2, duration: const Duration(milliseconds: 250));
+          return;
+        }
+      }
+    });
+  }
+
   Future<void> _registrar() async {
-    if (_nombreCtrl.text.trim().isEmpty || _empresaCtrl.text.trim().isEmpty ||
-        _emailCtrl.text.trim().isEmpty || _passwordCtrl.text.isEmpty) {
-      setState(() => _error = 'Completa tu nombre, el de la empresa, tu correo y una contraseña');
-      return;
-    }
-    if (_passwordCtrl.text.length < 8) {
-      setState(() => _error = 'La contraseña debe tener al menos 8 caracteres');
-      return;
-    }
-    if (_passwordCtrl.text != _confirmarCtrl.text) {
-      setState(() => _error = 'Las contraseñas no coinciden');
+    // cada campo muestra su propio error; el formulario no se envía si alguno falla
+    if (!(_formKey.currentState?.validate() ?? false)) {
+      setState(() => _error = 'Revisa los campos marcados.');
+      _irAlPrimerError();
       return;
     }
 
@@ -108,8 +130,8 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
         const Text('Solicitud de cuenta enviada', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
         const Text(
-          'Revisaremos tu solicitud de cuenta. Cuando esté aprobada podrás ingresar '
-          'con este correo y contraseña.',
+          'GOMAQ revisará tu solicitud en horario hábil. Cuando esté aprobada podrás ingresar '
+          'con este correo y esta contraseña. Si intentas entrar antes, verás que tu cuenta sigue en revisión.',
           textAlign: TextAlign.center,
         ),
         const SizedBox(height: 24),
@@ -135,6 +157,14 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
   }
 
   Widget _construirFormulario() {
+    return Form(
+      key: _formKey,
+      autovalidateMode: AutovalidateMode.onUserInteraction,
+      child: AutofillGroup(child: _camposFormulario()),
+    );
+  }
+
+  Widget _camposFormulario() {
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -147,30 +177,87 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
           style: TextStyle(color: Colors.black54, fontSize: 13),
         ),
         const SizedBox(height: 20),
-        TextField(controller: _nombreCtrl, decoration: const InputDecoration(labelText: 'Nombre de contacto *')),
+        TextFormField(
+          key: _llaveNombre,
+          controller: _nombreCtrl,
+          decoration: const InputDecoration(labelText: 'Nombre de contacto *'),
+          textCapitalization: TextCapitalization.words,
+          autofillHints: const [AutofillHints.name],
+          validator: (v) => validarObligatorio(v, 'Escribe tu nombre.'),
+        ),
         const SizedBox(height: 12),
-        TextField(controller: _emailCtrl, decoration: const InputDecoration(labelText: 'Correo electrónico *'), keyboardType: TextInputType.emailAddress),
+        TextFormField(
+          key: _llaveCorreo,
+          controller: _emailCtrl,
+          decoration: const InputDecoration(labelText: 'Correo electrónico *'),
+          keyboardType: TextInputType.emailAddress,
+          autofillHints: const [AutofillHints.email],
+          validator: validarCorreo,
+        ),
         const SizedBox(height: 12),
         _enFila(
-          TextField(
+          TextFormField(
+            key: _llavePassword,
             controller: _passwordCtrl,
-            decoration: const InputDecoration(labelText: 'Contraseña *', helperText: 'Mínimo 8 caracteres'),
-            obscureText: true,
+            // al cambiar la contraseña se vuelve a validar la confirmación
+            onChanged: (_) {
+              if (_confirmarCtrl.text.isNotEmpty) _llaveConfirmar.currentState?.validate();
+            },
+            decoration: InputDecoration(
+              labelText: 'Contraseña *',
+              helperText: 'Mínimo $largoMinimoPassword caracteres',
+              suffixIcon: IconButton(
+                tooltip: _verPassword ? 'Ocultar contraseñas' : 'Mostrar contraseñas',
+                icon: Icon(_verPassword ? Icons.visibility_off : Icons.visibility),
+                onPressed: () => setState(() => _verPassword = !_verPassword),
+              ),
+            ),
+            obscureText: !_verPassword,
+            autofillHints: const [AutofillHints.newPassword],
+            validator: validarPassword,
           ),
-          TextField(
+          TextFormField(
+            key: _llaveConfirmar,
             controller: _confirmarCtrl,
             decoration: const InputDecoration(labelText: 'Repetir contraseña *'),
-            obscureText: true,
+            obscureText: !_verPassword,
+            autofillHints: const [AutofillHints.newPassword],
+            validator: (v) => validarConfirmacion(v, _passwordCtrl.text),
           ),
         ),
         const SizedBox(height: 20),
         const Text('DATOS DE LA EMPRESA QUE REPRESENTAS', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
-        TextField(controller: _empresaCtrl, decoration: const InputDecoration(labelText: 'Nombre de la empresa *')),
+        TextFormField(
+          key: _llaveEmpresa,
+          controller: _empresaCtrl,
+          decoration: const InputDecoration(labelText: 'Nombre de la empresa *'),
+          textCapitalization: TextCapitalization.words,
+          autofillHints: const [AutofillHints.organizationName],
+          validator: (v) => validarObligatorio(v, 'Escribe el nombre de la empresa.'),
+        ),
         const SizedBox(height: 12),
-        TextField(controller: _rutCtrl, decoration: const InputDecoration(labelText: 'RUT de la empresa')),
+        TextFormField(
+          key: _llaveRut,
+          controller: _rutCtrl,
+          maxLength: largoMaximoRut,
+          decoration: const InputDecoration(labelText: 'RUT de la empresa', helperText: 'Por ejemplo 76.123.456-7.', counterText: ''),
+          validator: validarRutOpcional,
+        ),
         const SizedBox(height: 12),
-        TextField(controller: _whatsappCtrl, decoration: const InputDecoration(labelText: 'Teléfono de contacto (WhatsApp)')),
+        TextFormField(
+          key: _llaveTelefono,
+          controller: _whatsappCtrl,
+          maxLength: largoMaximoTelefono,
+          decoration: const InputDecoration(
+            labelText: 'Teléfono de contacto (WhatsApp)',
+            helperText: 'De 8 a 15 dígitos; puedes usar +, espacios o guiones. Ej.: +56 9 1234 5678.',
+            counterText: '',
+          ),
+          keyboardType: TextInputType.phone,
+          autofillHints: const [AutofillHints.telephoneNumber],
+          validator: validarTelefonoOpcional,
+        ),
         const SizedBox(height: 12),
         _enFila(
           TextField(

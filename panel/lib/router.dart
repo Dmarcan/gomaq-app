@@ -90,7 +90,15 @@ GoRouter construirRouter(AuthService auth) {
     routes: [
       GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
       GoRoute(path: '/registro', builder: (_, _) => const RegistroClienteScreen()),
-      GoRoute(path: '/portal', builder: (_, _) => const ClientePortalScreen()),
+      GoRoute(
+        path: '/portal',
+        // la llave lleva toda la query: pedir una asistencia navega a ?pestana=seguimiento&r=... y la
+        // pantalla se remonta, abre en Seguimiento y vuelve a cargar
+        builder: (_, estado) => ClientePortalScreen(
+          key: ValueKey(estado.uri.query),
+          pestanaInicial: estado.uri.queryParameters['pestana'],
+        ),
+      ),
       GoRoute(path: '/rol-no-soportado', builder: (_, _) => const RolNoSoportadoScreen()),
 
       // el shell mantiene la barra lateral montada entre secciones

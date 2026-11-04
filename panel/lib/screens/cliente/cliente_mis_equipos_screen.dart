@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import '../../services/api_client.dart';
@@ -53,6 +54,8 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
     );
     if (enviada == true && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Asistencia solicitada. Te contactaremos pronto.')));
+      // al Seguimiento, ya con la solicitud nueva (el parámetro r cambia la URL aunque ya estuviera ahí)
+      context.go('/portal?pestana=seguimiento&r=${DateTime.now().millisecondsSinceEpoch}');
     }
   }
 

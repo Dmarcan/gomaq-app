@@ -8,14 +8,17 @@ import 'cliente_seguimiento_screen.dart';
 import 'cliente_historial_screen.dart';
 
 class ClientePortalScreen extends StatefulWidget {
-  const ClientePortalScreen({super.key});
+  /// Pestaña con la que se abre (`/portal?pestana=seguimiento`): 'seguimiento' o 'historial'.
+  /// El router remonta la pantalla cuando cambia la URL, así que también recarga los datos.
+  final String? pestanaInicial;
+  const ClientePortalScreen({super.key, this.pestanaInicial});
 
   @override
   State<ClientePortalScreen> createState() => _ClientePortalScreenState();
 }
 
 class _ClientePortalScreenState extends State<ClientePortalScreen> {
-  int _tab = 0;
+  late int _tab = pestanaDePortal(widget.pestanaInicial);
 
   // cambiar esta key remonta las pestanas: su initState vuelve a cargar los datos
   Key _refreshKey = UniqueKey();

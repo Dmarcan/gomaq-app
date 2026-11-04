@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../services/api_client.dart';
 import '../../utils/enlaces.dart';
 import '../../utils/formato.dart';
+import '../../utils/seguimiento_cliente.dart';
 import '../../widgets/estado_vacio.dart';
 
 /// Trabajos terminados sobre los equipos del cliente. Los que siguen en curso están en
@@ -69,10 +70,22 @@ class _ClienteHistorialScreenState extends State<ClienteHistorialScreen> {
         itemBuilder: (context, i) {
           final o = _ordenes[i];
           final facturaUrl = o['factura_url'] as String?;
+          final cobro = etiquetaCobro(o['cobro'] as String?);
+          final tieneMotivo = (o['motivo'] as String?)?.isNotEmpty ?? false;
+          final tieneDiagnostico = (o['diagnostico'] as String?)?.isNotEmpty ?? false;
           return Card(
             child: ListTile(
-              title: Text(o['motivo'] ?? o['maquinaria_tipo'] ?? 'Orden de trabajo'),
-              subtitle: Text('${o['maquinaria_codigo']} · Terminado el ${Formato.fecha(o['fecha_cierre'] ?? o['fecha_creacion'])}'),
+              isThreeLine: (tieneMotivo ? 1 : 0) + 1 + (tieneDiagnostico ? 1 : 0) >= 2,
+              title: Text(tituloOrden(o)),
+              subtitle: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (tieneMotivo) Text(o['motivo']),
+                  Text('Terminado el ${Formato.fecha(o['fecha_cierre'] ?? o['fecha_creacion'])}${cobro != null ? ' · $cobro' : ''}'),
+                  if (tieneDiagnostico)
+                    Text('Diagnóstico: ${o['diagnostico']}', maxLines: 3, overflow: TextOverflow.ellipsis),
+                ],
+              ),
               trailing: facturaUrl != null
                   ? TextButton.icon(
                       // la API ya entrega una URL firmada completa; antes se le anteponía la
