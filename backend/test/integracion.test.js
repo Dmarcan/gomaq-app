@@ -290,3 +290,58 @@ describe('superficie expuesta', () => {
         assert.ok(!cuerpo.includes('JWT_SECRET'), 'se filtro el secreto de firma');
     });
 });
+
+describe('bloque 6 (parte 1): pendientes del dashboard y pestanas de Ordenes', () => {
+    const obtener = async (ruta, token) => {
+        const r = await pedir(ruta, con(token));
+        assert.equal(r.status, 200, `${ruta} -> ${r.status}`);
+        return r.json();
+    };
+
+    test('/dashboard/pendientes lo ven administrativo y gerente; mecanico y cliente reciben 403', async (t) => {
+        if (!requiereServidor(t)) return;
+        assert.equal((await pedir('/api/dashboard/pendientes', con(tokens.administrativo))).status, 200);
+        assert.equal((await pedir('/api/dashboard/pendientes', con(tokens.mecanico))).status, 403);
+        assert.equal((await pedir('/api/dashboard/pendientes', con(tokens.cliente))).status, 403);
+        assert.equal((await pedir('/api/dashboard/pendientes')).status, 401);
+    });
+
+    test('cada numero del dashboard es el total de la lista a la que lleva', async (t) => {
+        if (!requiereServidor(t)) return;
+        const token = tokens.administrativo;
+        const p = await obtener('/api/dashboard/pendientes', token);
+        const fact = await obtener('/api/facturacion/pendientes', token);
+        assert.equal(p.por_facturar, fact.arriendos.length + fact.reparaciones_listas.length);
+        assert.equal(p.ot_por_valorizar, fact.reparaciones_pendientes_valorizar.length);
+        const enCurso = (await obtener('/api/facturacion/arriendos-en-curso', token)).arriendos;
+        assert.equal(p.arriendos_con_aviso, enCurso.filter((a) => a.aviso === true).length);
+        const alertas = (await obtener('/api/horometro/alertas', token)).equipos;
+        assert.equal(p.mantencion_vencida, alertas.filter((e) => e.vencida).length);
+        assert.equal(p.mantencion_proxima, alertas.filter((e) => e.por_vencer && !e.vencida).length);
+        assert.equal(p.ot_sin_asignar, (await obtener('/api/ordenes-trabajo?sin_asignar=1&limit=1', token)).total);
+        assert.equal(p.descuadres, (await obtener('/api/insumos/descuadres', token)).length);
+        const problemas = await obtener('/api/notificaciones?problemas=1', token);
+        assert.equal(p.avisos_con_problemas, problemas.total, 'el total real, sin el tope de 200 filas');
+        assert.equal(p.asistencias_por_atender, (await obtener('/api/solicitudes?estado=pendiente', token)).length);
+        assert.equal(p.guias_sin_documento, (await obtener('/api/maquinarias/guias/recientes?sin_documento=1', token)).length);
+        assert.equal(p.cuentas_por_aprobar, (await obtener('/api/usuarios/solicitudes', token)).length);
+    });
+
+    test('los conteos de /ordenes-trabajo/resumen son los de cada lista', async (t) => {
+        if (!requiereServidor(t)) return;
+        const token = tokens.administrativo;
+        const r = await obtener('/api/ordenes-trabajo/resumen', token);
+        assert.equal(r.todas, (await obtener('/api/ordenes-trabajo?limit=1', token)).total);
+        assert.equal(r.sin_asignar, (await obtener('/api/ordenes-trabajo?sin_asignar=1&limit=1', token)).total);
+        assert.equal(r.en_curso, (await obtener('/api/ordenes-trabajo?estado=asignada,aceptada,en_camino,en_terreno,en_reparacion&limit=1', token)).total);
+        assert.equal(r.finalizadas, (await obtener('/api/ordenes-trabajo?estado=finalizada&limit=1', token)).total);
+        assert.equal((await pedir('/api/ordenes-trabajo/resumen', con(tokens.mecanico))).status, 403);
+        assert.equal((await pedir('/api/ordenes-trabajo?estado=inventado', con(token))).status, 400);
+    });
+
+    test('el portal no ve los pendientes ni el resumen de ordenes', async (t) => {
+        if (!requiereServidor(t)) return;
+        assert.equal((await pedir('/api/ordenes-trabajo/resumen', con(tokens.cliente))).status, 403);
+        assert.equal((await pedir('/api/notificaciones?problemas=1', con(tokens.cliente))).status, 403);
+    });
+});

@@ -11,6 +11,8 @@ const { calcularEstadoMantencion, requiereAviso } = require('../utils/mantencion
 const { encolarAvisoMantencion } = require('./horometro');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 
+const { sqlGuiasSinDocumento } = require('../utils/pendientes');
+
 const router = express.Router();
 
 // POST /api/maquinarias/guias/detectar - lee el texto del PDF (si lo tiene) y prellena el
@@ -65,7 +67,7 @@ router.get('/guias/recientes', verifyToken, requireRole('administrativo', 'geren
              JOIN maquinarias m ON m.id = g.maquinaria_id
              LEFT JOIN clientes c ON c.id = g.cliente_id
              LEFT JOIN usuarios u ON u.id = g.registrada_por
-             ${soloSinDocumento ? 'WHERE g.archivo_url IS NULL ORDER BY g.created_at ASC' : 'ORDER BY g.created_at DESC LIMIT 20'}`
+             ${soloSinDocumento ? `WHERE ${sqlGuiasSinDocumento('g')} ORDER BY g.created_at ASC` : 'ORDER BY g.created_at DESC LIMIT 20'}`
         );
         const conUrl = await Promise.all(result.rows.map(async ({ archivo_url: ruta, ...fila }) => {
             if (!ruta) return { ...fila, url: null };

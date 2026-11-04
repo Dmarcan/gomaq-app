@@ -1,8 +1,9 @@
 const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
-const { verificarDuenoOrden, contactoCliente, MENSAJE_OT_CERRADA } = require('../utils/ordenes');
-const { estadoTrasAsignar, evaluarCambioEstado, evaluarCierre } = require('../utils/estadosOt');
+const { verificarDuenoOrden, contactoCliente, MENSAJE_OT_CERRADA, SQL_OT_SIN_ASIGNAR } = require('../utils/ordenes');
+const { cobroParaCliente } = require('../utils/cobroCliente');
+const { estadoTrasAsignar, evaluarCambioEstado, evaluarCierre, parsearEstados, EN_CURSO_PANEL, ESTADOS } = require('../utils/estadosOt');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
@@ -153,13 +154,22 @@ router.post('/en-terreno', verifyToken, requireRole('mecanico'), async (req, res
 router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     const { limit, offset } = parsearPaginacion(req.query);
     const q = parsearBusqueda(req.query);
+    // ?estado acepta una lista separada por comas (pestana "En curso" del panel); uno desconocido da 400
+    let estados = null;
+    if (req.query.estado) {
+        const parseado = parsearEstados(req.query.estado);
+        if (parseado.error) return res.status(400).json({ error: parseado.error });
+        estados = parseado.estados;
+    }
+    const ascendente = req.query.dir === 'asc';
     try {
         const condiciones = [];
         const params = [];
-        if (req.user.rol === 'mecanico' && req.query.sin_asignar === '1') {
+        if (req.query.sin_asignar === '1') {
             // ordenes creadas por la oficina o por un cliente que todavia no tienen mecanico: el
-            // mecanico las ve para poder tomarlas (PATCH /:id/tomar)
-            condiciones.push(`(ot.mecanico_id IS NULL AND ot.estado = 'pendiente')`);
+            // mecanico las ve para poder tomarlas (PATCH /:id/tomar) y el panel las lista en
+            // "Sin asignar" (las mismas que cuenta el dashboard)
+            condiciones.push(SQL_OT_SIN_ASIGNAR);
         } else if (req.user.rol === 'mecanico') {
             params.push(req.user.id);
             condiciones.push(`ot.mecanico_id = $${params.length}`);
@@ -169,20 +179,22 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
             condiciones.push(`(m.codigo ILIKE $${params.length} OR c.nombre ILIKE $${params.length}
                                OR ot.motivo ILIKE $${params.length})`);
         }
-        if (req.query.estado) {
-            params.push(req.query.estado);
-            condiciones.push(`ot.estado = $${params.length}::estado_orden`);
+        if (estados) {
+            params.push(estados);
+            condiciones.push(`ot.estado = ANY($${params.length}::estado_orden[])`);
         }
         const where = condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : '';
 
         const base = `FROM ordenes_trabajo ot
                       JOIN maquinarias m ON m.id = ot.maquinaria_id
                       LEFT JOIN clientes c ON c.id = ot.cliente_id
+                      LEFT JOIN usuarios um ON um.id = ot.mecanico_id
                       ${where}`;
         const total = await pool.query(`SELECT COUNT(*)::int AS n ${base}`, params);
 
-        let sql = `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre
-                   ${base} ORDER BY ot.fecha_creacion DESC`;
+        // desempate por id: la paginacion no debe repetir ni saltarse filas con la misma fecha
+        let sql = `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre, um.nombre AS mecanico_nombre
+                   ${base} ORDER BY ot.fecha_creacion ${ascendente ? 'ASC' : 'DESC'}, ot.id ${ascendente ? 'ASC' : 'DESC'}`;
         const paramsPagina = [...params];
         if (limit !== null) {
             paramsPagina.push(limit, offset);
@@ -196,23 +208,63 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
     }
 });
 
+// GET /api/ordenes-trabajo/resumen - conteos de las pestanas de Ordenes del panel. Se declara antes de
+// /:id para que "resumen" no se lea como un id. Cada conteo es el total de la lista con su filtro:
+//   sin_asignar -> ?sin_asignar=1 ; en_curso -> ?estado=<EN_CURSO_PANEL> ; finalizadas -> ?estado=finalizada
+router.get('/resumen', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
+    try {
+        const r = await pool.query(
+            `SELECT COUNT(*)::int AS todas,
+                    COUNT(*) FILTER (WHERE ${SQL_OT_SIN_ASIGNAR})::int AS sin_asignar,
+                    COUNT(*) FILTER (WHERE ot.estado = ANY($1::estado_orden[]))::int AS en_curso,
+                    COUNT(*) FILTER (WHERE ot.estado = 'finalizada')::int AS finalizadas
+             FROM ordenes_trabajo ot`,
+            [EN_CURSO_PANEL]
+        );
+        const porEstado = await pool.query('SELECT estado, COUNT(*)::int AS n FROM ordenes_trabajo GROUP BY estado');
+        res.json({
+            ...r.rows[0],
+            // todos los estados, con 0 los que no tienen ordenes: el panel no tiene que adivinar cuales faltan
+            por_estado: { ...Object.fromEntries(ESTADOS.map((e) => [e, 0])), ...Object.fromEntries(porEstado.rows.map((f) => [f.estado, f.n])) },
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al contar las órdenes de trabajo' });
+    }
+});
+
 // GET /api/ordenes-trabajo/mias - portal cliente: su historial de OT con facturas vinculadas
 router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     if (!req.user.cliente_id) {
         return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
     }
     try {
+        // datos del cliente que cambian con cada avance de la orden: nada de caches intermedios
+        res.set('Cache-Control', 'no-store');
         const result = await pool.query(
             `SELECT ot.id, ot.estado, ot.motivo, ot.diagnostico, ot.fecha_creacion, ot.fecha_cierre,
+                    ot.aceptada_at, ot.en_camino_at, ot.llegada_at, ot.facturable,
+                    -- cuando se le asigno el tecnico de ahora: la ULTIMA asignacion o toma que de verdad se aplico, y no
+                    -- posterior a la aceptacion (si se reasigna, aceptada_at/en_camino_at/llegada_at se borran y la linea
+                    -- de tiempo del portal no se desordena)
+                    (SELECT MAX(e.ocurrio_en) FROM ordenes_eventos e
+                     WHERE e.orden_trabajo_id = ot.id AND e.tipo IN ('asignacion', 'toma') AND e.aplicado
+                       AND e.ocurrio_en <= COALESCE(ot.aceptada_at, ot.en_camino_at, ot.llegada_at, 'infinity'::timestamptz)) AS asignada_at,
+                    -- lineas de repuesto sin decidir si se cobran: "por confirmar" para el cliente
+                    (SELECT COUNT(*)::int FROM movimientos_insumo mi
+                     WHERE mi.orden_trabajo_id = ot.id AND mi.anulada_at IS NULL AND mi.facturable = 'pendiente') AS lineas_pendientes,
                     m.codigo AS maquinaria_codigo, m.tipo AS maquinaria_tipo,
                     f.id AS factura_id, f.folio AS factura_folio, f.archivo_url AS factura_url,
-                    u.nombre AS mecanico_nombre
+                    u.nombre AS mecanico_nombre,
+                    -- el vehiculo de hoy del tecnico: solo de una orden abierta (en una terminada podria ser otro)
+                    v.patente AS vehiculo_patente, v.marca AS vehiculo_marca, v.modelo AS vehiculo_modelo
              FROM ordenes_trabajo ot
              JOIN maquinarias m ON m.id = ot.maquinaria_id
              LEFT JOIN facturas f ON f.orden_trabajo_id = ot.id
              -- el portal muestra quien atiende cada orden abierta, no solo las que nacieron de
              -- una asistencia pedida por el cliente
              LEFT JOIN usuarios u ON u.id = ot.mecanico_id
+             LEFT JOIN vehiculos v ON v.usuario_id = ot.mecanico_id AND v.activo AND ot.estado <> 'finalizada'
              WHERE ot.cliente_id = $1
              ORDER BY ot.fecha_creacion DESC`,
             [req.user.cliente_id]
@@ -220,7 +272,9 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
 
         // factura_url guarda la ruta dentro del bucket privado, no una URL directa;
         // se reemplaza por una URL firmada temporal (1h) antes de responder
-        const conUrlFirmada = await Promise.all(result.rows.map(async (fila) => {
+        const conUrlFirmada = await Promise.all(result.rows.map(async ({ facturable, lineas_pendientes: lineasPendientes, ...resto }) => {
+            // al cliente se le dice si hay cobro, nunca montos ni la marca interna de facturable
+            const fila = { ...resto, cobro: cobroParaCliente({ estado: resto.estado, facturable, lineasPendientes }) };
             if (!fila.factura_url) return fila;
             const { data, error } = await supabase.storage
                 .from(BUCKET_DOCUMENTOS)

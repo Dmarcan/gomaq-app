@@ -133,7 +133,17 @@ async function avisarAjusteInventario(client, { insumoId, ubicacionId, delta, mo
     }, { excluirUsuarioId: usuarioId });
 }
 
+/**
+ * Avisos con problemas (los que mueven la alarma del dashboard): en error los que van al cliente (los
+ * internos no cuentan mientras el proveedor sea un stub) y los pendientes que llevan mas de 10 min
+ * vencidos sin que nadie los tome (el worker esta caido). Parametro $1: TIPOS_INTERNOS.
+ */
+const SQL_AVISOS_EN_ERROR = `(estado = 'error' AND COALESCE(payload->>'tipo', '') <> ALL($1::text[]))`;
+const SQL_AVISOS_ATRASADOS = `(estado = 'pendiente' AND intentos < 5 AND proximo_intento < now() - interval '10 minutes')`;
+const SQL_AVISOS_PROBLEMAS = `(${SQL_AVISOS_EN_ERROR} OR ${SQL_AVISOS_ATRASADOS})`;
+
 module.exports = {
+    SQL_AVISOS_PROBLEMAS, SQL_AVISOS_EN_ERROR, SQL_AVISOS_ATRASADOS,
     TIPOS_AVISO, TIPOS_INTERNOS, MOTIVOS_AJUSTE_CON_AVISO,
     encolarAMecanico, encolarAGerentes,
     avisarAsignacion, avisarPorValorizar, avisarFacturaAnulada, avisarAjusteInventario,

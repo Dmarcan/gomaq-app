@@ -50,4 +50,53 @@ function requiereAviso(estado) {
     return estado.por_vencer || estado.vencida;
 }
 
-module.exports = { HORAS_AVISO_MANTENCION, calcularEstadoMantencion, requiereAviso };
+const num = (v) => (v === null || v === undefined ? null : Number(v));
+
+/**
+ * Equipos que ya cumplieron el intervalo de mantencion o estan por cumplirlo, del mas urgente al
+ * menos (las vencidas, con horas restantes negativas, primero). Una sola definicion para
+ * GET /api/horometro/alertas y para el contador del dashboard.
+ */
+async function cargarAlertasMantencion(db) {
+    const result = await db.query(
+        `SELECT m.id, m.codigo, m.tipo, m.intervalo_mantencion_horas, m.horometro_ultima_mantencion,
+                c.nombre AS cliente_nombre, u.valor AS ultima_lectura, u.fecha AS ultima_fecha
+         FROM maquinarias m
+         LEFT JOIN clientes c ON c.id = m.cliente_id
+         JOIN LATERAL (
+             SELECT valor, fecha FROM lecturas_horometro l
+             WHERE l.maquinaria_id = m.id ORDER BY l.fecha DESC LIMIT 1
+         ) u ON true
+         WHERE m.estado <> 'fuera_de_servicio'`
+    );
+    return result.rows
+        .map((fila) => {
+            const estado = calcularEstadoMantencion({
+                ultimaLectura: num(fila.ultima_lectura),
+                horometroUltimaMantencion: num(fila.horometro_ultima_mantencion),
+                intervaloHoras: num(fila.intervalo_mantencion_horas),
+            });
+            return {
+                id: fila.id,
+                codigo: fila.codigo,
+                tipo: fila.tipo,
+                cliente_nombre: fila.cliente_nombre,
+                ultima_lectura: num(fila.ultima_lectura),
+                ultima_fecha: fila.ultima_fecha,
+                intervalo_mantencion_horas: num(fila.intervalo_mantencion_horas),
+                ...estado,
+            };
+        })
+        .filter((e) => requiereAviso(e))
+        .sort((a, b) => a.horas_restantes - b.horas_restantes);
+}
+
+/** Cuantas alertas hay vencidas y cuantas por vencer (las que cuenta el dashboard). */
+function contarAlertas(equipos) {
+    return {
+        vencidas: equipos.filter((e) => e.vencida).length,
+        proximas: equipos.filter((e) => e.por_vencer && !e.vencida).length,
+    };
+}
+
+module.exports = { HORAS_AVISO_MANTENCION, calcularEstadoMantencion, requiereAviso, cargarAlertasMantencion, contarAlertas };

@@ -2,6 +2,8 @@ const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 
+const { SQL_CUENTAS_POR_APROBAR } = require('../utils/pendientes');
+
 const router = express.Router();
 
 const ROLES_VALIDOS = ['gerente', 'administrativo', 'mecanico', 'cliente'];
@@ -43,7 +45,7 @@ router.get('/solicitudes', verifyToken, requireRole('administrativo', 'gerente')
         const result = await pool.query(
             `SELECT id, nombre_contacto, nombre_empresa, email, rut_empresa, telefono_whatsapp, horario_trabajo,
                     horario_colacion, direccion, estado, created_at
-             FROM solicitudes_cliente WHERE estado = 'pendiente' ORDER BY created_at ASC`
+             FROM solicitudes_cliente WHERE ${SQL_CUENTAS_POR_APROBAR} ORDER BY created_at ASC`
         );
         res.json(result.rows);
     } catch (err) {

@@ -2,7 +2,12 @@ const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 
-const { TIPOS_INTERNOS } = require('../utils/avisos');
+const { TIPOS_INTERNOS, SQL_AVISOS_PROBLEMAS, SQL_AVISOS_EN_ERROR, SQL_AVISOS_ATRASADOS } = require('../utils/avisos');
+const { SQL_SOLICITUDES_POR_ATENDER, sqlGuiasSinDocumento, SQL_CUENTAS_POR_APROBAR, SQL_DESCUADRES } = require('../utils/pendientes');
+const { cargarAlertasMantencion, contarAlertas } = require('../utils/mantencion');
+const { cargarArriendos, filtrarPorFacturar, filtrarConAviso } = require('../utils/arriendos');
+const { leerConfiguracion } = require('../utils/configuracion');
+const { SQL_OT_SIN_ASIGNAR, SQL_OT_POR_VALORIZAR, SQL_OT_LISTA_FACTURAR } = require('../utils/ordenes');
 
 const router = express.Router();
 
@@ -23,30 +28,26 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
         `);
 
         const pendientesFacturar = await pool.query(
-            `SELECT COUNT(*) AS n FROM ordenes_trabajo
-             WHERE facturable = true AND valorizacion IS NULL AND estado = 'finalizada'
-               AND NOT EXISTS (SELECT 1 FROM facturas f WHERE f.orden_trabajo_id = ordenes_trabajo.id)`
+            `SELECT COUNT(*) AS n FROM ordenes_trabajo ot WHERE ${SQL_OT_POR_VALORIZAR}`
         );
         const solicitudesPendientes = await pool.query(
-            `SELECT COUNT(*) AS n FROM solicitudes WHERE estado = 'pendiente'`
+            `SELECT COUNT(*) AS n FROM solicitudes WHERE ${SQL_SOLICITUDES_POR_ATENDER}`
         );
         // los avisos internos (mecanico y gerente) no cuentan: mientras el proveedor sea un stub todos terminan en
         // error y taparian la alarma de los avisos al cliente
         const notificacionesError = await pool.query(
-            `SELECT COUNT(*) AS n FROM notificaciones_pendientes
-             WHERE estado = 'error' AND COALESCE(payload->>'tipo', '') <> ALL($1::text[])`,
+            `SELECT COUNT(*) AS n FROM notificaciones_pendientes WHERE ${SQL_AVISOS_EN_ERROR}`,
             [TIPOS_INTERNOS]
         );
         // pendientes que llevan mas de 10 min vencidos sin que nadie los tome: el worker esta caido
         const notificacionesAtrasadas = await pool.query(
-            `SELECT COUNT(*) AS n FROM notificaciones_pendientes
-             WHERE estado = 'pendiente' AND intentos < 5 AND proximo_intento < now() - interval '10 minutes'`
+            `SELECT COUNT(*) AS n FROM notificaciones_pendientes WHERE ${SQL_AVISOS_ATRASADOS}`
         );
         // despachos registrados sin PDF: el equipo ya salio y falta el respaldo
-        const guiasSinDocumento = await pool.query(`SELECT COUNT(*) AS n FROM guias WHERE archivo_url IS NULL`);
+        const guiasSinDocumento = await pool.query(`SELECT COUNT(*) AS n FROM guias WHERE ${sqlGuiasSinDocumento()}`);
         // la aprobacion de cuentas de clientes vive en una pestaña de Clientes: el atajo la hace visible
         const cuentasPorAprobar = await pool.query(
-            `SELECT COUNT(*) AS n FROM solicitudes_cliente WHERE estado = 'pendiente'`
+            `SELECT COUNT(*) AS n FROM solicitudes_cliente WHERE ${SQL_CUENTAS_POR_APROBAR}`
         );
 
         res.json({
@@ -63,6 +64,94 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al calcular el resumen del dashboard' });
+    }
+});
+
+// GET /api/dashboard/pendientes - el bloque "Pendientes" del dashboard: cada numero sale del mismo
+// predicado que la lista a la que lleva (utils/*), para que el numero y la lista no discrepen.
+//   mantencion_vencida / mantencion_proxima  GET /api/horometro/alertas
+//   ot_sin_asignar                           GET /api/ordenes-trabajo?sin_asignar=1
+//   asistencias_por_atender                  solicitudes de asistencia pendientes
+//   avisos_con_problemas                     GET /api/notificaciones?problemas=1
+//   por_facturar                             la pestana "Por facturar" (arriendos cerrados + reparaciones listas)
+//   arriendos_con_aviso                      GET /api/facturacion/arriendos-en-curso con aviso
+//   ot_por_valorizar                         la pestana "Pendiente de valorizar"
+//   guias_sin_documento                      guias registradas sin PDF
+//   descuadres                               GET /api/insumos/descuadres
+//   cuentas_por_aprobar                      solicitudes de cuenta de cliente pendientes
+// Los arriendos se arman con una consulta que recorre todas las guias (utils/arriendos.js). El dashboard se
+// refresca seguido y lo abren varios usuarios: se guarda el resultado 30 s en memoria (por configuracion
+// de cobro). El numero del dashboard puede ir hasta 30 s atrasado respecto de las pestanas de Facturacion,
+// que siempre leen en vivo. `vaciarCacheArriendos` lo usan las pruebas.
+const TTL_ARRIENDOS_MS = 30000;
+let cacheArriendos = null;
+
+function vaciarCacheArriendos() {
+    cacheArriendos = null;
+}
+
+async function arriendosParaDashboard(config) {
+    const clave = JSON.stringify(config);
+    if (cacheArriendos && cacheArriendos.clave === clave && Date.now() - cacheArriendos.en < TTL_ARRIENDOS_MS) {
+        return cacheArriendos.arriendos;
+    }
+    const arriendos = await cargarArriendos(pool, config);
+    cacheArriendos = { clave, en: Date.now(), arriendos };
+    return arriendos;
+}
+
+// GET /api/dashboard/pendientes - el bloque "Pendientes" del dashboard: cada numero sale del mismo
+// predicado que la lista a la que lleva (utils/*), para que el numero y la lista no discrepen.
+//   mantencion_vencida / mantencion_proxima  GET /api/horometro/alertas
+//   ot_sin_asignar                           GET /api/ordenes-trabajo?sin_asignar=1
+//   asistencias_por_atender                  GET /api/solicitudes?estado=pendiente
+//   avisos_con_problemas                     GET /api/notificaciones?problemas=1 (total)
+//   por_facturar                             la pestana "Por facturar" (arriendos cerrados + reparaciones listas)
+//   arriendos_con_aviso                      GET /api/facturacion/arriendos-en-curso con aviso
+//   ot_por_valorizar                         la pestana "Pendiente de valorizar"
+//   guias_sin_documento                      GET /api/maquinarias/guias/recientes?sin_documento=1
+//   descuadres                               GET /api/insumos/descuadres
+//   cuentas_por_aprobar                      GET /api/usuarios/solicitudes
+// Usa 3 conexiones a lo sumo (los conteos simples van en un solo SELECT): el pool es de 10.
+router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    try {
+        res.set('Cache-Control', 'no-store');
+        const config = await leerConfiguracion(pool);
+        const [alertas, arriendos, conteos] = await Promise.all([
+            cargarAlertasMantencion(pool),
+            arriendosParaDashboard(config),
+            pool.query(
+                `SELECT
+                    (SELECT COUNT(*)::int FROM ordenes_trabajo ot WHERE ${SQL_OT_SIN_ASIGNAR}) AS ot_sin_asignar,
+                    (SELECT COUNT(*)::int FROM solicitudes WHERE ${SQL_SOLICITUDES_POR_ATENDER}) AS asistencias_por_atender,
+                    (SELECT COUNT(*)::int FROM notificaciones_pendientes WHERE ${SQL_AVISOS_PROBLEMAS}) AS avisos_con_problemas,
+                    (SELECT COUNT(*)::int FROM ordenes_trabajo ot WHERE ${SQL_OT_LISTA_FACTURAR}) AS reparaciones_listas,
+                    (SELECT COUNT(*)::int FROM ordenes_trabajo ot WHERE ${SQL_OT_POR_VALORIZAR}) AS ot_por_valorizar,
+                    (SELECT COUNT(*)::int FROM guias WHERE ${sqlGuiasSinDocumento()}) AS guias_sin_documento,
+                    (SELECT COUNT(*)::int FROM stock_ubicacion WHERE ${SQL_DESCUADRES}) AS descuadres,
+                    (SELECT COUNT(*)::int FROM solicitudes_cliente WHERE ${SQL_CUENTAS_POR_APROBAR}) AS cuentas_por_aprobar`,
+                [TIPOS_INTERNOS]
+            ),
+        ]);
+        const c = conteos.rows[0];
+        const { vencidas, proximas } = contarAlertas(alertas);
+        res.json({
+            mantencion_vencida: vencidas,
+            mantencion_proxima: proximas,
+            ot_sin_asignar: c.ot_sin_asignar,
+            asistencias_por_atender: c.asistencias_por_atender,
+            avisos_con_problemas: c.avisos_con_problemas,
+            por_facturar: filtrarPorFacturar(arriendos).length + c.reparaciones_listas,
+            arriendos_con_aviso: filtrarConAviso(arriendos, config).length,
+            ot_por_valorizar: c.ot_por_valorizar,
+            guias_sin_documento: c.guias_sin_documento,
+            descuadres: c.descuadres,
+            cuentas_por_aprobar: c.cuentas_por_aprobar,
+            generado_en: new Date().toISOString(),
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al calcular los pendientes del dashboard' });
     }
 });
 
@@ -128,3 +217,4 @@ router.get('/ots-por-mes', verifyToken, requireRole('administrativo', 'gerente')
 });
 
 module.exports = router;
+module.exports.vaciarCacheArriendos = vaciarCacheArriendos;

@@ -1,12 +1,25 @@
 const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
+const { SQL_AVISOS_PROBLEMAS, TIPOS_INTERNOS } = require('../utils/avisos');
+const { envolver } = require('../utils/paginacion');
 
 const router = express.Router();
 
 // GET /api/notificaciones - listado (para reenvio manual / seguimiento de errores)
 router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
+        // ?problemas=1: solo los avisos que cuenta el dashboard (mismo predicado), hasta 200
+        if (req.query.problemas === '1') {
+            // responde { items, total, hay_mas }: `total` es el numero real del dashboard (sin el tope de 200 filas)
+            const [problemas, total] = await Promise.all([
+                pool.query(
+                    `SELECT * FROM notificaciones_pendientes WHERE ${SQL_AVISOS_PROBLEMAS} ORDER BY created_at DESC, id DESC LIMIT 200`,
+                    [TIPOS_INTERNOS]),
+                pool.query(`SELECT COUNT(*)::int AS n FROM notificaciones_pendientes WHERE ${SQL_AVISOS_PROBLEMAS}`, [TIPOS_INTERNOS]),
+            ]);
+            return res.json(envolver(problemas.rows, total.rows[0].n, { limit: 200, offset: 0 }));
+        }
         const result = await pool.query(
             'SELECT * FROM notificaciones_pendientes ORDER BY created_at DESC LIMIT 100'
         );

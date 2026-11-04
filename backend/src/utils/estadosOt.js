@@ -20,6 +20,23 @@ const VIAJE = ['aceptada', 'en_camino'];
 // posicion en el ciclo, para saber si un cambio de estado es un avance o un reintento atrasado
 const POSICION = { pendiente: 0, asignada: 1, aceptada: 2, en_camino: 3, en_terreno: 4, en_reparacion: 4, finalizada: 5 };
 
+const ESTADOS = Object.keys(POSICION);
+// la pestana "En curso" de Ordenes del panel: ya tienen tecnico y todavia no terminan
+const EN_CURSO_PANEL = ['asignada', 'aceptada', 'en_camino', 'en_terreno', 'en_reparacion'];
+
+/**
+ * Lista de estados de un filtro (`?estado=asignada,aceptada`): devuelve { estados } o { error }.
+ * Un estado desconocido o una lista vacia se rechazan (antes un valor invalido terminaba en 500).
+ */
+function parsearEstados(texto) {
+    if (typeof texto !== 'string') return { error: 'Estado inválido' };
+    const estados = texto.split(',').map((e) => e.trim());
+    if (estados.some((e) => !ESTADOS.includes(e))) {
+        return { error: 'Estado inválido. Valores posibles: ' + ESTADOS.join(', ') };
+    }
+    return { estados: [...new Set(estados)] };
+}
+
 /**
  * Estado que queda al asignar (o reasignar) un mecanico, o null si ya no se puede.
  *
@@ -76,5 +93,5 @@ function evaluarCierre(estado) {
 }
 
 module.exports = {
-    FINALIZADA, VIAJE, EN_CURSO, estadoTrasAsignar, mecanicoPuedeEditar, puedeCambiarEstadoA, evaluarCambioEstado, evaluarCierre,
+    ESTADOS, EN_CURSO_PANEL, parsearEstados, FINALIZADA, VIAJE, EN_CURSO, estadoTrasAsignar, mecanicoPuedeEditar, puedeCambiarEstadoA, evaluarCambioEstado, evaluarCierre,
 };

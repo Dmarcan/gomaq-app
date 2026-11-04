@@ -10,7 +10,7 @@
 // Una recepcion sin despacho antes (o precedida por otra recepcion) no es un arriendo y se ignora.
 
 const { diaSantiago, sumarDias } = require('./diasArriendo');
-const { proponerPeriodo } = require('./periodosArriendo');
+const { proponerPeriodo, resumirArriendoEnCurso } = require('./periodosArriendo');
 
 const SQL_ARRIENDOS = `
     WITH ordenadas AS (
@@ -82,4 +82,28 @@ async function cargarArriendos(db, config, { despachoId = null, recepcionId = nu
     });
 }
 
-module.exports = { SQL_ARRIENDOS, cargarArriendos, finDelArriendo };
+/**
+ * Arriendos cerrados con algo que facturar: la lista "Por facturar". Incluye el facturado de mas
+ * (recepcion registrada con fecha anterior a lo ya facturado), que se muestra con su aviso.
+ */
+function filtrarPorFacturar(todos) {
+    return todos.filter((a) => !a.en_curso && (!a.nada_que_facturar || a.facturado_de_mas));
+}
+
+/** Resumen de un arriendo en curso: desde cuando, dias, periodos sin facturar y proximo corte. */
+function resumenEnCurso(a, config) {
+    return resumirArriendoEnCurso({
+        inicioCobro: a.inicio_cobro,
+        ultimoPeriodoHasta: a.facturado_hasta,
+        hoy: a.hoy,
+        diaFacturacion: config.dia_facturacion,
+        corteCierraPeriodo: config.corte_cierra_periodo,
+    });
+}
+
+/** Arriendos en curso que ya cumplieron algun corte sin facturar (el "aviso" de la pestana). */
+function filtrarConAviso(todos, config) {
+    return todos.filter((a) => a.en_curso && resumenEnCurso(a, config).aviso);
+}
+
+module.exports = { SQL_ARRIENDOS, cargarArriendos, finDelArriendo, filtrarPorFacturar, resumenEnCurso, filtrarConAviso };

@@ -42,4 +42,18 @@ async function contactoCliente(client, clienteId) {
     return null;
 }
 
-module.exports = { verificarDuenoOrden, contactoCliente, MENSAJE_OT_CERRADA };
+// Predicados que comparten una lista y el numero que el dashboard muestra de ella: que el contador
+// y la lista cuenten lo mismo es lo que se prueba en test/escritura.test.js.
+/** Orden creada por la oficina o por un cliente que todavia no tiene mecanico (alias `ot`). */
+const SQL_OT_SIN_ASIGNAR = `(ot.mecanico_id IS NULL AND ot.estado = 'pendiente')`;
+/** Reparacion terminada y facturable que aun no se valoriza ni se factura (alias `ot`). */
+const SQL_OT_POR_VALORIZAR = `ot.facturable = true AND ot.valorizacion IS NULL AND ot.estado = 'finalizada'
+    AND NOT EXISTS (SELECT 1 FROM facturas f WHERE f.orden_trabajo_id = ot.id)`;
+/** Reparacion valorizada, terminada y sin factura: lista para facturar (alias `ot`). */
+const SQL_OT_LISTA_FACTURAR = `ot.facturable = true AND ot.valorizacion IS NOT NULL AND ot.estado = 'finalizada'
+    AND NOT EXISTS (SELECT 1 FROM facturas f WHERE f.orden_trabajo_id = ot.id)`;
+
+module.exports = {
+    verificarDuenoOrden, contactoCliente, MENSAJE_OT_CERRADA,
+    SQL_OT_SIN_ASIGNAR, SQL_OT_POR_VALORIZAR, SQL_OT_LISTA_FACTURAR,
+};

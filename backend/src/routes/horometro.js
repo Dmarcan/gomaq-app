@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
-const { calcularEstadoMantencion, requiereAviso, HORAS_AVISO_MANTENCION } = require('../utils/mantencion');
+const { calcularEstadoMantencion, requiereAviso, HORAS_AVISO_MANTENCION, cargarAlertasMantencion } = require('../utils/mantencion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 
 const router = express.Router();
@@ -249,39 +249,7 @@ router.get('/pendientes', verifyToken, requireRole('gerente', 'administrativo', 
 // GET /api/horometro/alertas - equipos que ya cumplieron el intervalo o estan por cumplirlo
 router.get('/alertas', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     try {
-        const result = await pool.query(
-            `SELECT m.id, m.codigo, m.tipo, m.intervalo_mantencion_horas, m.horometro_ultima_mantencion,
-                    c.nombre AS cliente_nombre, u.valor AS ultima_lectura, u.fecha AS ultima_fecha
-             FROM maquinarias m
-             LEFT JOIN clientes c ON c.id = m.cliente_id
-             JOIN LATERAL (
-                 SELECT valor, fecha FROM lecturas_horometro l
-                 WHERE l.maquinaria_id = m.id ORDER BY l.fecha DESC LIMIT 1
-             ) u ON true
-             WHERE m.estado <> 'fuera_de_servicio'`
-        );
-
-        const equipos = result.rows
-            .map((fila) => {
-                const estado = calcularEstadoMantencion({
-                    ultimaLectura: num(fila.ultima_lectura),
-                    horometroUltimaMantencion: num(fila.horometro_ultima_mantencion),
-                    intervaloHoras: num(fila.intervalo_mantencion_horas),
-                });
-                return {
-                    id: fila.id,
-                    codigo: fila.codigo,
-                    tipo: fila.tipo,
-                    cliente_nombre: fila.cliente_nombre,
-                    ultima_lectura: num(fila.ultima_lectura),
-                    ultima_fecha: fila.ultima_fecha,
-                    intervalo_mantencion_horas: num(fila.intervalo_mantencion_horas),
-                    ...estado,
-                };
-            })
-            .filter((e) => requiereAviso(e))
-            // primero lo mas urgente: las vencidas (horas_restantes negativas) arriba
-            .sort((a, b) => a.horas_restantes - b.horas_restantes);
+        const equipos = await cargarAlertasMantencion(pool);
 
         res.json({ horas_aviso: HORAS_AVISO_MANTENCION, equipos });
     } catch (err) {

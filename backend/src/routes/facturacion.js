@@ -5,8 +5,9 @@ const { subidaPdf } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { diasEntre } = require('../utils/diasArriendo');
-const { resumirArriendoEnCurso, validarPeriodo } = require('../utils/periodosArriendo');
-const { cargarArriendos } = require('../utils/arriendos');
+const { validarPeriodo } = require('../utils/periodosArriendo');
+const { cargarArriendos, filtrarPorFacturar, resumenEnCurso } = require('../utils/arriendos');
+const { SQL_OT_POR_VALORIZAR, SQL_OT_LISTA_FACTURAR } = require('../utils/ordenes');
 const { leerConfiguracion, validarCambioConfiguracion } = require('../utils/configuracion');
 const { textoPorDefecto, leerFacturaParaCorreo, hayEnvioPendiente, encolarCorreoFactura, validarFolio, cancelarCorreosPrevios } = require('../utils/correoFactura');
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
@@ -28,10 +29,9 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
         // maquinarias.cliente_id, que con dos despachos seguidos ya seria el del segundo)
         const config = await leerConfiguracion(pool);
         const todos = await cargarArriendos(pool, config);
-        const arriendos = todos
-            // un arriendo facturado de mas (recepcion registrada con fecha anterior a lo ya facturado)
-            // se muestra con su aviso: pide nota de credito en el SII y no se puede subir otra factura
-            .filter((a) => !a.en_curso && (!a.nada_que_facturar || a.facturado_de_mas))
+        // un arriendo facturado de mas (recepcion registrada con fecha anterior a lo ya facturado)
+        // se muestra con su aviso: pide nota de credito en el SII y no se puede subir otra factura
+        const arriendos = filtrarPorFacturar(todos)
             .map((a) => ({
                 guia_recepcion_id: a.guia_recepcion_id,
                 guia_despacho_id: a.guia_despacho_id,
@@ -60,11 +60,8 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
             FROM ordenes_trabajo ot
             JOIN maquinarias m ON m.id = ot.maquinaria_id
             LEFT JOIN clientes c ON c.id = ot.cliente_id
-            WHERE ot.facturable = true AND ot.valorizacion IS NULL
-              -- una orden ya facturada (se puede facturar sin valorizar) no queda pendiente de valorizar
-              AND NOT EXISTS (SELECT 1 FROM facturas f WHERE f.orden_trabajo_id = ot.id)
-              -- solo trabajo terminado: una OT en curso todavia puede sumar o anular repuestos
-              AND ot.estado = 'finalizada'
+            -- solo trabajo terminado y sin factura: una OT en curso todavia puede sumar o anular repuestos
+            WHERE ${SQL_OT_POR_VALORIZAR}
             ORDER BY ot.fecha_creacion DESC
         `);
 
@@ -74,9 +71,7 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
             FROM ordenes_trabajo ot
             JOIN maquinarias m ON m.id = ot.maquinaria_id
             LEFT JOIN clientes c ON c.id = ot.cliente_id
-            WHERE ot.facturable = true AND ot.valorizacion IS NOT NULL
-              AND ot.estado = 'finalizada'
-              AND NOT EXISTS (SELECT 1 FROM facturas f WHERE f.orden_trabajo_id = ot.id)
+            WHERE ${SQL_OT_LISTA_FACTURAR}
             ORDER BY ot.fecha_creacion DESC
         `);
 
@@ -333,13 +328,7 @@ router.get('/arriendos-en-curso', verifyToken, requireRole('administrativo', 'ge
                 inicio_cobro: a.inicio_cobro,
                 facturado_hasta: a.facturado_hasta,
                 opciones_hasta: a.opciones_hasta,
-                ...resumirArriendoEnCurso({
-                    inicioCobro: a.inicio_cobro,
-                    ultimoPeriodoHasta: a.facturado_hasta,
-                    hoy: a.hoy,
-                    diaFacturacion: config.dia_facturacion,
-                    corteCierraPeriodo: config.corte_cierra_periodo,
-                }),
+                ...resumenEnCurso(a, config),
             }));
         arriendos.sort((a, b) => b.periodos_sin_facturar - a.periodos_sin_facturar || b.dias - a.dias);
         res.json({ arriendos, configuracion: config });

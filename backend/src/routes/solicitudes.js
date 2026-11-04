@@ -99,13 +99,20 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
 
 // GET /api/solicitudes - administrativo/gerente revisan las solicitudes de los clientes
 router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    // ?estado=pendiente: las que cuenta el dashboard (utils/pendientes.js); sin el, todas
+    const filtro = req.query.estado;
+    if (filtro !== undefined && !['pendiente', 'convertida', 'rechazada'].includes(filtro)) {
+        return res.status(400).json({ error: 'Estado inválido. Valores posibles: pendiente, convertida, rechazada' });
+    }
     try {
         const result = await pool.query(
             `SELECT s.*, c.nombre AS cliente_nombre, m.codigo AS maquinaria_codigo
              FROM solicitudes s
              JOIN clientes c ON c.id = s.cliente_id
              JOIN maquinarias m ON m.id = s.maquinaria_id
-             ORDER BY s.created_at DESC`
+             ${filtro ? 'WHERE s.estado = $1::estado_solicitud' : ''}
+             ORDER BY s.created_at DESC`,
+            filtro ? [filtro] : []
         );
         res.json(await conUrlFirmada(result.rows));
     } catch (err) {
