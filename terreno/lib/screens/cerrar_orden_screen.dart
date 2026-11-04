@@ -7,6 +7,7 @@ import '../db/local_database.dart';
 import '../models/orden_trabajo.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../utils/cuerpo_cierre.dart';
 import '../widgets/dialogo_horometro.dart';
 
 /// Cierre de la OT: quien recibe el equipo + firma digital + resumen.
@@ -35,6 +36,8 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
   bool _sinPersona = false;
   bool _cerrando = false;
   bool _reiniciarContador = false;
+  // como deja el equipo el mecanico: sin preseleccion, para que sea una decision y no un valor por omision
+  String? _estadoEquipo;
   // ultima lectura de horometro que el telefono conoce de este equipo (null si no hay ninguna)
   double? _ultimaLectura;
 
@@ -60,7 +63,7 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
     super.dispose();
   }
 
-  bool get _puedeCerrar => _sinPersona || _personaCtrl.text.trim().isNotEmpty;
+  bool get _puedeCerrar => _estadoEquipo != null && (_sinPersona || _personaCtrl.text.trim().isNotEmpty);
 
   double? get _lecturaEscrita {
     final v = double.tryParse(_horometroCtrl.text.trim().replaceAll(',', '.'));
@@ -103,10 +106,13 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
       if (!seguir || !mounted) return;
     }
     final etiqueta = etiquetaOt(context.read<SyncService>().resolverIdOrden(widget.orden.id));
+    final fueraDeServicio = _estadoEquipo == estadoEquipoFueraDeServicio;
     final cerrar = await _preguntar(
       titulo: '¿Cerrar la $etiqueta?',
-      mensaje: 'Después no podrás cambiar fotos ni repuestos. Fotos después: ${widget.fotosDespues}, '
-          'repuestos: ${widget.insumos}.',
+      mensaje: 'El equipo queda ${fueraDeServicio ? 'FUERA DE SERVICIO' : 'operativo'}.\n\n'
+          'Después no podrás cambiar fotos ni repuestos. Fotos después: ${widget.fotosDespues}, '
+          'repuestos: ${widget.insumos}.\n\n'
+          'Si te equivocas, avisa al administrativo para corregirlo en el panel.',
       seguir: 'Cerrar $etiqueta',
       volver: 'Seguir editando',
     );
@@ -147,6 +153,7 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
         personaRecibe: _sinPersona ? null : _personaCtrl.text.trim(),
         sinPersona: _sinPersona,
         rutaFirmaLocal: rutaFirma,
+        estadoEquipo: _estadoEquipo!,
       );
 
       // la lectura va como tarea aparte y despues del cierre: si el horometro falla en el
@@ -208,7 +215,7 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
                 const Padding(
                   padding: EdgeInsets.only(bottom: 8),
                   child: Text(
-                    'Escribe quién recibe el equipo o marca "No hay persona disponible" para poder cerrar',
+                    'Indica cómo queda el equipo y quién lo recibe (o marca "No hay persona disponible") para poder cerrar',
                     textAlign: TextAlign.center,
                     style: TextStyle(fontSize: 12, color: GomaqColors.estadoAdvertencia),
                   ),
@@ -255,6 +262,28 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
                 ],
               ),
             ),
+          ),
+          const SizedBox(height: 8),
+          const Text('¿CÓMO QUEDA EL EQUIPO?',
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario)),
+          const SizedBox(height: 4),
+          RadioListTile<String>(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Queda operativo', style: TextStyle(fontSize: 14)),
+            value: estadoEquipoOperativo,
+            groupValue: _estadoEquipo,
+            activeColor: GomaqColors.primario,
+            onChanged: (v) => setState(() => _estadoEquipo = v),
+          ),
+          RadioListTile<String>(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('Queda fuera de servicio', style: TextStyle(fontSize: 14)),
+            subtitle: const Text('Queda marcado como no disponible hasta que se revise en el panel',
+                style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
+            value: estadoEquipoFueraDeServicio,
+            groupValue: _estadoEquipo,
+            activeColor: GomaqColors.primario,
+            onChanged: (v) => setState(() => _estadoEquipo = v),
           ),
           const SizedBox(height: 8),
           const Text('HORÓMETRO DEL EQUIPO',

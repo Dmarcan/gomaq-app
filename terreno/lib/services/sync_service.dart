@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:sqflite/sqflite.dart';
 import '../db/local_database.dart';
 import '../models/orden_trabajo.dart';
+import '../utils/cuerpo_cierre.dart';
 import '../utils/uuid.dart';
 import 'api_client.dart';
 
@@ -90,19 +91,40 @@ class SyncService extends ChangeNotifier {
     String? personaRecibe,
     bool sinPersona = false,
     String? rutaFirmaLocal,
+    required String estadoEquipo,
   }) async {
+    if (estadoEquipo != estadoEquipoOperativo && estadoEquipo != estadoEquipoFueraDeServicio) {
+      throw ArgumentError.value(estadoEquipo, 'estadoEquipo', 'debe ser operativa o fuera_de_servicio');
+    }
     ordenId = resolverIdOrden(ordenId);
     final db = await _db;
-    await db.update(
-      'ordenes_locales',
-      {'estado': 'finalizada', 'actualizado_en': DateTime.now().toIso8601String()},
-      where: 'id = ?',
-      whereArgs: [ordenId],
-    );
-    await _encolar(ordenId, 'finalizar', {
-      if (personaRecibe != null) 'persona_recibe': personaRecibe,
-      'sin_persona': sinPersona,
-      if (rutaFirmaLocal != null) 'ruta_firma_local': rutaFirmaLocal,
+    // las escrituras van juntas: si se corta a la mitad no queda la OT finalizada sin su tarea de
+    // cierre en la cola (y el uuid de la tarea se genera una sola vez, dentro de _encolar)
+    await db.transaction((txn) async {
+      await txn.update(
+        'ordenes_locales',
+        {'estado': 'finalizada', 'actualizado_en': DateTime.now().toIso8601String()},
+        where: 'id = ?',
+        whereArgs: [ordenId],
+      );
+      await _encolar(ordenId, 'finalizar', {
+        if (personaRecibe != null) 'persona_recibe': personaRecibe,
+        'sin_persona': sinPersona,
+        if (rutaFirmaLocal != null) 'ruta_firma_local': rutaFirmaLocal,
+        // como queda el equipo y la hora real del cierre: la cola puede enviarlo mucho despues, y el
+        // historial registra cuando se cerro, no cuando hubo senal. Si la tarea la encolo una version
+        // anterior no trae hora y se usa creado_en, que se guarda en la hora LOCAL del telefono sin
+        // zona: es correcta mientras el telefono no cambie de zona horaria entre el cierre y el envio.
+        'estado_equipo': estadoEquipo,
+        'ocurrio_en': DateTime.now().toUtc().toIso8601String(),
+      }, ejecutor: txn);
+      // Flota muestra el estado sin senal. Solo el caso fuera de servicio se refleja: con "operativo"
+      // el servidor puede mantener la mantencion por otra OT abierta o por un cambio del panel, asi
+      // que ahi manda lo que responda al sincronizar.
+      if (estadoEquipo == estadoEquipoFueraDeServicio) {
+        await txn.update('maquinarias_local', {'estado': estadoEquipoFueraDeServicio},
+            where: 'id = (SELECT maquinaria_id FROM ordenes_locales WHERE id = ?)', whereArgs: [ordenId]);
+      }
     });
     notifyListeners();
   }
@@ -299,9 +321,9 @@ class SyncService extends ChangeNotifier {
     return null;
   }
 
-  Future<void> _encolar(int ordenId, String tipo, Map<String, dynamic> payload) async {
+  Future<void> _encolar(int ordenId, String tipo, Map<String, dynamic> payload, {DatabaseExecutor? ejecutor}) async {
     ordenId = resolverIdOrden(ordenId);
-    final db = await _db;
+    final db = ejecutor ?? await _db;
     await db.insert('cola_sincronizacion', {
       'tipo': tipo,
       'orden_trabajo_id': ordenId,
@@ -787,7 +809,7 @@ class SyncService extends ChangeNotifier {
         await _crearOtEnTerreno(ordenId, payload, remapeo);
         break;
       case 'diagnostico':
-        await ApiClient.instance.patch('/api/ordenes-trabajo/$ordenId/diagnostico', payload);
+        await ApiClient.instance.patch('/api/ordenes-trabajo/$ordenId/diagnostico', cuerpoDiagnostico(payload));
         break;
       case 'finalizar':
         await _finalizarConFirma(tarea, ordenId, payload);
@@ -859,11 +881,10 @@ class SyncService extends ChangeNotifier {
       }
     }
 
-    await ApiClient.instance.patch('/api/ordenes-trabajo/$ordenId/finalizar', {
-      if (payload['persona_recibe'] != null) 'persona_recibe': payload['persona_recibe'],
-      if (payload['sin_persona'] != null) 'sin_persona': payload['sin_persona'],
-      if (firmaPath != null) 'firma_path': firmaPath,
-    });
+    await ApiClient.instance.patch(
+      '/api/ordenes-trabajo/$ordenId/finalizar',
+      cuerpoFinalizar(payload, creadoEn: tarea['creado_en'] as String?, firmaPath: firmaPath),
+    );
   }
 
   /// Sube la foto a Supabase y la registra en la OT.
