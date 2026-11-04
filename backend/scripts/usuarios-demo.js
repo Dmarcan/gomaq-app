@@ -40,8 +40,26 @@ async function crear() {
 }
 
 async function borrar() {
-    await pool.query('DELETE FROM usuarios WHERE email = ANY($1)', [USUARIOS.map((u) => u.email)]);
-    await pool.query('DELETE FROM clientes WHERE nombre = $1', [EMPRESA_DEMO]);
+    // Un usuario demo que hizo algo en una OT (crearla, asignarla, valorizarla) esta referenciado
+    // por ordenes_eventos, que es de solo insercion (migracion 020) y rechaza UPDATE y DELETE.
+    // Esta es una de las tres vias de purga permitidas: SET LOCAL activa gomaq.purga solo dentro
+    // de esta transaccion. No se borran los eventos (son el historial de OT que pueden ser reales):
+    // se les quita el usuario, y el rol queda escrito en el evento.
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        await client.query("SET LOCAL gomaq.purga = 'on'");
+        const ids = `(SELECT id FROM usuarios WHERE email = ANY($1))`;
+        await client.query(`UPDATE ordenes_eventos SET usuario_id = NULL WHERE usuario_id IN ${ids}`, [USUARIOS.map((u) => u.email)]);
+        await client.query('DELETE FROM usuarios WHERE email = ANY($1)', [USUARIOS.map((u) => u.email)]);
+        await client.query('DELETE FROM clientes WHERE nombre = $1', [EMPRESA_DEMO]);
+        await client.query('COMMIT');
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+    } finally {
+        client.release();
+    }
     console.log('usuarios de prueba y empresa demo borrados');
 }
 

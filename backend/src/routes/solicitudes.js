@@ -4,6 +4,7 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaImagen } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { rutaAdjuntoSolicitud } = require('../utils/rutaArchivo');
+const { dejarEvento } = require('../utils/eventosOt');
 
 const router = express.Router();
 
@@ -113,8 +114,9 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
 
 // PATCH /api/solicitudes/:id/convertir - transforma la solicitud en una Orden de Trabajo real
 router.patch('/:id/convertir', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
-    const client = await pool.connect();
+    let client = null;
     try {
+        client = await pool.connect();
         await client.query('BEGIN');
         const solicitudResult = await client.query('SELECT * FROM solicitudes WHERE id = $1 FOR UPDATE', [req.params.id]);
         const solicitud = solicitudResult.rows[0];
@@ -133,6 +135,12 @@ router.patch('/:id/convertir', verifyToken, requireRole('administrativo', 'geren
             [solicitud.maquinaria_id, solicitud.cliente_id, solicitud.descripcion]
         );
         const orden = otResult.rows[0];
+        // la OT nace en la misma transaccion que su evento de creacion (historial, migracion 020)
+        await dejarEvento(client, {
+            ordenId: orden.id, tipo: 'creacion', origen: 'panel', estadoNuevo: orden.estado,
+            usuario: req.user,
+            detalle: { maquinaria_id: orden.maquinaria_id, cliente_id: orden.cliente_id, solicitud_id: solicitud.id },
+        });
 
         await client.query(
             `UPDATE solicitudes SET estado = 'convertida', orden_trabajo_id = $1 WHERE id = $2`,
@@ -142,11 +150,11 @@ router.patch('/:id/convertir', verifyToken, requireRole('administrativo', 'geren
         await client.query('COMMIT');
         res.json({ solicitud_id: solicitud.id, orden_trabajo: orden });
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al convertir solicitud' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 

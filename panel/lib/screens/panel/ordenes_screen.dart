@@ -6,6 +6,7 @@ import 'package:provider/provider.dart';
 import '../../services/api_client.dart';
 import '../../widgets/dialogos.dart';
 import '../../utils/formato.dart';
+import '../../utils/historial_ot.dart';
 import '../../utils/numeros.dart';
 import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
@@ -278,6 +279,10 @@ class _DetalleOrdenDialog extends StatefulWidget {
 class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
   List<dynamic> _mecanicos = [];
   List<dynamic> _lineas = [];
+  // línea de tiempo de la orden (solo administrativo y gerente)
+  List<dynamic> _historial = [];
+  bool _cargandoHistorial = true;
+  String? _errorHistorial;
   int? _mecanicoSeleccionado;
   final _valorizacionCtrl = TextEditingController();
   bool _cargandoAccion = false;
@@ -292,7 +297,24 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _cargarMecanicos();
       _cargarLineas();
+      final auth = context.read<AuthService>();
+      if (auth.esAdministrativo || auth.esGerente) _cargarHistorial();
     });
+  }
+
+  Future<void> _cargarHistorial() async {
+    setState(() {
+      _cargandoHistorial = true;
+      _errorHistorial = null;
+    });
+    try {
+      final data = await ApiClient.instance.get('/api/ordenes-trabajo/${widget.orden['id']}/historial');
+      if (mounted) setState(() => _historial = data);
+    } catch (e) {
+      if (mounted) setState(() => _errorHistorial = mensajeErrorCarga(e));
+    } finally {
+      if (mounted) setState(() => _cargandoHistorial = false);
+    }
   }
 
   Future<void> _cargarMecanicos() async {
@@ -498,6 +520,69 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
     );
   }
 
+  /// Línea de tiempo de la orden: qué pasó, quién y cuándo. Los eventos que viajaron por la cola
+  /// offline y llegaron tarde dicen a qué hora se sincronizaron.
+  Widget _seccionHistorial() {
+    final Widget contenido;
+    if (_cargandoHistorial) {
+      contenido = const Padding(padding: EdgeInsets.symmetric(vertical: 16), child: Center(child: CircularProgressIndicator()));
+    } else if (_errorHistorial != null) {
+      // el diálogo ya hace scroll: EstadoError necesita un alto fijo
+      contenido = SizedBox(
+        height: 240,
+        child: EstadoError(titulo: 'No se pudo cargar el historial', mensaje: _errorHistorial!, onReintentar: _cargarHistorial),
+      );
+    } else if (_historial.isEmpty) {
+      contenido = const Text('Sin eventos registrados', style: TextStyle(color: Colors.black54));
+    } else {
+      contenido = Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [for (final e in _historial) _eventoHistorial(e as Map<String, dynamic>)],
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: 32),
+        const TituloSeccion('Historial'),
+        contenido,
+      ],
+    );
+  }
+
+  Widget _eventoHistorial(Map<String, dynamic> e) {
+    const apagado = TextStyle(fontSize: 12, color: Colors.black54);
+    final quien = quienHizoEventoOt(e);
+    final sincronizado = textoSincronizacionOt(e);
+    final detalle = [
+      Formato.fechaHora(e['ocurrio_en']),
+      ?quien,
+      ?sincronizado,
+      if (e['hora_dudosa'] == true) 'hora dudosa',
+    ].join(' · ');
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(top: 5, right: 12),
+            child: Icon(Icons.circle, size: 10, color: e['aplicado'] == false ? Colors.black38 : GomaqColors.primario),
+          ),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(textoEventoOt(e), style: const TextStyle(fontSize: 14)),
+                Text(detalle, style: apagado),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   /// Una fila de dato: la etiqueta apagada a la izquierda y el valor a su lado.
   Widget _fila(String etiqueta, Widget valor) {
     const estiloEtiqueta = TextStyle(fontSize: 13, color: Colors.black54);
@@ -636,6 +721,8 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
               ],
             ),
           ],
+
+          if (auth.esAdministrativo || auth.esGerente) _seccionHistorial(),
         ],
       ),
       acciones: [TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar'))],

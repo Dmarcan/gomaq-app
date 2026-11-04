@@ -4,11 +4,21 @@ const { mecanicoPuedeEditar } = require('./estadosOt');
 
 // verifica que una orden de trabajo exista y pertenezca al mecanico dado. Devuelve tambien el
 // estado y si el mecanico todavia puede modificarla (no, una vez finalizada).
-async function verificarDuenoOrden(ordenId, mecanicoId) {
-    const result = await pool.query('SELECT mecanico_id, estado FROM ordenes_trabajo WHERE id = $1', [ordenId]);
+// `db` es el cliente de una transaccion en curso, y `bloquear` toma la fila con FOR UPDATE: lo usa
+// quien necesita que el estado leido siga siendo el real hasta el COMMIT (ver /diagnostico).
+async function verificarDuenoOrden(ordenId, mecanicoId, { db = pool, bloquear = false } = {}) {
+    const result = await db.query(
+        `SELECT mecanico_id, estado, fecha_creacion, uuid_cliente FROM ordenes_trabajo WHERE id = $1${bloquear ? ' FOR UPDATE' : ''}`,
+        [ordenId]
+    );
     if (result.rows.length === 0) return { existe: false };
-    const { mecanico_id: dueno, estado } = result.rows[0];
-    return { existe: true, esDueno: dueno === mecanicoId, estado, editable: mecanicoPuedeEditar(estado) };
+    const { mecanico_id: dueno, estado, fecha_creacion: creadaEn, uuid_cliente: uuidOt } = result.rows[0];
+    // una OT creada por el mecanico en terreno (con uuid_cliente) lleva como fecha de creacion la
+    // hora en que llego al servidor, no la del telefono
+    return {
+        existe: true, esDueno: dueno === mecanicoId, estado, creadaEn, nacioPorSincronizacion: Boolean(uuidOt),
+        editable: mecanicoPuedeEditar(estado),
+    };
 }
 
 /** Respuesta comun cuando el mecanico intenta modificar una OT ya cerrada. */

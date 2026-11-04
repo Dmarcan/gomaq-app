@@ -5,6 +5,11 @@
 
 BEGIN;
 
+-- ordenes_eventos (historial de la OT, migracion 020) es de solo insercion: sus triggers rechazan el
+-- DELETE. Esta limpieza es una de las tres vias de purga permitidas (con las pruebas de escritura y
+-- usuarios-demo.js borrar); SET LOCAL vale solo hasta el COMMIT de esta transaccion.
+SET LOCAL gomaq.purga = 'on';
+
 -- 1. Movimientos de insumos asociados a OTs de prueba (consumos de verificacion)
 DELETE FROM movimientos_insumo
 WHERE orden_trabajo_id IN (SELECT id FROM ordenes_trabajo WHERE maquinaria_id IN (SELECT id FROM maquinarias WHERE codigo = 'GH-999'));
@@ -18,7 +23,9 @@ DELETE FROM facturas WHERE folio IN ('FOLIO-MAL', '8842', '15414', 'TEST-9001');
 -- 3. Guias de prueba de la maquinaria GH-999 (PDFs dummy)
 DELETE FROM guias WHERE maquinaria_id IN (SELECT id FROM maquinarias WHERE codigo = 'GH-999');
 
--- 4. Ordenes de trabajo de la maquinaria de prueba (si se crearon)
+-- 4. Ordenes de trabajo de la maquinaria de prueba (si se crearon), con su historial
+DELETE FROM ordenes_eventos
+WHERE orden_trabajo_id IN (SELECT id FROM ordenes_trabajo WHERE maquinaria_id IN (SELECT id FROM maquinarias WHERE codigo = 'GH-999'));
 DELETE FROM ordenes_trabajo WHERE maquinaria_id IN (SELECT id FROM maquinarias WHERE codigo = 'GH-999');
 
 -- 5. Maquinaria de prueba GH-999 ("Toyota 8FG25-EDITADO", creada para verificar el perfil de equipo)
