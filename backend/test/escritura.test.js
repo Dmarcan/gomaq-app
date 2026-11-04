@@ -4547,3 +4547,228 @@ describe('bloque 4 (parte B): documentos del equipo, casos de borde de la revisi
         assert.match(sano.url, /^https:\/\/firmada\.test\//);
     });
 });
+
+describe('bloque 5 (parte A): guias idempotentes con uuid_cliente', () => {
+    /** Envia una guia por la ruta real. Con `pdf` sube un archivo; si no, va sin documento. */
+    async function enviarGuia(equipoId, campos, pdf = false) {
+        const formulario = new FormData();
+        for (const [clave, valor] of Object.entries(campos)) {
+            if (valor !== undefined && valor !== null) formulario.append(clave, String(valor));
+        }
+        if (pdf) formulario.append('archivo', new Blob(['%PDF-1.4 prueba'], { type: 'application/pdf' }), 'g.pdf');
+        else formulario.append('sin_documento', 'true');
+        const r = await fetch(`${base}/api/maquinarias/${equipoId}/guias`, {
+            method: 'POST', headers: { Authorization: `Bearer ${tokens.administrativo}` }, body: formulario,
+        });
+        let cuerpo = null;
+        try { cuerpo = await r.json(); } catch (_) { /* sin cuerpo */ }
+        return { status: r.status, body: cuerpo };
+    }
+
+    const cuantasGuias = async (uuid) =>
+        (await pool.query('SELECT count(*)::int AS n FROM guias WHERE uuid_cliente = $1', [uuid])).rows[0].n;
+
+    test('el mismo uuid dos veces: una sola guia y el equipo no se vuelve a tocar', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const uuid = crypto.randomUUID();
+        const primera = await enviarGuia(equipo.id, { tipo: 'despacho', cliente_id: cliente, uuid_cliente: uuid });
+        assert.equal(primera.status, 201);
+        assert.equal(primera.body.uuid_cliente, uuid);
+        // alguien mas libera el equipo; el reintento no debe volver a asignarlo
+        await pool.query('UPDATE maquinarias SET cliente_id = NULL WHERE id = $1', [equipo.id]);
+        const segunda = await enviarGuia(equipo.id, { tipo: 'despacho', cliente_id: cliente, uuid_cliente: uuid });
+        assert.equal(segunda.status, 200);
+        assert.equal(segunda.body.ya_registrada, true);
+        assert.equal(segunda.body.id, primera.body.id);
+        assert.equal(await cuantasGuias(uuid), 1);
+        const maq = await pool.query('SELECT cliente_id FROM maquinarias WHERE id = $1', [equipo.id]);
+        assert.equal(maq.rows[0].cliente_id, null, 'el reintento no reaplico el cambio de cliente');
+    });
+
+    test('el reintento con PDF no vuelve a subir el archivo', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const uuid = crypto.randomUUID();
+        const antes = datos.storage.subidos.length;
+        assert.equal((await enviarGuia(equipo.id, { tipo: 'despacho', cliente_id: cliente, uuid_cliente: uuid }, true)).status, 201);
+        assert.equal(datos.storage.subidos.length, antes + 1);
+        const reintento = await enviarGuia(equipo.id, { tipo: 'despacho', cliente_id: cliente, uuid_cliente: uuid }, true);
+        assert.equal(reintento.status, 200);
+        assert.equal(reintento.body.falta_documento, false);
+        assert.equal(datos.storage.subidos.length, antes + 1, 'el reintento no sube otro PDF');
+    });
+
+    test('el mismo uuid con otro equipo o con otro tipo da 409', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const otro = await crearEquipo(null);
+        const uuid = crypto.randomUUID();
+        assert.equal((await enviarGuia(equipo.id, { tipo: 'despacho', cliente_id: cliente, uuid_cliente: uuid })).status, 201);
+        assert.equal((await enviarGuia(otro.id, { tipo: 'despacho', cliente_id: cliente, uuid_cliente: uuid })).status, 409);
+        assert.equal((await enviarGuia(equipo.id, { tipo: 'recepcion', uuid_cliente: uuid })).status, 409);
+        assert.equal(await cuantasGuias(uuid), 1);
+        const maq = await pool.query('SELECT cliente_id FROM maquinarias WHERE id = $1', [otro.id]);
+        assert.equal(maq.rows[0].cliente_id, null, 'el 409 no toco el otro equipo');
+    });
+
+    test('dos envios simultaneos con el mismo uuid dejan una sola guia', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        for (let vuelta = 0; vuelta < 5; vuelta++) {
+            const equipo = await crearEquipo(null);
+            const uuid = crypto.randomUUID();
+            const envio = () => enviarGuia(equipo.id, { tipo: 'despacho', cliente_id: cliente, uuid_cliente: uuid });
+            const [a, b] = await Promise.all([envio(), envio()]);
+            assert.deepEqual([a.status, b.status].sort(), [200, 201], JSON.stringify([a.body, b.body]));
+            assert.equal(a.body.id, b.body.id);
+            assert.equal(await cuantasGuias(uuid), 1);
+        }
+    });
+
+    test('sin uuid el comportamiento es el de siempre: cada envio crea su guia', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const a = await enviarGuia(equipo.id, { tipo: 'despacho', cliente_id: cliente });
+        const b = await enviarGuia(equipo.id, { tipo: 'despacho', cliente_id: cliente });
+        assert.equal(a.status, 201);
+        assert.equal(b.status, 201);
+        assert.notEqual(a.body.id, b.body.id);
+        assert.equal(a.body.uuid_cliente, null);
+    });
+
+    test('un uuid mal formado da 400 y no crea nada', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        for (const malo of ['no-es-uuid', '123', '0x10', "' OR 1=1 --"]) {
+            const r = await enviarGuia(equipo.id, { tipo: 'despacho', cliente_id: cliente, uuid_cliente: malo });
+            assert.equal(r.status, 400, malo);
+        }
+        const n = await pool.query('SELECT count(*)::int AS n FROM guias WHERE maquinaria_id = $1', [equipo.id]);
+        assert.equal(n.rows[0].n, 0);
+    });
+
+    test('la migracion 026 se puede correr otra vez', async (t) => {
+        if (!requiereBase(t)) return;
+        const sql = require('fs').readFileSync(require('path').join(__dirname, '../../db/migrations/026_guias_uuid_cliente.sql'), 'utf8');
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(sql);
+            await client.query('COMMIT');
+        } catch (err) {
+            await client.query('ROLLBACK').catch(() => {});
+            throw err;
+        } finally {
+            client.release();
+        }
+        const r = await pool.query("SELECT count(*)::int AS n FROM pg_indexes WHERE indexname = 'guias_uuid_cliente_key'");
+        assert.equal(r.rows[0].n, 1);
+    });
+});
+
+describe('bloque 5 (parte A): correcciones de la revision experta', () => {
+    async function enviar(equipoId, campos, pdf = false) {
+        const formulario = new FormData();
+        for (const [clave, valor] of Object.entries(campos)) {
+            if (valor !== undefined && valor !== null) formulario.append(clave, String(valor));
+        }
+        if (pdf) formulario.append('archivo', new Blob(['%PDF-1.4 prueba'], { type: 'application/pdf' }), 'g.pdf');
+        else formulario.append('sin_documento', 'true');
+        const r = await fetch(`${base}/api/maquinarias/${equipoId}/guias`, {
+            method: 'POST', headers: { Authorization: `Bearer ${tokens.administrativo}` }, body: formulario,
+        });
+        let cuerpo = null;
+        try { cuerpo = await r.json(); } catch (_) { /* sin cuerpo */ }
+        return { status: r.status, body: cuerpo };
+    }
+
+    test('un uuid en mayusculas reenviado en minusculas es el mismo envio', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const uuid = crypto.randomUUID();
+        const a = await enviar(equipo.id, { tipo: 'despacho', cliente_id: cliente, uuid_cliente: uuid.toUpperCase() });
+        assert.equal(a.status, 201);
+        const b = await enviar(equipo.id, { tipo: 'despacho', cliente_id: cliente, uuid_cliente: uuid.toLowerCase() });
+        assert.equal(b.status, 200);
+        assert.equal(b.body.id, a.body.id);
+    });
+
+    test('el reintento identico con fecha explicita es 200; si cambia cliente, fallida o fecha es 409', async (t) => {
+        if (!requiereBase(t)) return;
+        const clientes = (await pool.query('SELECT id FROM clientes ORDER BY id LIMIT 2')).rows.map((c) => c.id);
+        const equipo = await crearEquipo(null);
+        const uuid = crypto.randomUUID();
+        const base1 = { tipo: 'despacho', cliente_id: clientes[0], uuid_cliente: uuid, fecha_hora: '2026-03-10T09:00:00-03:00' };
+        const primera = await enviar(equipo.id, base1);
+        assert.equal(primera.status, 201);
+        assert.equal((await enviar(equipo.id, base1)).status, 200, 'identico');
+        // la misma hora escrita con otro formato sigue siendo la misma fecha
+        assert.equal((await enviar(equipo.id, { ...base1, fecha_hora: '2026-03-10T12:00:00Z' })).status, 200);
+        assert.equal((await enviar(equipo.id, { ...base1, fecha_hora: '2026-03-11T09:00:00-03:00' })).status, 409, 'otra fecha');
+        assert.equal((await enviar(equipo.id, { ...base1, fallido: 'true' })).status, 409, 'otra condicion de fallida');
+        if (clientes.length > 1) {
+            assert.equal((await enviar(equipo.id, { ...base1, cliente_id: clientes[1] })).status, 409, 'otro cliente');
+        }
+        const n = await pool.query('SELECT count(*)::int AS n FROM guias WHERE uuid_cliente = $1', [uuid]);
+        assert.equal(n.rows[0].n, 1);
+    });
+
+    test('sin fecha_hora el reintento no compara la fecha (el INSERT usa now())', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const uuid = crypto.randomUUID();
+        const campos = { tipo: 'despacho', cliente_id: cliente, uuid_cliente: uuid };
+        assert.equal((await enviar(equipo.id, campos)).status, 201);
+        assert.equal((await enviar(equipo.id, campos)).status, 200);
+    });
+
+    test('la carrera con PDF no deja archivos huerfanos: todo PDF de mas se borra', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        for (let vuelta = 0; vuelta < 4; vuelta++) {
+            const equipo = await crearEquipo(null);
+            const uuid = crypto.randomUUID();
+            const subidosAntes = datos.storage.subidos.length;
+            const borradosAntes = datos.storage.borrados.length;
+            const envio = () => enviar(equipo.id, { tipo: 'despacho', cliente_id: cliente, uuid_cliente: uuid }, true);
+            const [a, b] = await Promise.all([envio(), envio()]);
+            assert.deepEqual([a.status, b.status].sort(), [200, 201]);
+            const subidos = datos.storage.subidos.length - subidosAntes;
+            const borrados = datos.storage.borrados.length - borradosAntes;
+            assert.equal(subidos - borrados, 1, `queda un solo PDF (subidos ${subidos}, borrados ${borrados})`);
+            const guia = await pool.query('SELECT archivo_url FROM guias WHERE uuid_cliente = $1', [uuid]);
+            assert.ok(!datos.storage.borrados.includes(guia.rows[0].archivo_url), 'el PDF de la guia guardada no se borro');
+        }
+    });
+
+    test('si falla el SELECT del uuid responde 500 y el servidor sigue vivo', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const original = pool.query;
+        let fallos = 0;
+        pool.query = function (texto, ...resto) {
+            if (typeof texto === 'string' && texto.includes('FROM guias WHERE uuid_cliente') && fallos === 0) {
+                fallos += 1;
+                return Promise.reject(new Error('fallo simulado de la base'));
+            }
+            return original.call(this, texto, ...resto);
+        };
+        try {
+            const r = await enviar(equipo.id, { tipo: 'despacho', cliente_id: cliente, uuid_cliente: crypto.randomUUID() });
+            assert.equal(r.status, 500);
+        } finally {
+            pool.query = original;
+        }
+        assert.equal(fallos, 1);
+        assert.equal((await enviar(equipo.id, { tipo: 'despacho', cliente_id: cliente })).status, 201, 'el servidor sigue atendiendo');
+    });
+});

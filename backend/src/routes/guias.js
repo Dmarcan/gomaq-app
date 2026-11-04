@@ -9,6 +9,7 @@ const { detectarCliente } = require('../utils/detectarCliente');
 const { parsearGuia } = require('../utils/parsearDocumento');
 const { calcularEstadoMantencion, requiereAviso } = require('../utils/mantencion');
 const { encolarAvisoMantencion } = require('./horometro');
+const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 
 const router = express.Router();
 
@@ -102,6 +103,46 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
         return res.status(400).json({ error: 'Elige el cliente al que se despacha el equipo' });
     }
 
+    // reintentos sin duplicados (migracion 026): el panel manda un uuid_cliente que se conserva
+    // mientras se reintenta el mismo envio. Se revisa ANTES de subir el PDF a Supabase.
+    const leido = leerUuidCliente(req.body);
+    if (!leido.valido) {
+        return res.status(400).json({ error: 'uuid_cliente no es un UUID válido' });
+    }
+    const uuidCliente = leido.uuid;
+    // La guia ya registrada con ese uuid. 200 si es el mismo envio: mismo equipo y tipo y, ademas, el
+    // mismo cliente (despacho), el mismo estado de fallida y la misma fecha cuando viene explicita
+    // (la fecha se compara en SQL con el mismo cast que el INSERT; sin fecha_hora el INSERT usa
+    // now() y no hay nada que comparar). Si difiere en algo, 409: es otro envio con la llave repetida.
+    const respuestaGuiaExistente = async (db, guia) => {
+        let igual = Number(guia.maquinaria_id) === Number(id) && guia.tipo === tipo
+            && Boolean(guia.fallido) === esFallido;
+        if (igual && tipo === 'despacho' && cliente_id) {
+            igual = Number(guia.cliente_id) === Number(cliente_id);
+        }
+        if (igual && fecha_hora) {
+            const r = await db.query('SELECT (fecha = $2::timestamptz) AS misma FROM guias WHERE id = $1', [guia.id, fecha_hora]);
+            igual = Boolean(r.rows[0] && r.rows[0].misma);
+        }
+        if (igual) {
+            return { status: 200, cuerpo: { ...guia, falta_documento: guia.archivo_url === null, ya_registrada: true } };
+        }
+        return { status: 409, cuerpo: { error: 'Ese identificador de envío ya se usó para otra guía distinta' } };
+    };
+    if (uuidCliente) {
+        try {
+            const previa = await buscarPorUuid(pool, 'guias', uuidCliente);
+            if (previa) {
+                const r = await respuestaGuiaExistente(pool, previa);
+                return res.status(r.status).json(r.cuerpo);
+            }
+        } catch (err) {
+            // Express 4 no atrapa el rechazo de un handler async: sin esto, un fallo del SELECT tumba el proceso
+            console.error(err);
+            return res.status(500).json({ error: 'Error al revisar la guía' });
+        }
+    }
+
     const client = await pool.connect();
     let rutaStorage = null;
     try {
@@ -138,10 +179,10 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
         await client.query('BEGIN');
 
         const result = await client.query(
-            `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, fallido, cliente_id, registrada_por)
-             VALUES ($1, $2::tipo_guia, $3, COALESCE($4, now()), COALESCE($5, false), $6, $7)
+            `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, fallido, cliente_id, registrada_por, uuid_cliente)
+             VALUES ($1, $2::tipo_guia, $3, COALESCE($4, now()), COALESCE($5, false), $6, $7, $8)
              RETURNING *, archivo_url IS NULL AS falta_documento`,
-            [id, tipo, rutaStorage, fecha_hora || null, esFallido, clienteGuia, req.user.id]
+            [id, tipo, rutaStorage, fecha_hora || null, esFallido, clienteGuia, req.user.id, uuidCliente]
         );
 
         if (!esFallido) {
@@ -194,6 +235,17 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
         // compensacion best-effort: si el PDF ya subio pero la BD fallo, no dejar el archivo huerfano
         if (rutaStorage) {
             await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+        }
+        // dos envios simultaneos con el mismo uuid: el segundo choca con el UNIQUE, que tambien
+        // significa "ya estaba hecho"; se relee la fila del primero
+        if (esUuidDuplicado(err) && uuidCliente) {
+            try {
+                const previa = await buscarPorUuid(pool, 'guias', uuidCliente);
+                if (previa) {
+                    const r = await respuestaGuiaExistente(pool, previa);
+                    return res.status(r.status).json(r.cuerpo);
+                }
+            } catch (_) { /* cae al 500 de abajo */ }
         }
         console.error(err);
         res.status(500).json({ error: 'Error al subir guía' });

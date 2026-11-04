@@ -20,7 +20,7 @@ function leerUuidCliente(body) {
 // Tablas que aceptan uuid_cliente. Lista cerrada: el nombre de la tabla se interpola en el SQL.
 const TABLAS = new Set([
     'movimientos_insumo', 'tramos_trabajo', 'lecturas_horometro',
-    'evidencias_fotograficas', 'ordenes_trabajo',
+    'evidencias_fotograficas', 'ordenes_trabajo', 'guias',
 ]);
 
 /** La fila ya creada con ese UUID, o null. */

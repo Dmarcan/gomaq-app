@@ -6,6 +6,7 @@ import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../utils/enlaces.dart';
 import '../../utils/formato.dart';
+import '../../utils/motivo_cambio.dart' show nuevoUuid;
 
 /// Mismo tope que aplica el backend (middleware/upload.js).
 const _maxArchivoBytes = 10 * 1024 * 1024;
@@ -24,6 +25,10 @@ class _GuiasScreenState extends State<GuiasScreen> {
   Map<String, dynamic>? _seleccionada;
   int? _clienteId;
   String _tipo = 'despacho';
+
+  /// Llave del envío: se conserva mientras se reintenta el mismo guardado (si la respuesta se pierde,
+  /// el servidor no crea otra guía) y se renueva al guardar bien o al cambiar de equipo o de tipo.
+  String _llaveEnvio = nuevoUuid();
   PlatformFile? _archivo;
   bool _subiendo = false;
   bool _cargando = true;
@@ -58,6 +63,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
   /// Cambia despacho/recepción. Debe llamarse dentro de setState: si el equipo elegido ya no está en
   /// la lista del tipo nuevo se limpia, o el desplegable fallaría por tener un valor que no existe.
   void _fijarTipo(String tipo) {
+    if (tipo != _tipo) _llaveEnvio = nuevoUuid();
     _tipo = tipo;
     final elegida = _seleccionada;
     if (elegida != null && !_maquinariasDisponibles.any((m) => m['id'] == elegida['id'])) {
@@ -210,13 +216,14 @@ class _GuiasScreenState extends State<GuiasScreen> {
     setState(() => _subiendo = true);
     try {
       final fechaHora = DateTime(_fecha.year, _fecha.month, _fecha.day, _hora.hour, _hora.minute);
-      await ApiClient.instance.postMultipart(
+      final respuesta = await ApiClient.instance.postMultipart(
         '/api/maquinarias/${_seleccionada!['id']}/guias',
         bytes: _archivo?.bytes,
         filename: _archivo?.name,
         fields: {
           if (_archivo == null && _sinDocumento) 'sin_documento': 'true',
           'tipo': _tipo,
+          'uuid_cliente': _llaveEnvio,
           'fecha_hora': fechaHora.toIso8601String(),
           'fallido': _fallido.toString(),
           if (_tipo == 'despacho' && _clienteId != null) 'cliente_id': _clienteId.toString(),
@@ -224,9 +231,16 @@ class _GuiasScreenState extends State<GuiasScreen> {
         },
       );
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Guía guardada')));
+        // si el servidor ya tenía esta guía (se perdió la respuesta del primer intento), se dice
+        final yaEstaba = respuesta is Map && respuesta['ya_registrada'] == true;
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(yaEstaba
+              ? 'Esta guía ya estaba registrada. Revisa la lista de recientes y las que faltan documento.'
+              : 'Guía guardada'),
+        ));
         _cargarRecientes();
         setState(() {
+          _llaveEnvio = nuevoUuid();
           _archivo = null;
           _sinDocumento = false;
           _fallido = false;
@@ -237,6 +251,14 @@ class _GuiasScreenState extends State<GuiasScreen> {
       }
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    } catch (_) {
+      // sin respuesta (tiempo agotado o sin red): ClienteApi deja pasar estas excepciones sin envolver.
+      // La llave del envío se conserva, así que volver a guardar no duplica la guía.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('No hubo respuesta del servidor. Vuelve a guardar; la guía no se duplicará.')),
+        );
+      }
     } finally {
       if (mounted) setState(() => _subiendo = false);
     }
@@ -291,7 +313,10 @@ class _GuiasScreenState extends State<GuiasScreen> {
                     (m) => DropdownMenuItem(value: m, child: Text('${m['codigo']} - ${m['tipo']}')),
                   )
                   .toList(),
-              onChanged: (v) => setState(() => _seleccionada = v),
+              onChanged: (v) => setState(() {
+                if (v?['id'] != _seleccionada?['id']) _llaveEnvio = nuevoUuid();
+                _seleccionada = v;
+              }),
               decoration: const InputDecoration(border: OutlineInputBorder(), hintText: 'Selecciona el equipo'),
             ),
             const SizedBox(height: 20),
