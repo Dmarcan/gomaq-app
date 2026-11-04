@@ -6,6 +6,7 @@ import '../../utils/formato.dart';
 import '../../utils/numeros.dart';
 import '../../widgets/dialogos.dart';
 import '../../widgets/estado_vacio.dart';
+import 'descuadres_tab.dart';
 
 class InsumosScreen extends StatefulWidget {
   const InsumosScreen({super.key});
@@ -18,13 +19,16 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
   late final TabController _tabController;
   List<dynamic> _catalogo = [];
   List<dynamic> _movimientos = [];
+  List<dynamic> _descuadres = [];
+  List<dynamic> _motivos = [];
+  String? _errorDescuadres;
   bool _cargando = true;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 3, vsync: this);
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
   }
 
@@ -42,10 +46,24 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
     try {
       final catalogo = await ApiClient.instance.get('/api/insumos');
       final movimientos = (await ApiClient.instance.get('/api/insumos/movimientos'))['items'];
+      // los descuadres y los motivos se piden aparte: si fallan, el catálogo y los consumos siguen
+      // usables y la pestaña Descuadres muestra su propio error con Reintentar
+      List<dynamic> descuadres = [];
+      List<dynamic> motivos = [];
+      String? errorDescuadres;
+      try {
+        descuadres = await ApiClient.instance.get('/api/insumos/descuadres');
+        motivos = await ApiClient.instance.get('/api/insumos/motivos-ajuste');
+      } catch (e) {
+        errorDescuadres = mensajeErrorCarga(e);
+      }
       if (!mounted) return;
       setState(() {
         _catalogo = catalogo;
         _movimientos = movimientos;
+        _descuadres = descuadres;
+        _motivos = motivos;
+        _errorDescuadres = errorDescuadres;
       });
     } on ApiException catch (e) {
       setState(() => _error = e.message);
@@ -179,7 +197,13 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
         toolbarHeight: 0,
         bottom: TabBar(
           controller: _tabController,
-          tabs: const [Tab(text: 'Catálogo'), Tab(text: 'Consumos recientes')],
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
+          tabs: [
+            const Tab(text: 'Catálogo'),
+            const Tab(text: 'Consumos recientes'),
+            Tab(text: _errorDescuadres != null ? 'Descuadres' : 'Descuadres (${_descuadres.length})'),
+          ],
         ),
       ),
       floatingActionButton: puedeEscribir
@@ -250,7 +274,9 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
                             child: ListTile(
                               // una línea escrita a mano no tiene insumo del catálogo: antes decía "null"
                               title: Text(
+                                '${mov['tipo'] == 'ajuste' ? 'Ajuste de conteo · ' : ''}'
                                 '${mov['insumo_nombre'] ?? mov['descripcion'] ?? 'Repuesto'} · '
+                                '${mov['tipo'] == 'ajuste' ? (mov['ubicacion_destino_id'] != null ? '+' : '-') : ''}'
                                 '${mov['cantidad']} ${mov['unidad_medida'] ?? ''}',
                                 style: mov['anulada_at'] != null
                                     ? const TextStyle(decoration: TextDecoration.lineThrough, color: Colors.black54)
@@ -265,6 +291,14 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
                           );
                         },
                       ),
+                    ),
+                    DescuadresTab(
+                      descuadres: _descuadres,
+                      catalogo: _catalogo,
+                      motivos: _motivos,
+                      puedeEscribir: puedeEscribir,
+                      onRecargar: _cargar,
+                      error: _errorDescuadres,
                     ),
                   ],
                 ),
