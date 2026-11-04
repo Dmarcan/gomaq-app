@@ -11,7 +11,7 @@ import 'screens/panel/flota_screen.dart';
 import 'screens/panel/maquinaria_perfil_screen.dart';
 import 'screens/panel/guias_screen.dart';
 import 'screens/panel/facturacion_screen.dart';
-import 'screens/panel/asignacion_screen.dart';
+import 'screens/panel/orden_detalle.dart' show OrdenDetalleScreen;
 import 'screens/panel/clientes_screen.dart';
 import 'screens/panel/ordenes_screen.dart';
 import 'screens/panel/solicitudes_screen.dart';
@@ -40,7 +40,6 @@ const List<ItemMenu> itemsMenu = [
   (ruta: '/', icono: Icons.dashboard, etiqueta: 'Dashboard', grupo: 'Operación'),
   (ruta: '/flota', icono: Icons.local_shipping, etiqueta: 'Flota', grupo: 'Operación'),
   (ruta: '/ordenes', icono: Icons.assignment, etiqueta: 'Órdenes de Trabajo', grupo: 'Operación'),
-  (ruta: '/asignacion', icono: Icons.build, etiqueta: 'Asignación', grupo: 'Operación'),
   (ruta: '/asistencias', icono: Icons.support_agent, etiqueta: 'Asistencias', grupo: 'Operación'),
 
   (ruta: '/insumos', icono: Icons.inventory_2, etiqueta: 'Insumos', grupo: 'Inventario'),
@@ -157,9 +156,22 @@ GoRouter construirRouter(AuthService auth) {
               abrirNueva: estado.uri.queryParameters['nueva'] == '1',
               // llega desde "Crear orden de trabajo" en el perfil de un equipo
               maquinariaInicial: int.tryParse(estado.uri.queryParameters['maquinaria'] ?? ''),
+              pestanaInicial: estado.uri.queryParameters['pestana'],
             ),
+            routes: [
+              // detalle de una orden como página: /ordenes/12 (se puede recargar y compartir)
+              GoRoute(
+                path: ':id',
+                // un id que no es número, 0 o negativo lo resuelve la propia pantalla ('No encontramos esa orden')
+                builder: (_, estado) {
+                  final id = int.tryParse(estado.pathParameters['id'] ?? '');
+                  return OrdenDetalleScreen(key: ValueKey(id), id: id);
+                },
+              ),
+            ],
           ),
-          GoRoute(path: '/asignacion', builder: (_, _) => const AsignacionScreen()),
+          // Asignación se integró en Órdenes (pestaña "Sin asignar")
+          GoRoute(path: '/asignacion', redirect: (_, _) => '/ordenes?pestana=sin_asignar'),
           GoRoute(path: '/asistencias', builder: (_, _) => const SolicitudesScreen()),
           GoRoute(path: '/insumos', builder: (_, _) => const InsumosScreen()),
           GoRoute(path: '/horometro', builder: (_, _) => const HorometroScreen()),

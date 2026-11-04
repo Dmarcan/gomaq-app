@@ -1,88 +1,28 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
-import '../../services/api_client.dart';
-import '../../services/auth_service.dart';
-import '../../theme/gomaq_theme.dart';
-import '../../widgets/dialogos.dart';
-import '../../widgets/estado_vacio.dart';
+import '../services/api_client.dart';
+import '../services/auth_service.dart';
+import '../theme/gomaq_theme.dart';
+import 'dialogos.dart';
 
-class AsignacionScreen extends StatefulWidget {
-  const AsignacionScreen({super.key});
-
-  @override
-  State<AsignacionScreen> createState() => _AsignacionScreenState();
+/// Abre el cuadro para asignar un mecánico a una orden. Devuelve `true` si se asignó.
+Future<bool> abrirAsignarMecanico(BuildContext context, Map<String, dynamic> orden) async {
+  final asignada = await showDialog<bool>(context: context, builder: (_) => AsignarMecanicoDialog(orden: orden));
+  if (asignada == true && context.mounted) {
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('OT #${orden['id']} asignada')));
+  }
+  return asignada == true;
 }
 
-class _AsignacionScreenState extends State<AsignacionScreen> {
-  List<dynamic> _ordenesSinAsignar = [];
-  bool _cargando = true;
-  String? _error;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
-  }
-
-  Future<void> _cargar() async {
-    setState(() {
-      _cargando = true;
-      _error = null;
-    });
-    try {
-      final data = (await ApiClient.instance.get('/api/ordenes-trabajo'))['items'];
-      if (!mounted) return;
-      setState(() => _ordenesSinAsignar = (data as List).where((o) => o['mecanico_id'] == null).toList());
-    } catch (e) {
-      if (mounted) setState(() => _error = mensajeErrorCarga(e));
-    } finally {
-      if (mounted) setState(() => _cargando = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    if (_cargando) return const Center(child: CircularProgressIndicator());
-    if (_error != null) {
-      return EstadoError(titulo: 'No se pudieron cargar las órdenes', mensaje: _error!, onReintentar: _cargar);
-    }
-    if (_ordenesSinAsignar.isEmpty) {
-      return const Center(child: Text('No hay órdenes de trabajo pendientes de asignar'));
-    }
-
-    return RefreshIndicator(
-      onRefresh: _cargar,
-      child: ListView.builder(
-        padding: const EdgeInsets.all(16),
-        itemCount: _ordenesSinAsignar.length,
-        itemBuilder: (context, i) {
-          final o = _ordenesSinAsignar[i];
-          return Card(
-            child: ListTile(
-              title: Text('OT #${o['id']} - ${o['maquinaria_codigo'] ?? ''}'),
-              subtitle: Text('Cliente: ${o['cliente_nombre'] ?? '-'} · Motivo: ${o['motivo'] ?? '-'}'),
-              trailing: const Icon(Icons.arrow_forward_ios, size: 14),
-              onTap: () async {
-                await showDialog(context: context, builder: (_) => _AsignarDialog(orden: o));
-                _cargar();
-              },
-            ),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _AsignarDialog extends StatefulWidget {
+class AsignarMecanicoDialog extends StatefulWidget {
   final Map<String, dynamic> orden;
-  const _AsignarDialog({required this.orden});
+  const AsignarMecanicoDialog({super.key, required this.orden});
 
   @override
-  State<_AsignarDialog> createState() => _AsignarDialogState();
+  State<AsignarMecanicoDialog> createState() => AsignarMecanicoState();
 }
 
-class _AsignarDialogState extends State<_AsignarDialog> {
+class AsignarMecanicoState extends State<AsignarMecanicoDialog> {
   List<dynamic> _mecanicos = [];
   bool _cargando = true;
   int? _asignando;
@@ -99,6 +39,10 @@ class _AsignarDialogState extends State<_AsignarDialog> {
       if (mounted) setState(() => _mecanicos = data);
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    } catch (_) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se pudo cargar la lista de mecánicos. Intenta de nuevo.')));
+      }
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -108,9 +52,14 @@ class _AsignarDialogState extends State<_AsignarDialog> {
     setState(() => _asignando = mecanicoId);
     try {
       await ApiClient.instance.patch('/api/ordenes-trabajo/${widget.orden['id']}/asignar', {'mecanico_id': mecanicoId});
-      if (mounted) Navigator.pop(context);
+      if (mounted) Navigator.pop(context, true);
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    } catch (_) {
+      // sin red o plazo vencido: el cuadro sigue abierto y se puede reintentar
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No hubo respuesta del servidor. Revisa tu conexión e intenta de nuevo.')));
+      }
     } finally {
       if (mounted) setState(() => _asignando = null);
     }
@@ -180,7 +129,7 @@ class _AsignarDialogState extends State<_AsignarDialog> {
           ],
       ),
       acciones: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
+        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cerrar')),
       ],
     );
   }
