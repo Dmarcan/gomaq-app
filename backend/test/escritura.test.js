@@ -2699,3 +2699,243 @@ describe('migracion 021: tipo de evento factura_anulada', () => {
         await assert.rejects(() => pool.query('DELETE FROM ordenes_eventos WHERE orden_trabajo_id = $1', [ot]), /solo insercion/);
     });
 });
+
+describe('bloque 2a: configuracion de cobro, inicio de cobro y arriendos en curso', () => {
+    const { inicioCobroDia } = require('../src/utils/diasArriendo');
+    const DEFAULTS_CONFIG = { dia_facturacion: 5, hora_corte_despacho: 13, incluir_dia_recepcion: true };
+
+    /** Deja la configuracion como esta en la migracion, sin rastro de quien la toco. */
+    async function restaurarConfiguracion() {
+        for (const [clave, valor] of Object.entries(DEFAULTS_CONFIG)) {
+            await pool.query(
+                'UPDATE configuracion SET valor = $2::jsonb, actualizado_por = NULL WHERE clave = $1', [clave, JSON.stringify(valor)]);
+        }
+    }
+
+    /** Despacho por la ruta real, sin documento, con la hora dada (ISO con offset). */
+    async function despachar(equipoId, clienteId, fechaHora) {
+        const formulario = new FormData();
+        formulario.append('tipo', 'despacho');
+        formulario.append('sin_documento', 'true');
+        formulario.append('cliente_id', String(clienteId));
+        if (fechaHora) formulario.append('fecha_hora', fechaHora);
+        const r = await fetch(`${base}/api/maquinarias/${equipoId}/guias`, {
+            method: 'POST', headers: { Authorization: `Bearer ${tokens.administrativo}` }, body: formulario,
+        });
+        return { status: r.status, body: await r.json() };
+    }
+
+    const inicioDe = async (guiaId) =>
+        (await pool.query('SELECT inicio_cobro::text AS d FROM guias WHERE id = $1', [guiaId])).rows[0].d;
+
+    test('la migracion deja la configuracion por defecto', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedir('GET', '/api/facturacion/configuracion', 'administrativo');
+        assert.equal(r.status, 200);
+        assert.equal(r.body.dia_facturacion, 5);
+        assert.equal(r.body.hora_corte_despacho, 13);
+        assert.equal(r.body.incluir_dia_recepcion, true);
+    });
+
+    test('permisos: administrativo ve y no edita, gerente edita, mecanico y cliente no entran', async (t) => {
+        if (!requiereBase(t)) return;
+        assert.equal((await pedir('GET', '/api/facturacion/configuracion', 'gerente')).status, 200);
+        assert.equal((await pedir('PUT', '/api/facturacion/configuracion', 'administrativo', { dia_facturacion: 6 })).status, 403);
+        assert.equal((await pedir('GET', '/api/facturacion/configuracion', 'mecanico')).status, 403);
+        assert.equal((await pedir('PUT', '/api/facturacion/configuracion', 'mecanico', { dia_facturacion: 6 })).status, 403);
+        assert.equal((await pedir('GET', '/api/facturacion/arriendos-en-curso', 'mecanico')).status, 403);
+        assert.equal((await pedir('GET', '/api/facturacion/arriendos-en-curso', 'cliente')).status, 403);
+        assert.equal((await pedir('GET', '/api/facturacion/arriendos-en-curso', 'administrativo')).status, 200);
+        assert.equal((await pedir('GET', '/api/facturacion/configuracion', 'administrativo')).body.dia_facturacion, 5);
+    });
+
+    test('un PUT invalido da 400 y no cambia nada', async (t) => {
+        if (!requiereBase(t)) return;
+        for (const cuerpo of [{ dia_facturacion: 29 }, { dia_facturacion: '5' }, { inventada: 1 }, {}, { hora_corte_despacho: 24 },
+            { constructor: 1 }, { toString: true },
+            { dia_facturacion: 7, hora_corte_despacho: 99 }]) {
+            const r = await pedir('PUT', '/api/facturacion/configuracion', 'gerente', cuerpo);
+            assert.equal(r.status, 400, JSON.stringify(cuerpo));
+        }
+        // un cuerpo con `__proto__` propio (JSON.parse lo crea como clave normal) tambien se rechaza sin tumbar el servidor
+        const proto = await fetch(`${base}/api/facturacion/configuracion`, {
+            method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens.gerente}` },
+            body: '{"__proto__":1}',
+        });
+        assert.equal(proto.status, 400);
+        const r = await pedir('GET', '/api/facturacion/configuracion', 'gerente');
+        assert.equal(r.body.dia_facturacion, 5, 'el PUT a medias no dejo nada guardado');
+        assert.equal(r.body.hora_corte_despacho, 13);
+    });
+
+    test('el CHECK de la tabla rechaza valores fuera de rango aunque se salte la API', async (t) => {
+        if (!requiereBase(t)) return;
+        await assert.rejects(() => pool.query("UPDATE configuracion SET valor = '29' WHERE clave = 'dia_facturacion'"), /configuracion_valor_valido/);
+        await assert.rejects(() => pool.query("UPDATE configuracion SET valor = '\"13\"' WHERE clave = 'hora_corte_despacho'"), /configuracion_valor_valido/);
+        await assert.rejects(() => pool.query("UPDATE configuracion SET valor = '1' WHERE clave = 'incluir_dia_recepcion'"), /configuracion_valor_valido/);
+    });
+
+    test('el despacho guarda su inicio de cobro: 12:59 cuenta el dia, 13:00 el siguiente', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const antes = await despachar(equipo.id, cliente, '2026-03-10T12:59:00-03:00');
+        assert.equal(antes.status, 201);
+        assert.equal(await inicioDe(antes.body.id), '2026-03-10');
+        const otro = await crearEquipo(null);
+        const despues = await despachar(otro.id, cliente, '2026-03-10T13:00:00-03:00');
+        assert.equal(await inicioDe(despues.body.id), '2026-03-11');
+    });
+
+    test('gomaq_inicio_cobro (SQL) coincide con inicioCobroDia (JS)', async (t) => {
+        if (!requiereBase(t)) return;
+        const instantes = [
+            '2026-03-05T02:00:00Z', '2026-03-10T12:59:00-03:00', '2026-03-10T13:00:00-03:00', '2026-12-31T14:00:00-03:00',
+            '2028-02-28T14:00:00-03:00', '2026-04-04T23:30:00-03:00', '2026-09-06T00:30:00-04:00', '2026-09-06T12:59:00-03:00',
+            '2026-06-15T09:00:00-04:00', '2026-01-01T00:00:00Z',
+        ];
+        for (const hora of [0, 9, 13, 23]) {
+            for (const instante of instantes) {
+                const r = await pool.query('SELECT gomaq_inicio_cobro($1::timestamptz, $2)::text AS d', [instante, hora]);
+                assert.equal(r.rows[0].d, inicioCobroDia(instante, hora), `${instante} con corte ${hora}`);
+            }
+        }
+    });
+
+    test('un INSERT directo (version anterior del servidor) tambien queda con inicio de cobro', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo(null);
+        const g = await pool.query(
+            `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha) VALUES ($1, 'despacho', 'x', '2026-03-10T14:00:00-03:00') RETURNING id`,
+            [equipo.id]);
+        assert.equal(await inicioDe(g.rows[0].id), '2026-03-11');
+        const r = await pool.query(
+            `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha) VALUES ($1, 'recepcion', 'x', now()) RETURNING inicio_cobro`, [equipo.id]);
+        assert.equal(r.rows[0].inicio_cobro, null, 'una recepcion no tiene inicio de cobro');
+    });
+
+    test('cambiar la hora de corte afecta a los despachos nuevos y no reescribe los viejos', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const viejo = await despachar((await crearEquipo(null)).id, cliente, '2026-03-10T10:00:00-03:00');
+        assert.equal(await inicioDe(viejo.body.id), '2026-03-10');
+        try {
+            const put = await pedir('PUT', '/api/facturacion/configuracion', 'gerente', { hora_corte_despacho: 9 });
+            assert.equal(put.status, 200);
+            assert.equal(put.body.hora_corte_despacho, 9);
+            const nuevo = await despachar((await crearEquipo(null)).id, cliente, '2026-03-10T10:00:00-03:00');
+            assert.equal(await inicioDe(nuevo.body.id), '2026-03-11', 'el despacho nuevo usa el corte nuevo');
+            assert.equal(await inicioDe(viejo.body.id), '2026-03-10', 'el viejo conserva el suyo');
+            const leida = await pedir('GET', '/api/facturacion/configuracion', 'administrativo');
+            assert.equal(leida.body.hora_corte_despacho, 9);
+            assert.ok(leida.body.actualizado_por, 'dice quien la cambio');
+            assert.ok(leida.body.actualizado_at);
+        } finally {
+            await restaurarConfiguracion();
+        }
+        assert.equal((await pedir('GET', '/api/facturacion/configuracion', 'gerente')).body.hora_corte_despacho, 13);
+    });
+
+    test('arriendos en curso: aparece con el cliente de la guia, cuenta desde su inicio y desaparece al recepcionar', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const d = await despachar(equipo.id, cliente, '2026-01-02T09:00:00-03:00');
+        const buscar = async () => (await pedir('GET', '/api/facturacion/arriendos-en-curso', 'administrativo')).body
+            .arriendos.find((a) => a.maquinaria_id === equipo.id);
+        const fila = await buscar();
+        assert.ok(fila, 'el equipo despachado aparece');
+        assert.equal(fila.cliente_id, cliente);
+        assert.equal(fila.guia_despacho_id, d.body.id);
+        assert.equal(fila.inicio_cobro, '2026-01-02');
+        assert.equal(fila.desde, '2026-01-02');
+        assert.ok(fila.dias > 30);
+        assert.ok(fila.periodos_sin_facturar >= 1 && fila.aviso === true);
+        assert.match(fila.proximo_corte, /^\d{4}-\d{2}-05$/);
+        // la recepcion cierra el arriendo
+        const formulario = new FormData();
+        formulario.append('tipo', 'recepcion');
+        formulario.append('sin_documento', 'true');
+        const rec = await fetch(`${base}/api/maquinarias/${equipo.id}/guias`, {
+            method: 'POST', headers: { Authorization: `Bearer ${tokens.administrativo}` }, body: formulario });
+        assert.equal(rec.status, 201);
+        assert.equal(await buscar(), undefined, 'ya no esta en curso');
+    });
+
+    test('arriendos en curso: sin guia, con despacho fallido y con dos despachos seguidos', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const buscar = async (id) => (await pedir('GET', '/api/facturacion/arriendos-en-curso', 'gerente')).body
+            .arriendos.filter((a) => a.maquinaria_id === id);
+        // cliente cargado directo en el equipo, sin ninguna guia: no aparece
+        const directo = await crearEquipo(cliente);
+        assert.equal((await buscar(directo.id)).length, 0);
+        // despacho fallido: no cuenta
+        const fallido = await crearEquipo(null);
+        await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, fallido, cliente_id) VALUES ($1, 'despacho', 'x', now(), true, $2)`, [fallido.id, cliente]);
+        assert.equal((await buscar(fallido.id)).length, 0);
+        // dos despachos sin recepcion entre ellos: una sola fila, la del primero
+        const doble = await crearEquipo(null);
+        const g1 = await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'despacho', 'x', '2026-02-01T09:00:00-03:00', $2) RETURNING id`, [doble.id, cliente]);
+        await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'despacho', 'x', '2026-02-10T09:00:00-03:00', $2)`, [doble.id, cliente]);
+        const filas = await buscar(doble.id);
+        assert.equal(filas.length, 1);
+        assert.equal(filas[0].guia_despacho_id, g1.rows[0].id);
+        assert.equal(filas[0].inicio_cobro, '2026-02-01');
+    });
+
+    test('arriendos en curso: recepcion y despacho a la misma hora se ordenan por id', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const hora = '2026-02-01T09:00:00-03:00';
+        await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'despacho', 'x', $2, $3)`, [equipo.id, hora, cliente]);
+        await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'recepcion', 'x', $2, $3)`, [equipo.id, hora, cliente]);
+        const cerrado = (await pedir('GET', '/api/facturacion/arriendos-en-curso', 'gerente')).body.arriendos;
+        assert.equal(cerrado.filter((a) => a.maquinaria_id === equipo.id).length, 0, 'recepcion posterior por id: cerrado');
+        await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'despacho', 'x', $2, $3)`, [equipo.id, hora, cliente]);
+        const abierto = (await pedir('GET', '/api/facturacion/arriendos-en-curso', 'gerente')).body.arriendos;
+        assert.equal(abierto.filter((a) => a.maquinaria_id === equipo.id).length, 1, 'despacho posterior por id: abierto de nuevo');
+    });
+
+    test('el dia de recepcion configurable cambia los dias que lista /pendientes', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'despacho', 'x', '2026-03-01T09:00:00-03:00', $2)`, [equipo.id, cliente]);
+        await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'recepcion', 'x', '2026-03-05T10:00:00-03:00', $2)`, [equipo.id, cliente]);
+        const dias = async () => (await pedir('GET', '/api/facturacion/pendientes', 'administrativo')).body
+            .arriendos.find((a) => a.maquinaria_id === equipo.id).dias;
+        assert.equal(await dias(), 5);
+        try {
+            assert.equal((await pedir('PUT', '/api/facturacion/configuracion', 'gerente', { incluir_dia_recepcion: false })).status, 200);
+            assert.equal(await dias(), 4);
+        } finally {
+            await restaurarConfiguracion();
+        }
+        assert.equal(await dias(), 5);
+    });
+
+    test('el endpoint viejo de dias de arriendo se retiro', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedir('GET', `/api/maquinarias/${datos.maquinariaId}/dias-arriendo`, 'administrativo');
+        assert.equal(r.status, 404);
+    });
+
+    test('la migracion 022 se puede correr otra vez sin romper nada', async (t) => {
+        if (!requiereBase(t)) return;
+        const sql = require('fs').readFileSync(require('path').join(__dirname, '../../db/migrations/022_configuracion_inicio_cobro.sql'), 'utf8');
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(sql);
+            await client.query('COMMIT');
+        } finally {
+            client.release();
+        }
+        const r = await pedir('GET', '/api/facturacion/configuracion', 'gerente');
+        assert.equal(r.body.dia_facturacion, 5);
+        const trig = await pool.query("SELECT count(*)::int AS n FROM pg_trigger WHERE tgname = 'guias_inicio_cobro'");
+        assert.equal(trig.rows[0].n, 1);
+    });
+});

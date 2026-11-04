@@ -4,7 +4,6 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { rutaArchivo } = require('../utils/rutaArchivo');
-const { calcularInicioCobro, calcularDiasTranscurridos } = require('../utils/diasArriendo');
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
 const { detectarCliente } = require('../utils/detectarCliente');
 const { parsearGuia } = require('../utils/parsearDocumento');
@@ -240,47 +239,6 @@ router.post('/guias/:guiaId/archivo', verifyToken, requireRole('administrativo')
         }
         console.error(err);
         res.status(500).json({ error: 'Error al adjuntar el documento de la guía' });
-    }
-});
-
-// GET /api/maquinarias/:id/dias-arriendo - calculo automatico (HU-01)
-router.get('/:id/dias-arriendo', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
-    const { id } = req.params;
-    try {
-        const despachoResult = await pool.query(
-            `SELECT * FROM guias WHERE maquinaria_id = $1 AND tipo = 'despacho' AND fallido = false ORDER BY fecha DESC LIMIT 1`,
-            [id]
-        );
-        const despacho = despachoResult.rows[0];
-        if (!despacho) {
-            return res.json({ dias_transcurridos: 0, facturacion_bloqueada: false, mensaje: 'No hay guia de despacho registrada' });
-        }
-
-        const recepcionResult = await pool.query(
-            `SELECT * FROM guias WHERE maquinaria_id = $1 AND tipo = 'recepcion' AND fallido = false AND fecha >= $2 ORDER BY fecha ASC LIMIT 1`,
-            [id, despacho.fecha]
-        );
-        const recepcion = recepcionResult.rows[0];
-
-        const inicioCobro = calcularInicioCobro(despacho.fecha);
-        const diasTranscurridos = calcularDiasTranscurridos(despacho.fecha, recepcion ? recepcion.fecha : null);
-
-        let facturacionBloqueada = false;
-        if (!recepcion) {
-            const limite = new Date(inicioCobro.getFullYear(), inicioCobro.getMonth() + 1, 5);
-            facturacionBloqueada = new Date() > limite;
-        }
-
-        res.json({
-            maquinaria_id: Number(id),
-            fecha_despacho: despacho.fecha,
-            fecha_recepcion: recepcion ? recepcion.fecha : null,
-            dias_transcurridos: diasTranscurridos,
-            facturacion_bloqueada: facturacionBloqueada,
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al calcular dias de arriendo' });
     }
 });
 

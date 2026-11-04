@@ -4,7 +4,8 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { rutaArchivo } = require('../utils/rutaArchivo');
-const { calcularDiasTranscurridos } = require('../utils/diasArriendo');
+const { diasEntre, diaSantiago, inicioCobroDia, resumirArriendoEnCurso } = require('../utils/diasArriendo');
+const { leerConfiguracion, validarCambioConfiguracion } = require('../utils/configuracion');
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
 const { detectarCliente } = require('../utils/detectarCliente');
 const { parsearFactura } = require('../utils/parsearDocumento');
@@ -25,12 +26,12 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
         const arriendosResult = await pool.query(`
             SELECT g.id AS guia_recepcion_id, g.maquinaria_id, m.codigo AS maquinaria_codigo,
                    c.nombre AS cliente_nombre, c.email AS cliente_email,
-                   d.fecha AS fecha_despacho, g.fecha AS fecha_recepcion
+                   d.fecha AS fecha_despacho, to_char(d.inicio_cobro, 'YYYY-MM-DD') AS inicio_cobro, g.fecha AS fecha_recepcion
             FROM guias g
             JOIN maquinarias m ON m.id = g.maquinaria_id
             LEFT JOIN clientes c ON c.id = g.cliente_id
             JOIN LATERAL (
-                SELECT fecha FROM guias d2
+                SELECT fecha, inicio_cobro FROM guias d2
                 WHERE d2.maquinaria_id = g.maquinaria_id AND d2.tipo = 'despacho'
                   AND d2.fallido = false AND d2.fecha <= g.fecha
                 ORDER BY d2.fecha DESC LIMIT 1
@@ -39,10 +40,13 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
               AND NOT EXISTS (SELECT 1 FROM facturas f WHERE f.guia_recepcion_id = g.id)
             ORDER BY g.fecha DESC
         `);
-        const arriendos = arriendosResult.rows.map((fila) => ({
-            ...fila,
-            dias: calcularDiasTranscurridos(fila.fecha_despacho, fila.fecha_recepcion),
-        }));
+        // el inicio de cobro se fijo al crear el despacho (migracion 022); sin el, la regla historica
+        const config = await leerConfiguracion(pool);
+        const arriendos = arriendosResult.rows.map(({ inicio_cobro: inicioGuardado, ...fila }) => {
+            const inicio = inicioGuardado || inicioCobroDia(fila.fecha_despacho);
+            const dias = diasEntre(inicio, diaSantiago(fila.fecha_recepcion)) - (config.incluir_dia_recepcion ? 0 : 1);
+            return { ...fila, dias: Math.max(0, dias) };
+        });
 
         const pendientesValorizarResult = await pool.query(`
             SELECT ot.id, ot.motivo, ot.diagnostico, ot.fecha_creacion,
@@ -136,6 +140,91 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
         }
         console.error(err);
         res.status(500).json({ error: 'Error al subir factura de arriendo' });
+    }
+});
+
+// GET /api/facturacion/configuracion - reglas de cobro vigentes (dia de facturacion, hora de corte
+// del despacho, si el dia de la recepcion cuenta). Las rutas fijas van antes de /:facturaId.
+router.get('/configuracion', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    try {
+        const config = await leerConfiguracion(pool);
+        const ultimo = await pool.query(
+            `SELECT c.actualizado_at, u.nombre AS actualizado_por
+             FROM configuracion c LEFT JOIN usuarios u ON u.id = c.actualizado_por
+             WHERE c.actualizado_por IS NOT NULL ORDER BY c.actualizado_at DESC LIMIT 1`);
+        res.json({
+            ...config,
+            actualizado_por: ultimo.rows[0] ? ultimo.rows[0].actualizado_por : null,
+            actualizado_at: ultimo.rows[0] ? ultimo.rows[0].actualizado_at : null,
+        });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al leer la configuración' });
+    }
+});
+
+// PUT /api/facturacion/configuracion - solo el gerente. Cambia las claves enviadas; no reescribe
+// el inicio de cobro de los despachos ya creados.
+router.put('/configuracion', verifyToken, requireRole('gerente'), async (req, res) => {
+    const { valores, error } = validarCambioConfiguracion(req.body);
+    if (error) return res.status(400).json({ error });
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        for (const [clave, valor] of Object.entries(valores)) {
+            await client.query(
+                `INSERT INTO configuracion (clave, valor, actualizado_por, actualizado_at)
+                 VALUES ($1, $2::jsonb, $3, now())
+                 ON CONFLICT (clave) DO UPDATE
+                 SET valor = EXCLUDED.valor, actualizado_por = EXCLUDED.actualizado_por, actualizado_at = now()`,
+                [clave, JSON.stringify(valor), req.user.id]);
+        }
+        await client.query('COMMIT');
+        res.json(await leerConfiguracion(pool));
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        console.error(err);
+        res.status(500).json({ error: 'Error al guardar la configuración' });
+    } finally {
+        client.release();
+    }
+});
+
+// GET /api/facturacion/arriendos-en-curso - solo lectura: equipos despachados que aun no vuelven,
+// desde cuando se cobran, cuantos dias van y cuantos periodos (cortes) llevan sin facturar.
+// Sale de las guias, no de maquinarias.cliente_id: un equipo con cliente cargado a mano y sin
+// despacho no aparece. Toma el primer despacho abierto, igual que utils/rentabilidad.js.
+router.get('/arriendos-en-curso', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    try {
+        const config = await leerConfiguracion(pool);
+        const r = await pool.query(
+            `WITH ur AS (
+                 SELECT DISTINCT ON (maquinaria_id) maquinaria_id, fecha, id FROM guias
+                 WHERE tipo = 'recepcion' AND fallido = false
+                 ORDER BY maquinaria_id, fecha DESC, id DESC)
+             SELECT DISTINCT ON (d.maquinaria_id)
+                    d.id AS guia_despacho_id, d.maquinaria_id, m.codigo AS maquinaria_codigo,
+                    d.cliente_id, c.nombre AS cliente_nombre, d.fecha AS fecha_despacho,
+                    to_char(COALESCE(d.inicio_cobro, gomaq_inicio_cobro(d.fecha, $1)), 'YYYY-MM-DD') AS inicio_cobro,
+                    to_char(now() AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD') AS hoy
+             FROM guias d
+             JOIN maquinarias m ON m.id = d.maquinaria_id
+             LEFT JOIN clientes c ON c.id = d.cliente_id
+             LEFT JOIN ur ON ur.maquinaria_id = d.maquinaria_id
+             WHERE d.tipo = 'despacho' AND d.fallido = false
+               AND (ur.id IS NULL OR (d.fecha, d.id) > (ur.fecha, ur.id))
+             ORDER BY d.maquinaria_id, d.fecha ASC, d.id ASC`,
+            [config.hora_corte_despacho]);
+        const arriendos = r.rows.map(({ hoy, inicio_cobro: inicioCobro, ...fila }) => ({
+            ...fila,
+            inicio_cobro: inicioCobro,
+            ...resumirArriendoEnCurso({ inicioCobro, hoy, diaFacturacion: config.dia_facturacion }),
+        }));
+        arriendos.sort((a, b) => b.periodos_sin_facturar - a.periodos_sin_facturar || b.dias - a.dias);
+        res.json({ arriendos, configuracion: config });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al consultar los arriendos en curso' });
     }
 });
 

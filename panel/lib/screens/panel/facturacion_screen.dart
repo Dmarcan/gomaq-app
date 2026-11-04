@@ -8,10 +8,12 @@ import '../../utils/numeros.dart';
 import '../../utils/formato.dart';
 import '../../widgets/dialogos.dart';
 import '../../widgets/estado_vacio.dart';
+import 'arriendos_en_curso_tab.dart';
 import 'ordenes_screen.dart' show abrirDetalleOrden;
 
 class FacturacionScreen extends StatefulWidget {
-  /// Pestaña con la que se abre: 'valorizar' llega desde el atajo del Dashboard.
+  /// Pestaña con la que se abre: 'valorizar' llega desde el atajo del Dashboard y 'en_curso' abre
+  /// los arriendos en curso.
   final String? pestanaInicial;
   const FacturacionScreen({super.key, this.pestanaInicial});
 
@@ -30,7 +32,11 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this, initialIndex: widget.pestanaInicial == 'valorizar' ? 1 : 0);
+    _tabController = TabController(
+      length: 3,
+      vsync: this,
+      initialIndex: switch (widget.pestanaInicial) { 'valorizar' => 1, 'en_curso' => 2, _ => 0 },
+    );
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
   }
 
@@ -74,9 +80,12 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
         toolbarHeight: 0,
         bottom: TabBar(
           controller: _tabController,
+          isScrollable: true,
+          tabAlignment: TabAlignment.start,
           tabs: [
             Tab(text: 'Por facturar (${_arriendos.length + _listas.length})'),
             Tab(text: 'Pendiente de valorizar (${_pendientesValorizar.length})'),
+            const Tab(text: 'Arriendos en curso'),
           ],
         ),
       ),
@@ -86,7 +95,7 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
               ? EstadoError(titulo: 'No se pudo cargar la facturación', mensaje: _error!, onReintentar: _cargar)
               : TabBarView(
                   controller: _tabController,
-                  children: [_construirPorFacturar(), _construirPendienteValorizar()],
+                  children: [_construirPorFacturar(), _construirPendienteValorizar(), const ArriendosEnCursoTab()],
                 ),
     );
   }

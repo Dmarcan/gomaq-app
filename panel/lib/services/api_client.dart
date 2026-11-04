@@ -57,6 +57,8 @@ class ApiClient {
       _api.post(path, body, cabeceras: cabeceras);
   Future<dynamic> patch(String path, Map<String, dynamic> body, {Map<String, String>? cabeceras}) =>
       _api.patch(path, body, cabeceras: cabeceras);
+  Future<dynamic> put(String path, Map<String, dynamic> body, {Map<String, String>? cabeceras}) =>
+      _api.put(path, body, cabeceras: cabeceras);
 
   /// Subida de archivo (PDF de guia/factura, foto de equipo) via multipart, usando los
   /// campos de texto en [fields]. El archivo es opcional (ej. crear un equipo sin foto todavia).
