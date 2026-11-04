@@ -2208,18 +2208,13 @@ describe('cambios de lo facturable: factura cargada', () => {
         assert.equal((await pedir('POST', `${rutaLinea(ot, linea.id)}/anular`, 'mecanico', {})).status, 200);
     });
 
-    test('subir la factura a una OT finalizada sin valorizacion da 409', async (t) => {
+    test('subir la factura a una OT finalizada sin valorizacion es valido', async (t) => {
         if (!requiereBase(t)) return;
         const ot = await crearOt();
         await agregarLinea(ot, { facturable: 'si', precio_unitario: 1000 });
         await cerrarOt(ot, null);
-        const r = await subirFactura(ot, 'administrativo', { folio: 'F-7002' });
-        assert.equal(r.status, 409);
-        assert.match(r.body.error, /valorizada/);
-        assert.equal((await eventosTipo(ot, 'factura_cargada')).length, 0);
-        // valorizada, ya se puede
-        await pool.query('UPDATE ordenes_trabajo SET valorizacion = 1000 WHERE id = $1', [ot]);
         assert.equal((await subirFactura(ot, 'administrativo', { folio: 'F-7002' })).status, 201);
+        assert.equal((await eventosTipo(ot, 'factura_cargada')).length, 1);
     });
 
     test('el detalle de la OT dice si tiene factura y su folio', async (t) => {
@@ -2269,13 +2264,15 @@ describe('cambios de lo facturable: factura cargada', () => {
             ]);
             const eventoFactura = (await eventosTipo(ot, 'factura_cargada'))[0];
             const eventoCambio = (await eventosTipo(ot, 'linea_modificada'))[0];
-            // exactamente uno de los dos gana: o la factura entra y el cambio se bloquea, o el cambio
-            // entra (anula la valorizacion) y la factura se rechaza por no estar valorizada
+            // la factura ya no exige valorizacion: o el cambio entra primero y la factura se sube
+            // despues sobre las lineas ya cambiadas (que quedan congeladas), o la factura entra y el
+            // cambio se bloquea. Nunca el cambio despues de la factura.
             if (cambio.status === 200) {
-                assert.equal(factura.status, 409);
-                assert.match(factura.body.error, /valorizada/);
-                assert.equal(eventoFactura, undefined);
-                assert.ok(eventoCambio);
+                assert.equal(factura.status, 201);
+                assert.ok(eventoCambio && eventoFactura);
+                assert.ok(Number(eventoCambio.id) < Number(eventoFactura.id), 'el cambio es anterior a la factura');
+                const fila = await pool.query('SELECT precio_unitario FROM movimientos_insumo WHERE id = $1', [linea.id]);
+                assert.equal(Number(fila.rows[0].precio_unitario), 2000);
             } else {
                 assert.equal(cambio.status, 409);
                 assert.equal(factura.status, 201);

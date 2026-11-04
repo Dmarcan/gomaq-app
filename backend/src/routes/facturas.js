@@ -43,20 +43,18 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPd
 
         client = await pool.connect();
         await client.query('BEGIN');
-        const orden = await client.query('SELECT id, estado, valorizacion FROM ordenes_trabajo WHERE id = $1 FOR UPDATE', [id]);
+        const orden = await client.query('SELECT id, estado FROM ordenes_trabajo WHERE id = $1 FOR UPDATE', [id]);
         if (orden.rows.length === 0) {
             await client.query('ROLLBACK');
             await borrarArchivo();
             return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
         }
         // Una factura congela las lineas de la OT (desde ahi no admite cambios). Solo tiene sentido
-        // sobre trabajo terminado y valorizado: con la OT abierta el mecanico todavia agrega o anula
-        // repuestos, y sin valorizacion el gerente aun no aprobo lo que se cobra.
+        // sobre trabajo terminado: con la OT abierta el mecanico todavia agrega o anula repuestos.
+        // No se exige valorizacion: basta con que la OT este finalizada.
         const rechazo = orden.rows[0].estado !== 'finalizada'
             ? 'Solo se factura una orden ya finalizada: la orden sigue abierta y todavía puede cambiar sus repuestos'
-            : (orden.rows[0].valorizacion === null
-                ? 'La orden aún no está valorizada: pide al gerente que apruebe la valorización antes de subir la factura'
-                : null);
+            : null;
         if (rechazo) {
             await client.query('ROLLBACK');
             await borrarArchivo();
@@ -118,7 +116,7 @@ const UUID_ESTRICTO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]
 //
 // Borra la fila de facturas y, antes, deja el evento en el historial de la OT con folio, monto,
 // archivo, motivo y quien la anulo (evento 'factura_anulada', migracion 021). El PDF NO se borra de Supabase: queda de respaldo. Desde ahi
-// la OT vuelve a admitir cambios de lineas y, si esta valorizada, a poder facturarse de nuevo.
+// la OT vuelve a admitir cambios de lineas y a poder facturarse de nuevo.
 // Esto solo corrige el registro en GOMAQ: la factura real se anula en el SII con una nota de credito.
 //
 // El motivo es obligatorio, igual que al cambiar una linea de una OT cerrada. Bloquea la fila de la

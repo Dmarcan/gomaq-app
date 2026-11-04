@@ -878,7 +878,7 @@ class _DetalleOrdenDialogState extends State<_DetalleOrdenDialog> {
                 label: const Text('Anular factura'),
               ),
             ),
-          ] else if (auth.esAdministrativo && o['facturable'] == true && _cerrada && o['valorizacion'] != null) ...[
+          ] else if (auth.esAdministrativo && o['facturable'] == true && _cerrada) ...[
             const TituloSeccion('Factura'),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,
