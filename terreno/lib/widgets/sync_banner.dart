@@ -64,11 +64,13 @@ class SyncBanner extends StatelessWidget {
             : online
             ? GomaqColors.estadoPositivo
             : GomaqColors.estadoAdvertencia;
-    final icono = enError > 0 || conProblema
-        ? Icons.sync_problem
-        : online
-            ? Icons.cloud_done
-            : Icons.cloud_off;
+    final icono = sincronizando
+        ? Icons.sync
+        : enError > 0 || conProblema
+            ? Icons.sync_problem
+            : online
+                ? Icons.cloud_done
+                : Icons.cloud_off;
     final texto = sincronizando
         ? 'Enviando cambios…'
         : enError > 0

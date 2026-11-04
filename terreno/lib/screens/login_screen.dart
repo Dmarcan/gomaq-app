@@ -5,6 +5,7 @@ import '../services/auth_service.dart';
 import '../services/api_client.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/logo_gomaq.dart';
 
 class LoginScreen extends StatefulWidget {
   const LoginScreen({super.key});
@@ -55,13 +56,8 @@ class _LoginScreenState extends State<LoginScreen> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Container(
-                width: 72,
-                height: 72,
-                decoration: BoxDecoration(color: GomaqColors.primario, borderRadius: BorderRadius.circular(16)),
-                child: const Icon(Icons.build, color: Colors.white, size: 36),
-              ),
-              const SizedBox(height: 12),
+              const LogoGomaq(),
+              const SizedBox(height: 16),
               const Text(
                 'ACCESO A GOMAQ',
                 style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, letterSpacing: 1),
@@ -84,7 +80,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   children: [
                     Icon(Icons.cloud_off, size: 13, color: GomaqColors.textoSecundario),
                     SizedBox(width: 5),
-                    Text('Funciona sin conexión', style: TextStyle(fontSize: 11, color: GomaqColors.textoSecundario)),
+                    Text('Funciona sin conexión', style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
                   ],
                 ),
               ),

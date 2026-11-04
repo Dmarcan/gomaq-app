@@ -39,6 +39,8 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
   int? _disponibles;
   StreamSubscription<bool>? _conexionSub;
   Timer? _temporizador;
+  // las finalizadas se pliegan: con el tiempo se acumulan y empujaban hacia abajo lo que se esta trabajando
+  bool _verFinalizadas = false;
   bool _syncEnCurso = false;
   late final SyncService _sync;
 
@@ -265,6 +267,59 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
     if (tomo == true) _sincronizarSiHayConexion();
   }
 
+  /// Lo que se esta trabajando primero (en terreno o en reparacion), despues el viaje, y al final lo
+  /// que aun no se acepta. Dentro de cada grupo se respeta el orden de la lista (mas nuevas primero).
+  static int _prioridad(String estado) => switch (estado) {
+        'en_terreno' || 'en_reparacion' => 0,
+        'en_camino' => 1,
+        'aceptada' => 2,
+        _ => 3,
+      };
+
+  List<Widget> _tarjetas() {
+    Widget tarjeta(OrdenTrabajo orden) => OrdenCard(
+          orden: orden,
+          onAbrir: () async {
+            await Navigator.push(
+              context,
+              MaterialPageRoute(builder: (_) => OrdenDetailScreen(ordenId: orden.id)),
+            );
+            _cargarLocal();
+          },
+        );
+
+    final abiertas = _ordenes.where((o) => o.estado != 'finalizada').toList();
+    final finalizadas = _ordenes.where((o) => o.estado == 'finalizada').toList();
+    final conPosicion = abiertas.asMap().entries.toList()
+      ..sort((a, b) {
+        final c = _prioridad(a.value.estado).compareTo(_prioridad(b.value.estado));
+        return c != 0 ? c : a.key.compareTo(b.key);
+      });
+
+    return [
+      for (final e in conPosicion) tarjeta(e.value),
+      if (finalizadas.isNotEmpty) ...[
+        InkWell(
+          onTap: () => setState(() => _verFinalizadas = !_verFinalizadas),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 4),
+            child: Row(
+              children: [
+                Icon(_verFinalizadas ? Icons.expand_less : Icons.expand_more, color: GomaqColors.textoSecundario),
+                const SizedBox(width: 8),
+                Text(
+                  'Finalizadas (${finalizadas.length})',
+                  style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario),
+                ),
+              ],
+            ),
+          ),
+        ),
+        if (_verFinalizadas) for (final o in finalizadas) tarjeta(o),
+      ],
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final online = context.watch<ConnectivityService>().online;
@@ -284,11 +339,6 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
               child: const Icon(Icons.inbox_outlined),
             ),
             onPressed: _abrirDisponibles,
-          ),
-          IconButton(
-            tooltip: 'Cerrar sesión',
-            icon: const Icon(Icons.logout),
-            onPressed: _confirmarCerrarSesion,
           ),
         ],
       ),
@@ -340,6 +390,16 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
                   Navigator.push(context, MaterialPageRoute(builder: (_) => const MiFurgonScreen()));
                 },
               ),
+              const Spacer(),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.logout),
+                title: const Text('Cerrar sesión'),
+                onTap: () {
+                  Navigator.pop(context);
+                  _confirmarCerrarSesion();
+                },
+              ),
             ],
           ),
         ),
@@ -382,22 +442,9 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
                   )
                 : RefreshIndicator(
                     onRefresh: _sincronizarSiHayConexion,
-                    child: ListView.builder(
+                    child: ListView(
                       padding: const EdgeInsets.all(16),
-                      itemCount: _ordenes.length,
-                      itemBuilder: (context, i) {
-                        final orden = _ordenes[i];
-                        return OrdenCard(
-                          orden: orden,
-                          onAbrir: () async {
-                            await Navigator.push(
-                              context,
-                              MaterialPageRoute(builder: (_) => OrdenDetailScreen(ordenId: orden.id)),
-                            );
-                            _cargarLocal();
-                          },
-                        );
-                      },
+                      children: _tarjetas(),
                     ),
                   ),
           ),

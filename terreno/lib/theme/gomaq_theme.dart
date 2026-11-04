@@ -5,8 +5,13 @@ import 'package:flutter/material.dart';
 class GomaqColors {
   GomaqColors._();
 
-  /// Naranja de marca: titulos, iconos y acentos sobre el fondo oscuro (4,84:1).
+  /// Naranja de marca: iconos, bordes y acentos sobre el fondo oscuro (4,84:1 sobre el fondo, pero
+  /// 4,36:1 sobre las tarjetas). Para texto chico usar [textoNaranja].
   static const primario = Color(0xFFEA5B1F);
+
+  /// Naranja para texto chico (enlaces, botones de texto): llega a 4,5:1 sobre el fondo, las tarjetas
+  /// y la tarjeta amarilla de seccion pendiente.
+  static const textoNaranja = Color(0xFFF47A3F);
 
   /// Fondo de los botones con texto blanco. Blanco sobre el naranja de marca da 3,49:1 y
   /// WCAG AA pide 4,5:1; sobre este da 5,18:1.
@@ -17,6 +22,9 @@ class GomaqColors {
   static const superficieTarjeta = Color(0xFF22262B);
   static const superficieElevada = Color(0xFF2A2F35);
   static const bordeSutil = Color(0xFF33383F);
+  /// Borde de los campos de texto: el sutil daba 1,29:1 contra la tarjeta y WCAG pide 3:1 para el
+  /// limite de un componente (con sol directo el campo casi no se distinguia).
+  static const bordeCampo = Color(0xFF737A84);
   static const textoPrimario = Color(0xFFF5F5F5);
   static const textoSecundario = Color(0xFF9BA1A8);
 
@@ -128,12 +136,15 @@ ThemeData construirTemaGomaq() {
     ),
     outlinedButtonTheme: OutlinedButtonThemeData(
       style: OutlinedButton.styleFrom(
-        foregroundColor: GomaqColors.primario,
+        foregroundColor: GomaqColors.textoNaranja,
         minimumSize: const Size(64, 48),
         side: const BorderSide(color: GomaqColors.primario),
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
       ),
+    ),
+    textButtonTheme: TextButtonThemeData(
+      style: TextButton.styleFrom(foregroundColor: GomaqColors.textoNaranja),
     ),
     floatingActionButtonTheme: const FloatingActionButtonThemeData(
       backgroundColor: GomaqColors.accion,
@@ -146,11 +157,11 @@ ThemeData construirTemaGomaq() {
       hintStyle: const TextStyle(color: GomaqColors.textoSecundario),
       border: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
-        borderSide: const BorderSide(color: GomaqColors.bordeSutil),
+        borderSide: const BorderSide(color: GomaqColors.bordeCampo),
       ),
       enabledBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),
-        borderSide: const BorderSide(color: GomaqColors.bordeSutil),
+        borderSide: const BorderSide(color: GomaqColors.bordeCampo),
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(10),

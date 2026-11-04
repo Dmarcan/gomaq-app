@@ -54,6 +54,9 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   bool _precioEditado = false;
   // evita abrir dos tramos si se toca INICIAR dos veces seguidas
   bool _iniciando = false;
+  // cambios sin enviar de todo el telefono, para el icono de la barra superior
+  int _pendientes = 0;
+  int _enError = 0;
 
   /// Los seis tipos del talonario, en el mismo orden que el papel.
   static const _tiposServicio = [
@@ -79,11 +82,28 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     _sincronizador = context.read<SyncService>();
     // la cantidad parte en 1: lo comun es poner una unidad
     _cantidadInsumoCtrl.text = '1';
+    _sincronizador.addListener(_alCambiarSync);
+    _actualizarEstadoSync();
     _cargar();
+  }
+
+  void _alCambiarSync() {
+    if (mounted) _actualizarEstadoSync();
+  }
+
+  Future<void> _actualizarEstadoSync() async {
+    final pendientes = await _sincronizador.contarPendientes();
+    final enError = await _sincronizador.contarEnError();
+    if (!mounted) return;
+    setState(() {
+      _pendientes = pendientes;
+      _enError = enError;
+    });
   }
 
   @override
   void dispose() {
+    _sincronizador.removeListener(_alCambiarSync);
     _diagnosticoCtrl.dispose();
     _observacionFinalCtrl.dispose();
     _folioPapelCtrl.dispose();
@@ -125,7 +145,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   }
 
   /// Guarda la cabecera del talonario: tipo de servicio, observación final y folio del papel.
-  Future<void> _guardarDatosOt() async {
+  Future<void> _guardarDatosOt({bool aviso = true}) async {
     await context.read<SyncService>().encolarDatosOt(
           _id,
           tipoServicio: _tipoServicio,
@@ -134,11 +154,22 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
         );
     await _cargar();
     _intentarSincronizarAhora();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Guardado localmente, se sincroniza cuando haya señal')),
-      );
-    }
+    if (aviso) _avisarGuardado();
+  }
+
+  void _avisarGuardado() {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Guardado localmente, se sincroniza cuando haya señal')),
+    );
+  }
+
+  /// Boton Guardar de las observaciones: guarda las iniciales y la cabecera con un solo aviso (antes
+  /// cada una mostraba el suyo y se apilaban unos 8 segundos sobre la barra inferior).
+  Future<void> _guardarObservaciones() async {
+    await _guardarDiagnostico(aviso: false);
+    await _guardarDatosOt(aviso: false);
+    _avisarGuardado();
   }
 
   Future<void> _alternarServicio(int servicioId) async {
@@ -186,7 +217,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     await _sincronizador.encolarDiagnostico(_id, diagnostico: texto);
   }
 
-  Future<void> _guardarDiagnostico({String? estado}) async {
+  Future<void> _guardarDiagnostico({String? estado, bool aviso = true}) async {
     await context.read<SyncService>().encolarDiagnostico(
           _id,
           diagnostico: _diagnosticoCtrl.text.trim(),
@@ -194,11 +225,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
         );
     await _cargar();
     _intentarSincronizarAhora();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Guardado localmente, se sincroniza cuando haya señal')),
-      );
-    }
+    if (aviso) _avisarGuardado();
   }
 
   /// El mecanico acepta el trabajo: la oficina ve que lo recibio. No hace falta senal.
@@ -266,18 +293,28 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
 
   Future<void> _tomarFoto(String tipo) async {
     final syncService = context.read<SyncService>();
-    final picker = ImagePicker();
-    final foto = await picker.pickImage(source: ImageSource.camera, imageQuality: 80);
-    if (foto == null) return;
+    try {
+      final picker = ImagePicker();
+      // 1600 px de ancho sobra para ver el estado del equipo y evita fotos de varios MB que tardan
+      // mucho en subir con mala señal
+      final foto = await picker.pickImage(source: ImageSource.camera, imageQuality: 80, maxWidth: 1600);
+      if (foto == null) return;
 
-    final dir = await getApplicationDocumentsDirectory();
-    final nombreArchivo = 'ot${_id}_${DateTime.now().millisecondsSinceEpoch}.jpg';
-    final rutaLocal = '${dir.path}/$nombreArchivo';
-    await File(foto.path).copy(rutaLocal);
+      final dir = await getApplicationDocumentsDirectory();
+      final nombreArchivo = 'ot${_id}_${DateTime.now().millisecondsSinceEpoch}.jpg';
+      final rutaLocal = '${dir.path}/$nombreArchivo';
+      await File(foto.path).copy(rutaLocal);
 
-    await syncService.encolarEvidencia(_id, rutaLocal, tipo: tipo);
-    await _cargar();
-    _intentarSincronizarAhora();
+      await syncService.encolarEvidencia(_id, rutaLocal, tipo: tipo);
+      await _cargar();
+      _intentarSincronizarAhora();
+    } catch (_) {
+      // permiso de camara negado o camara ocupada: antes no pasaba nada y no se sabia por que
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo abrir la cámara. Revisa que la app tenga permiso para usarla.')),
+      );
+    }
   }
 
   List<Map<String, dynamic>> _fotosDeTipo(String tipo) =>
@@ -531,7 +568,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                         children: [
                           Icon(Icons.add_a_photo_outlined, color: GomaqColors.primario),
                           SizedBox(height: 4),
-                          Text('Agregar', style: TextStyle(fontSize: 11, color: GomaqColors.primario)),
+                          Text('Agregar', style: TextStyle(fontSize: 12, color: GomaqColors.textoNaranja)),
                         ],
                       ),
                     ),
@@ -544,7 +581,8 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     );
   }
 
-  Widget _seccionDiagnostico({required bool soloLectura, required bool enTerreno}) {
+  /// Observaciones INICIALES del talonario: que se encontro al llegar. Va arriba, antes de intervenir.
+  Widget _seccionObservacionesIniciales({required bool soloLectura}) {
     final completa = soloLectura ? null : (_orden?.diagnostico ?? '').trim().isNotEmpty;
     return _tarjeta(
       completa: completa,
@@ -553,13 +591,11 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // El talonario separa OBSERVACIONES INICIALES de OBSERVACIONES FINALES:
-            // qué se encontró al llegar y qué se hizo (entrevista el jefe de taller, punto 5).
-            _tituloSeccion(Icons.build_outlined, 'Observaciones', completa: completa),
-            const SizedBox(height: 12),
-            const Text('INICIALES · qué se encontró al llegar',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario)),
+            _tituloSeccion(Icons.build_outlined, 'Observaciones iniciales', completa: completa),
             const SizedBox(height: 4),
+            const Text('Qué se encontró al llegar',
+                style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
+            const SizedBox(height: 8),
             Focus(
               // al salir del campo se guarda solo: antes se perdia si no se pulsaba Guardar
               onFocusChange: (tieneFoco) {
@@ -572,10 +608,25 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                 decoration: const InputDecoration(hintText: 'Ej: cliente solicita llave de contacto por pérdida'),
               ),
             ),
-            const SizedBox(height: 12),
-            const Text('FINALES · qué se hizo',
-                style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario)),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Observaciones FINALES del talonario: que se hizo, ademas del folio del papel y los botones de
+  /// guardar. Va junto a las fotos DESPUES, que es lo ultimo que se documenta antes de cerrar.
+  Widget _seccionObservacionesFinales({required bool soloLectura, required bool enTerreno}) {
+    return _tarjeta(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _tituloSeccion(Icons.fact_check_outlined, 'Observaciones finales'),
             const SizedBox(height: 4),
+            const Text('Qué se hizo', style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
+            const SizedBox(height: 8),
             TextField(
               controller: _observacionFinalCtrl,
               maxLines: 3,
@@ -600,10 +651,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                 children: [
                   Expanded(
                     child: OutlinedButton.icon(
-                      onPressed: () async {
-                        await _guardarDiagnostico();
-                        await _guardarDatosOt();
-                      },
+                      onPressed: _guardarObservaciones,
                       icon: const Icon(Icons.save_outlined, size: 18),
                       label: const Text('Guardar'),
                     ),
@@ -614,7 +662,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                       child: OutlinedButton.icon(
                         onPressed: () => _guardarDiagnostico(estado: 'en_reparacion'),
                         icon: const Icon(Icons.handyman_outlined, size: 18),
-                        label: const Text('En reparación'),
+                        label: const Text('Pasar a reparación'),
                       ),
                     ),
                   ],
@@ -707,18 +755,16 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                 ],
               ),
               // las tres casillas del papel: SI / NO / ?
-              Row(
+              Wrap(
+                crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 6,
                 children: [
                   const Text('Facturable:', style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
-                  const SizedBox(width: 8),
                   for (final (valor, etiqueta) in [('si', 'Sí'), ('no', 'No'), ('pendiente', 'Por decidir')])
-                    Padding(
-                      padding: const EdgeInsets.only(right: 6),
-                      child: ChoiceChip(
-                        label: Text(etiqueta, style: const TextStyle(fontSize: 12)),
-                        selected: _facturableLinea == valor,
-                        onSelected: (_) => setState(() => _facturableLinea = valor),
-                      ),
+                    ChoiceChip(
+                      label: Text(etiqueta, style: const TextStyle(fontSize: 12)),
+                      selected: _facturableLinea == valor,
+                      onSelected: (_) => setState(() => _facturableLinea = valor),
                     ),
                 ],
               ),
@@ -766,8 +812,8 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
         mainAxisSize: MainAxisSize.min,
         children: [
           insumo['sincronizado'] == 0
-              ? const Icon(Icons.cloud_upload, size: 16, color: GomaqColors.estadoAdvertencia)
-              : const Icon(Icons.cloud_done, size: 16, color: GomaqColors.estadoPositivo),
+              ? const Icon(Icons.cloud_upload, size: 16, color: GomaqColors.estadoAdvertencia, semanticLabel: 'Pendiente de envío')
+              : const Icon(Icons.cloud_done, size: 16, color: GomaqColors.estadoPositivo, semanticLabel: 'Enviado'),
           if (!soloLectura && !anulada)
             IconButton(
               tooltip: 'Anular línea',
@@ -940,7 +986,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                           ? '${entrada.value.length} sistemas'
                           : '$marcadosDelGrupo marcado${marcadosDelGrupo == 1 ? '' : 's'}',
                       style: TextStyle(
-                        fontSize: 11,
+                        fontSize: 12,
                         color: marcadosDelGrupo > 0 ? GomaqColors.primario : GomaqColors.textoSecundario,
                       ),
                     ),
@@ -991,8 +1037,8 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                 ),
                 title: Text(_rangoTramo(tramo), style: const TextStyle(fontSize: 14)),
                 trailing: tramo['sincronizado'] == 0
-                    ? const Icon(Icons.cloud_upload, size: 16, color: GomaqColors.estadoAdvertencia)
-                    : const Icon(Icons.cloud_done, size: 16, color: GomaqColors.estadoPositivo),
+                    ? const Icon(Icons.cloud_upload, size: 16, color: GomaqColors.estadoAdvertencia, semanticLabel: 'Pendiente de envío')
+                    : const Icon(Icons.cloud_done, size: 16, color: GomaqColors.estadoPositivo, semanticLabel: 'Enviado'),
               ),
             if (!soloLectura) ...[
               const SizedBox(height: 8),
@@ -1001,7 +1047,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
                 child: OutlinedButton.icon(
                   onPressed: _alternarTramo,
                   icon: Icon(abierto.isEmpty ? Icons.play_arrow : Icons.stop, size: 18),
-                  label: Text(abierto.isEmpty ? 'INICIAR TRAMO' : 'TERMINAR TRAMO'),
+                  label: Text(abierto.isEmpty ? 'INICIAR TIEMPO DE TRABAJO' : 'DETENER TIEMPO DE TRABAJO'),
                 ),
               ),
             ],
@@ -1020,11 +1066,27 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     return '${hhmm(inicio)} a ${hhmm(termino)}  ·  ${minutos ~/ 60}h ${minutos % 60}m';
   }
 
+  Future<bool> _confirmar({required String titulo, required String mensaje, required String textoOk}) async {
+    final r = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(titulo),
+        content: Text(mensaje),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Cancelar')),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(textoOk)),
+        ],
+      ),
+    );
+    return r == true;
+  }
+
   Widget? _botonInferior(OrdenTrabajo orden) {
     final String texto;
     final IconData icono;
     VoidCallback? accion;
     String? notaFaltante;
+    VoidCallback? accionNota;
 
     // alternativa para quien ya esta en el lugar y no pasa por los pasos del viaje
     VoidCallback? accionSecundaria;
@@ -1056,8 +1118,9 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
         if (faltan > 0) {
           accion = null;
           notaFaltante = faltan == 1
-              ? 'Falta 1 foto del trabajo terminado (DESPUÉS) para poder cerrar'
-              : 'Faltan $faltan fotos del trabajo terminado (DESPUÉS) para poder cerrar';
+              ? 'Falta 1 foto del trabajo terminado (DESPUÉS) para poder cerrar. Toca aquí para tomarla'
+              : 'Faltan $faltan fotos del trabajo terminado (DESPUÉS) para poder cerrar. Toca aquí para tomar una';
+          accionNota = () => _tomarFoto('despues');
         } else {
           accion = _finalizar;
         }
@@ -1079,10 +1142,20 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
             if (notaFaltante != null)
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
-                child: Text(
-                  notaFaltante,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 12, color: GomaqColors.estadoAdvertencia),
+                child: InkWell(
+                  onTap: accionNota,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                    child: Text(
+                      notaFaltante,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: accionNota == null ? GomaqColors.estadoAdvertencia : GomaqColors.textoNaranja,
+                        decoration: accionNota == null ? null : TextDecoration.underline,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             SizedBox(
@@ -1095,12 +1168,54 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
             ),
             if (accionSecundaria != null)
               TextButton(
-                onPressed: accionSecundaria,
+                onPressed: () async {
+                  // salta aceptar y salir: el trabajo parte ahora y no se puede deshacer
+                  final seguir = await _confirmar(
+                    titulo: '¿Ya estás en el lugar?',
+                    mensaje: 'El trabajo parte ahora y el tiempo de trabajo empieza a correr.',
+                    textoOk: 'Sí, iniciar',
+                  );
+                  if (seguir) accionSecundaria!();
+                },
                 child: const Text('Ya estoy en el lugar: iniciar trabajo'),
               ),
           ],
         ),
       ),
+    );
+  }
+
+  /// Estado de sincronizacion siempre a la vista: antes solo estaba en la lista y, dentro de una
+  /// orden, no se sabia si lo que se acababa de guardar ya habia salido del telefono.
+  Widget _indicadorSync() {
+    final enviando = _sincronizador.sincronizando;
+    final IconData icono;
+    final Color color;
+    final String texto;
+    if (enviando) {
+      icono = Icons.sync;
+      color = GomaqColors.estadoPositivo;
+      texto = 'Enviando cambios…';
+    } else if (_enError > 0) {
+      icono = Icons.sync_problem;
+      color = GomaqColors.estadoNegativo;
+      texto = _enError == 1 ? '1 cambio no se pudo enviar' : '$_enError cambios no se pudieron enviar';
+    } else if (_pendientes > 0) {
+      icono = Icons.cloud_upload;
+      color = GomaqColors.estadoAdvertencia;
+      texto = _pendientes == 1 ? '1 cambio por enviar' : '$_pendientes cambios por enviar';
+    } else {
+      icono = Icons.cloud_done;
+      color = GomaqColors.estadoPositivo;
+      texto = 'Todo enviado';
+    }
+    return IconButton(
+      tooltip: texto,
+      icon: Icon(icono, color: color),
+      onPressed: () {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(texto)));
+        if (_pendientes > 0 || _enError > 0) _intentarSincronizarAhora();
+      },
     );
   }
 
@@ -1122,7 +1237,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
         if (didPop) _guardarObservacionesIniciales();
       },
       child: Scaffold(
-      appBar: AppBar(title: Text(etiquetaOt(orden.id))),
+      appBar: AppBar(title: Text(etiquetaOt(orden.id)), actions: [_indicadorSync()]),
       bottomNavigationBar: _botonInferior(orden),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -1142,36 +1257,43 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
             const SeccionBloqueada(titulo: 'Observaciones', icono: Icons.build_outlined),
             const SeccionBloqueada(titulo: 'Repuestos utilizados', icono: Icons.inventory_2_outlined),
           ] else if (enProgreso) ...[
-            // mismo orden que el talonario en papel
+            // en el orden en que se hace el trabajo: documentar el estado inicial, intervenir, y
+            // dejar al final lo que se necesita para cerrar. El talonario en papel y el PDF
+            // conservan su orden; esto es solo la pantalla.
+            if (_fotosDeTipo('antes').isEmpty) _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: true),
+            _seccionObservacionesIniciales(soloLectura: false),
             _seccionTipoServicio(soloLectura: false),
             _seccionChecklist(soloLectura: false),
-            _seccionTramos(soloLectura: false),
-            _seccionDiagnostico(soloLectura: false, enTerreno: orden.estado == 'en_terreno'),
             _seccionInsumos(soloLectura: false),
-            _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: true),
+            _seccionObservacionesFinales(soloLectura: false, enTerreno: orden.estado == 'en_terreno'),
             _seccionFotos(
               tipo: 'despues',
               titulo: 'Fotos DESPUÉS',
               puedeAgregar: true,
               ayuda: 'Se requiere al menos ${ReglasNegocio.minFotosDespues} foto del trabajo terminado para cerrar',
             ),
+            _seccionTramos(soloLectura: false),
+            // las ANTES ya tomadas se pliegan al final: no hace falta verlas mientras se trabaja
+            if (_fotosDeTipo('antes').isNotEmpty) _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: true),
           ] else if (finalizada) ...[
+            _seccionObservacionesIniciales(soloLectura: true),
             _seccionTipoServicio(soloLectura: true),
             _seccionChecklist(soloLectura: true),
-            _seccionTramos(soloLectura: true),
-            _seccionDiagnostico(soloLectura: true, enTerreno: false),
             _seccionInsumos(soloLectura: true),
+            _seccionObservacionesFinales(soloLectura: true, enTerreno: false),
             _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: false),
             _seccionFotos(tipo: 'despues', titulo: 'Fotos DESPUÉS', puedeAgregar: false),
+            _seccionTramos(soloLectura: true),
           ] else ...[
             // estado no contemplado: mostrar todo editable para no bloquear al mecanico
+            _seccionObservacionesIniciales(soloLectura: false),
             _seccionTipoServicio(soloLectura: false),
             _seccionChecklist(soloLectura: false),
-            _seccionTramos(soloLectura: false),
-            _seccionDiagnostico(soloLectura: false, enTerreno: false),
             _seccionInsumos(soloLectura: false),
+            _seccionObservacionesFinales(soloLectura: false, enTerreno: false),
             _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: true),
             _seccionFotos(tipo: 'despues', titulo: 'Fotos DESPUÉS', puedeAgregar: true),
+            _seccionTramos(soloLectura: false),
           ],
         ],
       ),

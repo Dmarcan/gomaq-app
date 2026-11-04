@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Mismo fondo oscuro de la app: sin esto la pantalla de inicio destellaba en blanco -->
+    <color name="launch_fondo">#1A1D21</color>
+    <!-- Naranja del logo de GOMAQ: fondo del icono y del circulo de la pantalla de inicio -->
+    <color name="ic_launcher_fondo">#F58634</color>
+</resources>

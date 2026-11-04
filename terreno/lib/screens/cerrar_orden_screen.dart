@@ -7,6 +7,7 @@ import '../db/local_database.dart';
 import '../models/orden_trabajo.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../widgets/dialogo_horometro.dart';
 
 /// Cierre de la OT: quien recibe el equipo + firma digital + resumen.
 /// Todo queda encolado offline; la firma se sube cuando haya señal.
@@ -34,6 +35,16 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
   bool _sinPersona = false;
   bool _cerrando = false;
   bool _reiniciarContador = false;
+  // ultima lectura de horometro que el telefono conoce de este equipo (null si no hay ninguna)
+  double? _ultimaLectura;
+
+  @override
+  void initState() {
+    super.initState();
+    ultimaLecturaLocal(widget.orden.maquinariaId).then((v) {
+      if (mounted) setState(() => _ultimaLectura = v);
+    });
+  }
 
   late final SignatureController _firmaCtrl = SignatureController(
     penStrokeWidth: 3,
@@ -50,6 +61,58 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
   }
 
   bool get _puedeCerrar => _sinPersona || _personaCtrl.text.trim().isNotEmpty;
+
+  double? get _lecturaEscrita {
+    final v = double.tryParse(_horometroCtrl.text.trim().replaceAll(',', '.'));
+    return (v != null && v >= 0) ? v : null;
+  }
+
+  Future<bool> _preguntar({
+    required String titulo,
+    required String mensaje,
+    required String seguir,
+    required String volver,
+  }) async {
+    final r = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(titulo),
+        content: Text(mensaje),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: Text(volver)),
+          FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: Text(seguir)),
+        ],
+      ),
+    );
+    return r == true;
+  }
+
+  /// Cerrar es lo unico irreversible de la orden (despues no se agregan fotos ni repuestos), asi
+  /// que se confirma con un resumen. Antes cerraba al primer toque y volvia a la lista sin avisar.
+  Future<void> _confirmarYCerrar() async {
+    if (_cerrando) return;
+    final lectura = _lecturaEscrita;
+    final ultima = _ultimaLectura;
+    if (lectura != null && ultima != null && lectura < ultima) {
+      final seguir = await _preguntar(
+        titulo: 'La lectura es menor',
+        mensaje: 'Es menor que la última registrada (${formatoHoras(ultima)} h). ¿Guardarla de todos modos?',
+        seguir: 'Guardar igual',
+        volver: 'Revisar',
+      );
+      if (!seguir || !mounted) return;
+    }
+    final etiqueta = etiquetaOt(context.read<SyncService>().resolverIdOrden(widget.orden.id));
+    final cerrar = await _preguntar(
+      titulo: '¿Cerrar la $etiqueta?',
+      mensaje: 'Después no podrás cambiar fotos ni repuestos. Fotos después: ${widget.fotosDespues}, '
+          'repuestos: ${widget.insumos}.',
+      seguir: 'Cerrar $etiqueta',
+      volver: 'Seguir editando',
+    );
+    if (!cerrar || !mounted) return;
+    await _cerrarOrden();
+  }
 
   Future<void> _cerrarOrden() async {
     if (_cerrando) return;
@@ -88,8 +151,8 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
 
       // la lectura va como tarea aparte y despues del cierre: si el horometro falla en el
       // servidor (equipo sin permiso, valor rechazado) no debe arrastrar al cierre de la OT
-      final horometro = double.tryParse(_horometroCtrl.text.trim().replaceAll(',', '.'));
-      if (horometro != null && horometro >= 0) {
+      final horometro = _lecturaEscrita;
+      if (horometro != null) {
         await syncService.encolarHorometro(
           ordenId,
           maquinariaId: widget.orden.maquinariaId,
@@ -102,6 +165,10 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
       syncService.sincronizar().catchError((_) {});
 
       if (!mounted) return;
+      // el aviso sobrevive al cambio de pantalla: sin esto el cierre volvia a la lista en silencio
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('${etiquetaOt(ordenId)} cerrada. Si no hay señal, se enviará cuando vuelva.')),
+      );
       // volver hasta la lista (cierra tambien el detalle)
       Navigator.of(context).popUntil((route) => route.isFirst);
     } finally {
@@ -134,13 +201,27 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
             color: GomaqColors.fondoOscuro,
             border: Border(top: BorderSide(color: GomaqColors.bordeSutil)),
           ),
-          child: SizedBox(
-            width: double.infinity,
-            child: FilledButton.icon(
-              onPressed: _puedeCerrar && !_cerrando ? _cerrarOrden : null,
-              icon: const Icon(Icons.lock_outline),
-              label: Text(_cerrando ? 'CERRANDO...' : 'CERRAR ORDEN DE TRABAJO'),
-            ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              if (!_puedeCerrar)
+                const Padding(
+                  padding: EdgeInsets.only(bottom: 8),
+                  child: Text(
+                    'Escribe quién recibe el equipo o marca "No hay persona disponible" para poder cerrar',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(fontSize: 12, color: GomaqColors.estadoAdvertencia),
+                  ),
+                ),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.icon(
+                  onPressed: _puedeCerrar && !_cerrando ? _confirmarYCerrar : null,
+                  icon: const Icon(Icons.lock_outline),
+                  label: Text(_cerrando ? 'CERRANDO...' : 'CERRAR ORDEN DE TRABAJO'),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -150,7 +231,7 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
           Card(
             child: ListTile(
               leading: const Icon(Icons.assignment_turned_in_outlined, color: GomaqColors.primario),
-              title: Text('OT-${widget.orden.id} · ${widget.orden.maquinariaCodigo ?? ""}'),
+              title: Text('${etiquetaOt(context.read<SyncService>().resolverIdOrden(widget.orden.id))} · ${widget.orden.maquinariaCodigo ?? ""}'),
               subtitle: Text(
                 widget.orden.motivo ?? '',
                 maxLines: 2,
@@ -159,16 +240,37 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
               ),
             ),
           ),
+          Card(
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text('RESUMEN DEL TRABAJO',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario)),
+                  const SizedBox(height: 8),
+                  _filaResumen(Icons.photo_camera_outlined, 'Fotos antes', '${widget.fotosAntes}'),
+                  _filaResumen(Icons.photo_camera, 'Fotos después', '${widget.fotosDespues}'),
+                  _filaResumen(Icons.inventory_2_outlined, 'Repuestos registrados', '${widget.insumos}'),
+                ],
+              ),
+            ),
+          ),
           const SizedBox(height: 8),
           const Text('HORÓMETRO DEL EQUIPO',
               style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario)),
           const SizedBox(height: 4),
-          const Text('Opcional. Sirve para calcular cuándo toca la mantención preventiva.',
-              style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
+          Text(
+              _ultimaLectura == null
+                  ? 'Opcional. Sirve para calcular cuándo toca la mantención preventiva.'
+                  : 'Opcional. Última lectura registrada: ${formatoHoras(_ultimaLectura!)} h. '
+                      'Sirve para calcular cuándo toca la mantención preventiva.',
+              style: const TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
           const SizedBox(height: 8),
           TextField(
             controller: _horometroCtrl,
-            keyboardType: TextInputType.number,
+            // con decimales, como el dialogo de horometro: muchos equipos marcan decimas de hora
+            keyboardType: const TextInputType.numberWithOptions(decimal: true),
             decoration: const InputDecoration(hintText: 'Horas, por ejemplo 1156'),
             onChanged: (_) => setState(() {}),
           ),
@@ -235,26 +337,9 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
             const SizedBox(height: 4),
             const Text(
               'La firma es opcional, pero respalda la entrega ante el cliente',
-              style: TextStyle(fontSize: 11, color: GomaqColors.textoSecundario),
+              style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario),
             ),
           ],
-          const SizedBox(height: 16),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Text('RESUMEN DEL TRABAJO',
-                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: GomaqColors.textoSecundario)),
-                  const SizedBox(height: 8),
-                  _filaResumen(Icons.photo_camera_outlined, 'Fotos antes', '${widget.fotosAntes}'),
-                  _filaResumen(Icons.photo_camera, 'Fotos después', '${widget.fotosDespues}'),
-                  _filaResumen(Icons.inventory_2_outlined, 'Repuestos registrados', '${widget.insumos}'),
-                ],
-              ),
-            ),
-          ),
         ],
       ),
     );
