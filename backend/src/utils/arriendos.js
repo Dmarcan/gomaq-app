@@ -3,13 +3,16 @@
 //
 // Un arriendo es un despacho no fallido. Lo cierra la siguiente guia no fallida del mismo equipo
 // (orden por fecha e id):
-//   - una recepcion: el arriendo termina ese dia (menos uno si el dia de recepcion no cuenta);
-//   - otro despacho: cierre implicito con la misma formula sobre la fecha del segundo despacho y el
-//     aviso `falta_recepcion` (no deberia pasar; si pasa, el segundo es otro arriendo, de otro cliente);
+//   - una recepcion: el arriendo termina en guias.fin_cobro (fijado al registrarla con la hora de corte
+//     de ese momento: el mismo dia si ocurre desde el corte, el dia anterior si ocurre antes);
+//   - otro despacho: cierre implicito, con el aviso `falta_recepcion` (no deberia pasar; si pasa, el
+//     segundo es otro arriendo, de otro cliente). Termina el dia anterior al inicio_cobro guardado del
+//     segundo despacho, asi el dia del cambio se cobra a uno solo (al nuevo si el cambio fue antes del
+//     corte, al anterior si fue desde el corte) aunque la configuracion cambie despues;
 //   - ninguna: el arriendo sigue en curso.
 // Una recepcion sin despacho antes (o precedida por otra recepcion) no es un arriendo y se ignora.
 
-const { diaSantiago, sumarDias } = require('./diasArriendo');
+const { finCobroDia, inicioCobroDia, sumarDias } = require('./diasArriendo');
 const { proponerPeriodo, resumirArriendoEnCurso } = require('./periodosArriendo');
 
 const SQL_ARRIENDOS = `
@@ -17,7 +20,9 @@ const SQL_ARRIENDOS = `
         SELECT g.id, g.maquinaria_id, g.tipo, g.fecha, g.cliente_id, g.inicio_cobro,
                LEAD(g.id) OVER w AS sig_id,
                LEAD(g.tipo) OVER w AS sig_tipo,
-               LEAD(g.fecha) OVER w AS sig_fecha
+               LEAD(g.fecha) OVER w AS sig_fecha,
+               to_char(LEAD(g.fin_cobro) OVER w, 'YYYY-MM-DD') AS sig_fin_cobro,
+               to_char(LEAD(g.inicio_cobro) OVER w, 'YYYY-MM-DD') AS sig_inicio_cobro
         FROM guias g
         WHERE g.fallido = false
         WINDOW w AS (PARTITION BY g.maquinaria_id ORDER BY g.fecha, g.id)
@@ -27,7 +32,7 @@ const SQL_ARRIENDOS = `
            o.fecha AS fecha_despacho,
            to_char(COALESCE(o.inicio_cobro, gomaq_inicio_cobro(o.fecha, $1)), 'YYYY-MM-DD') AS inicio_cobro,
            CASE WHEN o.sig_tipo = 'recepcion' THEN o.sig_id END AS guia_recepcion_id,
-           o.sig_tipo, o.sig_fecha AS fecha_fin,
+           o.sig_tipo, o.sig_fecha AS fecha_fin, o.sig_fin_cobro, o.sig_inicio_cobro,
            to_char(fa.facturado_hasta, 'YYYY-MM-DD') AS facturado_hasta,
            (fa.hay_final OR (o.sig_tipo = 'recepcion' AND EXISTS (
                 SELECT 1 FROM facturas f2 WHERE f2.guia_recepcion_id = o.sig_id))) AS facturado_completo,
@@ -47,11 +52,19 @@ const SQL_ARRIENDOS = `
     ORDER BY o.maquinaria_id, o.fecha, o.id
 `;
 
-/** Ultimo dia del arriendo a partir de la guia que lo cierra, o null si sigue en curso. */
-function finDelArriendo(fila, incluirDiaRecepcion) {
+/**
+ * Ultimo dia del arriendo, o null si sigue en curso. Sale de lo que quedo GUARDADO al registrar la
+ * guia que lo cierra, para que cambiar la hora de corte despues no deje huecos ni dias dobles:
+ *   - recepcion: guias.fin_cobro (migracion 028);
+ *   - despacho siguiente: el dia anterior a su inicio_cobro guardado (complemento exacto del inicio).
+ * Si falta el dato guardado (guias anteriores a la migracion sin relleno), recalcula con la hora de corte.
+ */
+function finDelArriendo(fila, horaCorte) {
     if (!fila.sig_tipo) return null;
-    const dia = diaSantiago(fila.fecha_fin);
-    return incluirDiaRecepcion ? dia : sumarDias(dia, -1);
+    if (fila.sig_tipo === 'recepcion') {
+        return fila.sig_fin_cobro || finCobroDia(fila.fecha_fin, horaCorte);
+    }
+    return sumarDias(fila.sig_inicio_cobro || inicioCobroDia(fila.fecha_fin, horaCorte), -1);
 }
 
 /**
@@ -61,7 +74,7 @@ function finDelArriendo(fila, incluirDiaRecepcion) {
 async function cargarArriendos(db, config, { despachoId = null, recepcionId = null, maquinariaId = null } = {}) {
     const r = await db.query(SQL_ARRIENDOS, [config.hora_corte_despacho, despachoId, recepcionId, maquinariaId]);
     return r.rows.map((fila) => {
-        const fin = finDelArriendo(fila, config.incluir_dia_recepcion);
+        const fin = finDelArriendo(fila, config.hora_corte_despacho);
         const propuesta = proponerPeriodo({
             inicioCobro: fila.inicio_cobro,
             facturadoHasta: fila.facturado_hasta,

@@ -108,21 +108,28 @@ describe('calcularRentabilidad', () => {
     });
 });
 
-// Fechas en hora local (sin "Z"), igual que la regla de facturacion: el corte de las 13:00 se
-// evalua con la hora local del servidor.
-const f = (texto) => new Date(texto);
+// Fechas dadas como hora de Santiago ("2026-03-05T14:00:00"): se les pone el offset de esa fecha (-03:00 en
+// verano, -04:00 en invierno) para que las pruebas no dependan de la zona del proceso (el CI corre en UTC).
+const { horaSantiago } = require('../src/utils/diasArriendo');
+const f = (texto) => {
+    for (const offset of ['-03:00', '-04:00']) {
+        const d = new Date(`${texto}${offset}`);
+        if (horaSantiago(d) === Number(texto.slice(11, 13))) return d;
+    }
+    throw new Error(`hora no representable en Santiago: ${texto}`);
+};
 const despacho = (fecha, extra = {}) => ({ tipo: 'despacho', fecha: f(fecha), ...extra });
 const recepcion = (fecha, extra = {}) => ({ tipo: 'recepcion', fecha: f(fecha), ...extra });
 const ANIO = [f('2026-01-01T00:00:00'), f('2026-12-31T23:59:59')];
 
 describe('calcularDiasArrendado', () => {
-    test('cuenta desde el despacho hasta el dia de la recepcion inclusive', () => {
-        const guias = [despacho('2026-03-01T10:00:00'), recepcion('2026-03-05T09:00:00')];
+    test('cuenta desde el despacho hasta el dia de la recepcion inclusive (recepcion desde el corte)', () => {
+        const guias = [despacho('2026-03-01T10:00:00'), recepcion('2026-03-05T14:00:00')];
         assert.strictEqual(calcularDiasArrendado(guias, ...ANIO), 5);
     });
 
     test('un despacho despues de las 13:00 no cuenta ese dia, como en la facturacion', () => {
-        const guias = [despacho('2026-03-01T15:00:00'), recepcion('2026-03-05T09:00:00')];
+        const guias = [despacho('2026-03-01T15:00:00'), recepcion('2026-03-05T14:00:00')];
         assert.strictEqual(calcularDiasArrendado(guias, ...ANIO), 4);
     });
 
@@ -133,12 +140,12 @@ describe('calcularDiasArrendado', () => {
 
     test('solo cuentan los dias que caen dentro del periodo', () => {
         // arriendo del 25 de dic al 10 de ene, mirando solo enero
-        const guias = [despacho('2025-12-25T09:00:00'), recepcion('2026-01-10T09:00:00')];
+        const guias = [despacho('2025-12-25T09:00:00'), recepcion('2026-01-10T14:00:00')];
         assert.strictEqual(calcularDiasArrendado(guias, f('2026-01-01T00:00:00'), f('2026-01-31T23:59:59')), 10);
     });
 
     test('un arriendo anterior al periodo y ya devuelto no suma nada', () => {
-        const guias = [despacho('2025-05-01T09:00:00'), recepcion('2025-05-10T09:00:00')];
+        const guias = [despacho('2025-05-01T09:00:00'), recepcion('2025-05-10T14:00:00')];
         assert.strictEqual(calcularDiasArrendado(guias, ...ANIO), 0);
     });
 
@@ -148,7 +155,7 @@ describe('calcularDiasArrendado', () => {
     });
 
     test('las guias fallidas no cuentan: el equipo no salio', () => {
-        const guias = [despacho('2026-03-01T10:00:00', { fallido: true }), recepcion('2026-03-05T09:00:00', { fallido: true })];
+        const guias = [despacho('2026-03-01T10:00:00', { fallido: true }), recepcion('2026-03-05T14:00:00', { fallido: true })];
         assert.strictEqual(calcularDiasArrendado(guias, ...ANIO), 0);
     });
 
@@ -156,31 +163,31 @@ describe('calcularDiasArrendado', () => {
         const guias = [
             despacho('2026-03-01T10:00:00', { fallido: true }),
             despacho('2026-03-10T10:00:00'),
-            recepcion('2026-03-12T09:00:00'),
+            recepcion('2026-03-12T14:00:00'),
         ];
         assert.strictEqual(calcularDiasArrendado(guias, ...ANIO), 3);
     });
 
     test('dos arriendos en el periodo se suman', () => {
         const guias = [
-            despacho('2026-02-01T09:00:00'), recepcion('2026-02-03T09:00:00'),
-            despacho('2026-06-01T09:00:00'), recepcion('2026-06-02T09:00:00'),
+            despacho('2026-02-01T09:00:00'), recepcion('2026-02-03T14:00:00'),
+            despacho('2026-06-01T09:00:00'), recepcion('2026-06-02T14:00:00'),
         ];
         assert.strictEqual(calcularDiasArrendado(guias, ...ANIO), 5);
     });
 
     test('un despacho repetido sin recepcion en medio no cuenta dos veces', () => {
-        const guias = [despacho('2026-03-01T09:00:00'), despacho('2026-03-02T09:00:00'), recepcion('2026-03-04T09:00:00')];
+        const guias = [despacho('2026-03-01T09:00:00'), despacho('2026-03-02T09:00:00'), recepcion('2026-03-04T14:00:00')];
         assert.strictEqual(calcularDiasArrendado(guias, ...ANIO), 4);
     });
 
     test('las guias llegan desordenadas y se ordenan por fecha', () => {
-        const guias = [recepcion('2026-03-05T09:00:00'), despacho('2026-03-01T10:00:00')];
+        const guias = [recepcion('2026-03-05T14:00:00'), despacho('2026-03-01T10:00:00')];
         assert.strictEqual(calcularDiasArrendado(guias, ...ANIO), 5);
     });
 
     test('una recepcion suelta, sin despacho, no inventa dias', () => {
-        assert.strictEqual(calcularDiasArrendado([recepcion('2026-03-05T09:00:00')], ...ANIO), 0);
+        assert.strictEqual(calcularDiasArrendado([recepcion('2026-03-05T14:00:00')], ...ANIO), 0);
     });
 
     test('sin guias, o algo que no es una lista, son cero dias', () => {
@@ -190,6 +197,35 @@ describe('calcularDiasArrendado', () => {
 
     test('despachar y recibir el mismo dia despues del corte no cuenta ningun dia', () => {
         const guias = [despacho('2026-03-01T15:00:00'), recepcion('2026-03-01T17:00:00')];
+        assert.strictEqual(calcularDiasArrendado(guias, ...ANIO), 0);
+    });
+
+    test('una recepcion antes de la hora de corte no cobra ese dia', () => {
+        const guias = [despacho('2026-03-01T10:00:00'), recepcion('2026-03-05T09:00:00')];
+        assert.strictEqual(calcularDiasArrendado(guias, ...ANIO), 4);
+    });
+
+    test('un cambio de cliente cobra el dia a uno solo, antes y despues del corte', () => {
+        // ACSA desde el 1 y Prize desde el 10 a las 10:00 (antes del corte): ACSA 9 dias, Prize desde el 10
+        const antes = [despacho('2026-03-01T09:00:00'), despacho('2026-03-10T10:00:00'), recepcion('2026-03-12T14:00:00')];
+        assert.strictEqual(calcularDiasArrendado(antes, ...ANIO), 12);
+        // el cambio a las 15:00: ACSA cobra el 10 y Prize parte el 11: tambien 12 dias en total
+        const despues = [despacho('2026-03-01T09:00:00'), despacho('2026-03-10T15:00:00'), recepcion('2026-03-12T14:00:00')];
+        assert.strictEqual(calcularDiasArrendado(despues, ...ANIO), 12);
+    });
+
+    test('usa los dias guardados en la guia aunque la hora de corte cambie despues', () => {
+        // la guia se registro con corte 13: inicio 11 y fin 05 aunque hoy el corte sea 9
+        const guias = [
+            { tipo: 'despacho', fecha: f('2026-03-10T10:00:00'), inicio_cobro: '2026-03-10' },
+            { tipo: 'recepcion', fecha: f('2026-03-14T10:00:00'), fin_cobro: '2026-03-13' },
+        ];
+        assert.strictEqual(calcularDiasArrendado(guias, ...ANIO, { horaCorte: 9 }), 4);
+        assert.strictEqual(calcularDiasArrendado(guias, ...ANIO, { horaCorte: 23 }), 4);
+    });
+
+    test('un despacho de 0 dias (recepcion el mismo dia antes del corte) no suma ni resta', () => {
+        const guias = [despacho('2026-03-01T08:00:00'), recepcion('2026-03-01T11:00:00')];
         assert.strictEqual(calcularDiasArrendado(guias, ...ANIO), 0);
     });
 });

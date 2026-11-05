@@ -4,7 +4,6 @@
 const DEFAULTS = Object.freeze({
     dia_facturacion: 5,
     hora_corte_despacho: 13,
-    incluir_dia_recepcion: true,
     // si el dia de corte cierra el periodo (true) o el periodo termina el dia anterior (false)
     corte_cierra_periodo: true,
 });
@@ -40,14 +39,21 @@ function validarCambioConfiguracion(body) {
     return { valores };
 }
 
+// `incluir_dia_recepcion` quedo obsoleta (migracion 028): el dia de salida del equipo se decide con la
+// hora de corte, igual que el del despacho. El PUT la sigue aceptando por compatibilidad con paneles
+// antiguos, pero no se lee ni se devuelve ni se guarda (el PUT la descarta sin tocar quien/cuando).
+const OBSOLETAS = new Set(['incluir_dia_recepcion']);
+const CLAVES_OBSOLETAS = OBSOLETAS;
+
 /** Lee la configuracion vigente: lo guardado mezclado sobre los valores por defecto. */
 async function leerConfiguracion(db) {
     const r = await db.query('SELECT clave, valor FROM configuracion');
     const config = { ...DEFAULTS };
     for (const fila of r.rows) {
+        if (OBSOLETAS.has(fila.clave)) continue;
         if (Object.hasOwn(VALIDADORES, fila.clave) && VALIDADORES[fila.clave](fila.valor)) config[fila.clave] = fila.valor;
     }
     return config;
 }
 
-module.exports = { DEFAULTS, validarCambioConfiguracion, leerConfiguracion };
+module.exports = { DEFAULTS, CLAVES_OBSOLETAS, validarCambioConfiguracion, leerConfiguracion };

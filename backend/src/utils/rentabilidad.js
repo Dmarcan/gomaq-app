@@ -12,9 +12,13 @@
 // el monto, y las horas de trabajo existen como tramos pero no hay ningun valor hora definido
 // en el negocio. Ambos quedan fuera hasta que esos datos existan.
 
-const { calcularInicioCobro, diaCalendarioUtc } = require('./diasArriendo');
+const { inicioCobroDia, finCobroDia, sumarDias, diaCalendarioUtc } = require('./diasArriendo');
 
 const MS_DIA = 24 * 60 * 60 * 1000;
+
+// dia de calendario 'YYYY-MM-DD' en Santiago de un instante (o de un texto ya en ese formato)
+const { diaSantiago } = require('./diasArriendo');
+const diaIso = (instante) => (typeof instante === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(instante) ? instante : diaSantiago(instante));
 
 /**
  * Gasto en repuestos de un equipo.
@@ -69,24 +73,32 @@ function calcularRentabilidad({ lineas, facturas }) {
 /**
  * Dias que un equipo estuvo arrendado dentro de [desde, hasta].
  *
- * Usa la misma regla que la facturacion (utils/diasArriendo): el dia de despacho cuenta solo si
- * salio antes de la hora de corte, y el dia de la recepcion cuenta completo. Asi la utilizacion
- * que se ve aca coincide con lo que se le cobra al cliente. Un despacho sin recepcion sigue
- * arrendado hasta el final del periodo. Las guias fallidas no cuentan: el equipo no salio.
+ * Usa la misma regla que la facturacion (utils/diasArriendo, utils/arriendos): el despacho cobra desde
+ * su inicio_cobro (el dia mismo si salio antes de la hora de corte) y el equipo que sale del cliente
+ * cobra su ultimo dia solo si sale desde la hora de corte. Se usan los dias GUARDADOS en la guia
+ * (`inicio_cobro` en despachos, `fin_cobro` en recepciones: se fijan al registrarla con la hora de
+ * corte de ese momento); si faltan, se recalculan con `horaCorte`. Un despacho sin recepcion en medio
+ * cierra el arriendo anterior el dia antes de su inicio_cobro. Asi la utilizacion que se ve aca coincide
+ * con lo que se le cobra al cliente. Un despacho sin recepcion sigue arrendado hasta el final del
+ * periodo. Las guias fallidas no cuentan: el equipo no salio.
  *
- * @param {Array<{tipo: string, fecha: string|Date, fallido?: boolean}>} guias del equipo
+ * @param {Array<{tipo: string, fecha: string|Date, fallido?: boolean, inicio_cobro?: string, fin_cobro?: string}>} guias del equipo
+ * @param {Date|string} desde
+ * @param {Date|string} hasta
+ * @param {{horaCorte?: number}} [opciones]
  */
-function calcularDiasArrendado(guias, desde, hasta) {
+function calcularDiasArrendado(guias, desde, hasta, { horaCorte } = {}) {
     if (!Array.isArray(guias)) return 0;
-    const desdeDia = diaCalendarioUtc(new Date(desde));
-    const hastaDia = diaCalendarioUtc(new Date(hasta));
+    const dia = (instante) => diaIso(instante);
+    const desdeDia = dia(desde);
+    const hastaDia = dia(hasta);
     let dias = 0;
 
+    // suma los dias de [inicio, fin] (cadenas YYYY-MM-DD) que caen dentro del periodo
     const sumar = (inicio, fin) => {
-        const finDia = fin ? diaCalendarioUtc(fin) : hastaDia;
-        const a = Math.max(diaCalendarioUtc(inicio), desdeDia);
-        const b = Math.min(finDia, hastaDia);
-        if (b >= a) dias += (b - a) / MS_DIA + 1;
+        const a = inicio > desdeDia ? inicio : desdeDia;
+        const b = (fin || hastaDia) < hastaDia ? (fin || hastaDia) : hastaDia;
+        if (b >= a) dias += Math.round((Date.parse(`${b}T00:00:00Z`) - Date.parse(`${a}T00:00:00Z`)) / MS_DIA) + 1;
     };
 
     const ordenadas = guias
@@ -95,10 +107,12 @@ function calcularDiasArrendado(guias, desde, hasta) {
     let abierto = null; // inicio de cobro del arriendo en curso
     for (const guia of ordenadas) {
         if (guia.tipo === 'despacho') {
-            // un segundo despacho sin recepcion en medio es un dato repetido, no otro arriendo
-            if (!abierto) abierto = calcularInicioCobro(guia.fecha);
+            const inicio = guia.inicio_cobro || inicioCobroDia(guia.fecha, horaCorte);
+            // un segundo despacho sin recepcion en medio cierra el arriendo anterior (es de otro cliente)
+            if (abierto) sumar(abierto, sumarDias(inicio, -1));
+            abierto = inicio;
         } else if (guia.tipo === 'recepcion' && abierto) {
-            sumar(abierto, new Date(guia.fecha));
+            sumar(abierto, guia.fin_cobro || finCobroDia(guia.fecha, horaCorte));
             abierto = null;
         }
     }

@@ -13,7 +13,7 @@ import 'facturacion_screen.dart' show FacturaPendienteDialog;
 ///
 /// Muestra los equipos despachados que aún no vuelven: desde cuándo se cobran, cuántos días
 /// van y cuántos cortes de facturación llevan sin facturar. El gerente puede editar las reglas
-/// (día de facturación, hora de corte del despacho y si el día de la recepción cuenta); el
+/// (día de facturación, hora de corte y si el día de corte cierra el período); el
 /// administrativo solo las ve. Cambiar la hora de corte afecta a los despachos nuevos.
 class ArriendosEnCursoTab extends StatefulWidget {
   /// 'aviso' llega desde el dashboard: solo los arriendos que ya pasaron un corte sin facturar, que son
@@ -64,7 +64,6 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
   Future<void> _editarConfiguracion() async {
     var dia = (_config['dia_facturacion'] as num?)?.toInt() ?? 5;
     var hora = (_config['hora_corte_despacho'] as num?)?.toInt() ?? 13;
-    var incluir = _config['incluir_dia_recepcion'] != false;
     var cierra = _config['corte_cierra_periodo'] != false;
     final guardado = await mostrarFormulario(
       context,
@@ -85,20 +84,13 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
           DropdownButtonFormField<int>(
             initialValue: hora,
             decoration: decoracionCampo(
-              'Hora de corte del despacho',
-              ayuda: 'Un equipo despachado desde esta hora se cobra desde el día siguiente. Afecta solo a los despachos nuevos.',
+              'Hora de corte',
+              ayuda: 'Despacho desde esta hora: se cobra desde el día siguiente. Recepción antes de esta hora: ese día no se cobra. Afecta solo a lo nuevo.',
             ),
             items: [for (var h = 0; h <= 23; h++) DropdownMenuItem(value: h, child: Text('${h.toString().padLeft(2, '0')}:00'))],
             onChanged: (v) => hora = v ?? hora,
           ),
           separadorCampos,
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            title: const Text('El día de la recepción cuenta'),
-            subtitle: const Text('Si está apagado, el día en que vuelve el equipo no se cobra.'),
-            value: incluir,
-            onChanged: (v) => redibujar(() => incluir = v),
-          ),
           SwitchListTile(
             contentPadding: EdgeInsets.zero,
             title: const Text('El día de corte cierra el período'),
@@ -113,7 +105,6 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
         final cambios = <String, dynamic>{
           if (dia != _config['dia_facturacion']) 'dia_facturacion': dia,
           if (hora != _config['hora_corte_despacho']) 'hora_corte_despacho': hora,
-          if (incluir != (_config['incluir_dia_recepcion'] != false)) 'incluir_dia_recepcion': incluir,
           if (cierra != (_config['corte_cierra_periodo'] != false)) 'corte_cierra_periodo': cierra,
         };
         if (cambios.isEmpty) return;
@@ -169,7 +160,6 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
   Widget _tarjetaConfiguracion(bool esGerente) {
     final dia = _config['dia_facturacion'] ?? 5;
     final hora = ((_config['hora_corte_despacho'] as num?)?.toInt() ?? 13).toString().padLeft(2, '0');
-    final incluye = _config['incluir_dia_recepcion'] != false ? 'sí' : 'no';
     final cierra = _config['corte_cierra_periodo'] != false ? 'sí' : 'no';
     final quien = _config['actualizado_por'];
     return Card(
@@ -186,7 +176,7 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
                 children: [
                   const Text('Reglas de cobro', style: TextStyle(fontWeight: FontWeight.w600)),
                   const SizedBox(height: 4),
-                  Text('Día de facturación: $dia · Corte del despacho: $hora:00 · El día de la recepción cuenta: $incluye · El corte cierra el período: $cierra'),
+                  Text('Día de facturación: $dia · Hora de corte: $hora:00 · El corte cierra el período: $cierra'),
                   if (quien != null)
                     Text(
                       'Cambiado por $quien el ${Formato.fecha(_config['actualizado_at'])}',

@@ -8,7 +8,7 @@ const { diasEntre } = require('../utils/diasArriendo');
 const { validarPeriodo } = require('../utils/periodosArriendo');
 const { cargarArriendos, filtrarPorFacturar, resumenEnCurso } = require('../utils/arriendos');
 const { SQL_OT_POR_VALORIZAR, SQL_OT_LISTA_FACTURAR } = require('../utils/ordenes');
-const { leerConfiguracion, validarCambioConfiguracion } = require('../utils/configuracion');
+const { leerConfiguracion, validarCambioConfiguracion, CLAVES_OBSOLETAS } = require('../utils/configuracion');
 const { textoPorDefecto, leerFacturaParaCorreo, hayEnvioPendiente, encolarCorreoFactura, validarFolio, cancelarCorreosPrevios } = require('../utils/correoFactura');
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
 const { detectarCliente } = require('../utils/detectarCliente');
@@ -37,6 +37,7 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
                 guia_despacho_id: a.guia_despacho_id,
                 maquinaria_id: a.maquinaria_id,
                 maquinaria_codigo: a.maquinaria_codigo,
+                cliente_id: a.cliente_id,
                 cliente_nombre: a.cliente_nombre,
                 cliente_email: a.cliente_email,
                 fecha_despacho: a.fecha_despacho,
@@ -286,10 +287,14 @@ router.get('/configuracion', verifyToken, requireRole('administrativo', 'gerente
 router.put('/configuracion', verifyToken, requireRole('gerente'), async (req, res) => {
     const { valores, error } = validarCambioConfiguracion(req.body);
     if (error) return res.status(400).json({ error });
+    // las claves obsoletas (incluir_dia_recepcion) se aceptan para no romper paneles antiguos, pero no se
+    // guardan ni cambian quien/cuando: un PUT con solo ellas responde 200 con la configuracion vigente
+    const vigentes = Object.entries(valores).filter(([clave]) => !CLAVES_OBSOLETAS.has(clave));
+    if (vigentes.length === 0) return res.json(await leerConfiguracion(pool));
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
-        for (const [clave, valor] of Object.entries(valores)) {
+        for (const [clave, valor] of vigentes) {
             await client.query(
                 `INSERT INTO configuracion (clave, valor, actualizado_por, actualizado_at)
                  VALUES ($1, $2::jsonb, $3, now())

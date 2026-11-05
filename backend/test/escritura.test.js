@@ -836,11 +836,15 @@ describe('costos por equipo', () => {
 
         // arriendo del dia 40 al 35 hacia atras (6 dias con el despacho de la manana), y un
         // despacho fallido que no debe sumar nada
+        // hora de Santiago de hace `dias` dias, sin depender de la zona del proceso (el CI corre en UTC)
+        const { diaSantiago, horaSantiago, sumarDias } = require('../src/utils/diasArriendo');
         const hace = (dias, hora) => {
-            const d = new Date();
-            d.setDate(d.getDate() - dias);
-            d.setHours(hora, 0, 0, 0);
-            return d;
+            const dia = sumarDias(diaSantiago(new Date()), -dias);
+            for (const offset of ['-03:00', '-04:00']) {
+                const d = new Date(`${dia}T${String(hora).padStart(2, '0')}:00:00${offset}`);
+                if (horaSantiago(d) === hora && diaSantiago(d) === dia) return d;
+            }
+            throw new Error(`hora no representable en Santiago: ${dia} ${hora}`);
         };
         const guia = (tipo, fecha, fallido = false) =>
             pool.query(
@@ -848,7 +852,7 @@ describe('costos por equipo', () => {
                 [equipo.id, tipo, fecha, fallido, clienteId]
             );
         await guia('despacho', hace(40, 9));
-        await guia('recepcion', hace(35, 9));
+        await guia('recepcion', hace(35, 14));
         await guia('despacho', hace(20, 9), true);
         await guia('recepcion', hace(15, 9), true);
 
@@ -2711,7 +2715,7 @@ describe('migracion 021: tipo de evento factura_anulada', () => {
 
 describe('bloque 2a: configuracion de cobro, inicio de cobro y arriendos en curso', () => {
     const { inicioCobroDia } = require('../src/utils/diasArriendo');
-    const DEFAULTS_CONFIG = { dia_facturacion: 5, hora_corte_despacho: 13, incluir_dia_recepcion: true, corte_cierra_periodo: true };
+    const DEFAULTS_CONFIG = { dia_facturacion: 5, hora_corte_despacho: 13, corte_cierra_periodo: true };
 
     /** Deja la configuracion como esta en la migracion, sin rastro de quien la toco. */
     async function restaurarConfiguracion() {
@@ -2744,7 +2748,7 @@ describe('bloque 2a: configuracion de cobro, inicio de cobro y arriendos en curs
         assert.equal(r.status, 200);
         assert.equal(r.body.dia_facturacion, 5);
         assert.equal(r.body.hora_corte_despacho, 13);
-        assert.equal(r.body.incluir_dia_recepcion, true);
+        assert.equal('incluir_dia_recepcion' in r.body, false, 'la opcion obsoleta ya no se devuelve');
     });
 
     test('permisos: administrativo ve y no edita, gerente edita, mecanico y cliente no entran', async (t) => {
@@ -2915,22 +2919,48 @@ describe('bloque 2a: configuracion de cobro, inicio de cobro y arriendos en curs
         assert.equal(abierto.filter((a) => a.maquinaria_id === equipo.id).length, 1, 'despacho posterior por id: abierto de nuevo');
     });
 
-    test('el dia de recepcion configurable cambia los dias que lista /pendientes', async (t) => {
+    test('la hora de corte vigente al registrar la recepcion decide si se cobra ese dia; cambiarla despues no altera lo registrado', async (t) => {
         if (!requiereBase(t)) return;
         const cliente = await algunCliente();
-        const equipo = await crearEquipo(null);
-        await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'despacho', 'x', '2026-03-01T09:00:00-03:00', $2)`, [equipo.id, cliente]);
-        await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'recepcion', 'x', '2026-03-05T10:00:00-03:00', $2)`, [equipo.id, cliente]);
-        const dias = async () => (await pedir('GET', '/api/facturacion/pendientes', 'administrativo')).body
-            .arriendos.find((a) => a.maquinaria_id === equipo.id).dias;
-        assert.equal(await dias(), 5);
+        const dias = async (equipoId) => (await pedir('GET', '/api/facturacion/pendientes', 'administrativo')).body
+            .arriendos.find((a) => a.maquinaria_id === equipoId).dias;
+        const registrar = async () => {
+            const equipo = await crearEquipo(null);
+            await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'despacho', 'x', '2026-03-01T08:00:00-03:00', $2)`, [equipo.id, cliente]);
+            await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'recepcion', 'x', '2026-03-05T10:00:00-03:00', $2)`, [equipo.id, cliente]);
+            return equipo.id;
+        };
+        // corte 13: la recepcion de las 10 no cobra el dia 5
+        const antes = await registrar();
+        assert.equal(await dias(antes), 4);
         try {
-            assert.equal((await pedir('PUT', '/api/facturacion/configuracion', 'gerente', { incluir_dia_recepcion: false })).status, 200);
-            assert.equal(await dias(), 4);
+            assert.equal((await pedir('PUT', '/api/facturacion/configuracion', 'gerente', { hora_corte_despacho: 9 })).status, 200);
+            assert.equal(await dias(antes), 4, 'lo ya registrado no cambia con la configuracion');
+            const despues = await registrar();
+            assert.equal(await dias(despues), 5, 'registrada con corte 9, la recepcion de las 10 si cobra ese dia');
         } finally {
             await restaurarConfiguracion();
         }
-        assert.equal(await dias(), 5);
+        assert.equal(await dias(antes), 4);
+    });
+
+    test('el PUT sigue aceptando incluir_dia_recepcion (obsoleta) pero no cambia nada', async (t) => {
+        if (!requiereBase(t)) return;
+        try {
+            const r = await pedir('PUT', '/api/facturacion/configuracion', 'gerente', { incluir_dia_recepcion: false });
+            assert.equal(r.status, 200);
+            assert.equal('incluir_dia_recepcion' in r.body, false);
+            const cliente = await algunCliente();
+            const equipo = await crearEquipo(null);
+            await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'despacho', 'x', '2026-03-01T08:00:00-03:00', $2)`, [equipo.id, cliente]);
+            await pool.query(`INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, 'recepcion', 'x', '2026-03-05T14:00:00-03:00', $2)`, [equipo.id, cliente]);
+            const fila = (await pedir('GET', '/api/facturacion/pendientes', 'administrativo')).body
+                .arriendos.find((a) => a.maquinaria_id === equipo.id);
+            assert.equal(fila.dias, 5, 'recepcion desde el corte: el dia se cobra, sin importar la opcion obsoleta');
+        } finally {
+            await pool.query("UPDATE configuracion SET valor = 'true', actualizado_por = NULL WHERE clave = 'incluir_dia_recepcion'");
+            await restaurarConfiguracion();
+        }
     });
 
     test('el endpoint viejo de dias de arriendo se retiro', async (t) => {
@@ -2959,7 +2989,8 @@ describe('bloque 2a: configuracion de cobro, inicio de cobro y arriendos en curs
 
 describe('bloque 2b (parte 1): la factura guarda despacho, periodo y cliente', () => {
     const SQL_023 = () => require('fs').readFileSync(
-        require('path').join(__dirname, '../../db/migrations/023_facturas_periodo.sql'), 'utf8');
+        require('path').join(__dirname, '../../db/migrations/023_facturas_periodo.sql'), 'utf8')
+        + '\n' + require('fs').readFileSync(require('path').join(__dirname, '../../db/migrations/028_fin_arriendo_hora_corte.sql'), 'utf8');
 
     const guia = async (equipoId, tipo, fecha, clienteId) => (await pool.query(
         `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, $2::tipo_guia, 'x', $3, $4) RETURNING id`,
@@ -2979,7 +3010,7 @@ describe('bloque 2b (parte 1): la factura guarda despacho, periodo y cliente', (
         const cliente = await algunCliente();
         const equipo = await crearEquipo(null);
         const d = await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
-        const r = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
+        const r = await guia(equipo.id, 'recepcion', '2026-03-05T14:00:00-03:00', cliente);
         const f = await facturaAntigua(equipo.id, r, 'T-2301');
         const datosFila = await fila(f.id);
         assert.equal(datosFila.guia_despacho_id, d);
@@ -3000,18 +3031,44 @@ describe('bloque 2b (parte 1): la factura guarda despacho, periodo y cliente', (
         assert.equal(datosFila.hasta, null);
     });
 
-    test('con el dia de recepcion apagado el periodo termina el dia anterior', async (t) => {
+    test('el periodo de una factura antigua termina segun la hora de la recepcion (corte 13)', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        for (const [hora, hasta] of [['00:00', '2026-03-04'], ['09:59', '2026-03-04'], ['12:59', '2026-03-04'],
+            ['13:00', '2026-03-05'], ['23:59', '2026-03-05']]) {
+            const equipo = await crearEquipo(null);
+            await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
+            const r = await guia(equipo.id, 'recepcion', `2026-03-05T${hora}:00-03:00`, cliente);
+            assert.equal((await fila((await facturaAntigua(equipo.id, r, `T-23${hora.replace(':', '')}`)).id)).hasta, hasta, hora);
+        }
+    });
+
+    test('la recepcion registrada con otro corte lo guarda y el trigger de facturas lo respeta', async (t) => {
         if (!requiereBase(t)) return;
         const cliente = await algunCliente();
         const equipo = await crearEquipo(null);
         await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
-        const r = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
+        let r;
         try {
-            await pool.query("UPDATE configuracion SET valor = 'false' WHERE clave = 'incluir_dia_recepcion'");
-            assert.equal((await fila((await facturaAntigua(equipo.id, r, 'T-2303')).id)).hasta, '2026-03-04');
+            await pool.query("UPDATE configuracion SET valor = '9' WHERE clave = 'hora_corte_despacho'");
+            r = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
         } finally {
-            await pool.query("UPDATE configuracion SET valor = 'true', actualizado_por = NULL WHERE clave = 'incluir_dia_recepcion'");
+            await pool.query("UPDATE configuracion SET valor = '13', actualizado_por = NULL WHERE clave = 'hora_corte_despacho'");
         }
+        const guardado = (await pool.query("SELECT to_char(fin_cobro, 'YYYY-MM-DD') AS d FROM guias WHERE id = $1", [r])).rows[0].d;
+        assert.equal(guardado, '2026-03-05', 'fin_cobro se fijo con el corte vigente al registrar (9)');
+        assert.equal((await fila((await facturaAntigua(equipo.id, r, 'T-2303')).id)).hasta, '2026-03-05');
+    });
+
+    test('recepcion el mismo dia del despacho antes del corte: el arriendo tiene 0 dias y no recibe periodo', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        await guia(equipo.id, 'despacho', '2026-03-01T08:00:00-03:00', cliente);
+        const r = await guia(equipo.id, 'recepcion', '2026-03-01T11:00:00-03:00', cliente);
+        const datosFila = await fila((await facturaAntigua(equipo.id, r, 'T-2305')).id);
+        assert.equal(datosFila.desde, null);
+        assert.equal(datosFila.hasta, null);
     });
 
     test('dos recepciones del mismo despacho: la segunda factura se inserta sin despacho y sin error', async (t) => {
@@ -3019,8 +3076,8 @@ describe('bloque 2b (parte 1): la factura guarda despacho, periodo y cliente', (
         const cliente = await algunCliente();
         const equipo = await crearEquipo(null);
         const d = await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
-        const r1 = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
-        const r2 = await guia(equipo.id, 'recepcion', '2026-03-06T10:00:00-03:00', cliente);
+        const r1 = await guia(equipo.id, 'recepcion', '2026-03-05T14:00:00-03:00', cliente);
+        const r2 = await guia(equipo.id, 'recepcion', '2026-03-06T14:00:00-03:00', cliente);
         const f1 = await fila((await facturaAntigua(equipo.id, r1, 'T-2304')).id);
         const f2 = await fila((await facturaAntigua(equipo.id, r2, 'T-2305')).id);
         assert.equal(f1.guia_despacho_id, d);
@@ -3032,7 +3089,7 @@ describe('bloque 2b (parte 1): la factura guarda despacho, periodo y cliente', (
         if (!requiereBase(t)) return;
         const cliente = await algunCliente();
         const equipo = await crearEquipo(null);
-        const r = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
+        const r = await guia(equipo.id, 'recepcion', '2026-03-05T14:00:00-03:00', cliente);
         const datosFila = await fila((await facturaAntigua(equipo.id, r, 'T-2306')).id);
         assert.equal(datosFila.guia_despacho_id, null);
         assert.equal(datosFila.cliente_id, cliente);
@@ -3069,7 +3126,7 @@ describe('bloque 2b (parte 1): la factura guarda despacho, periodo y cliente', (
         const cliente = await algunCliente();
         const equipo = await crearEquipo(null);
         const d = await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
-        const r = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
+        const r = await guia(equipo.id, 'recepcion', '2026-03-05T14:00:00-03:00', cliente);
         const f = await facturaAntigua(equipo.id, r, 'T-2311');
         // se simula una factura anterior a la migracion
         await pool.query('UPDATE facturas SET guia_despacho_id = NULL, periodo_desde = NULL, periodo_hasta = NULL, cliente_id = NULL WHERE id = $1', [f.id]);
@@ -3130,7 +3187,8 @@ describe('bloque 2b (parte 1): la factura guarda despacho, periodo y cliente', (
 
 describe('bloque 2b (parte 1): correcciones de la revision experta', () => {
     const SQL_023 = () => require('fs').readFileSync(
-        require('path').join(__dirname, '../../db/migrations/023_facturas_periodo.sql'), 'utf8');
+        require('path').join(__dirname, '../../db/migrations/023_facturas_periodo.sql'), 'utf8')
+        + '\n' + require('fs').readFileSync(require('path').join(__dirname, '../../db/migrations/028_fin_arriendo_hora_corte.sql'), 'utf8');
     const guia = async (equipoId, tipo, fecha, clienteId) => (await pool.query(
         `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, $2::tipo_guia, 'x', $3, $4) RETURNING id`,
         [equipoId, tipo, fecha, clienteId])).rows[0].id;
@@ -3152,8 +3210,8 @@ describe('bloque 2b (parte 1): correcciones de la revision experta', () => {
         const cliente = await algunCliente();
         const equipo = await crearEquipo(null);
         const d = await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
-        const r1 = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
-        const r2 = await guia(equipo.id, 'recepcion', '2026-03-08T10:00:00-03:00', cliente);
+        const r1 = await guia(equipo.id, 'recepcion', '2026-03-05T14:00:00-03:00', cliente);
+        const r2 = await guia(equipo.id, 'recepcion', '2026-03-08T14:00:00-03:00', cliente);
         // la posterior se factura primero (id menor)
         const f2 = (await pool.query(`INSERT INTO facturas (maquinaria_id, guia_recepcion_id, folio, archivo_url) VALUES ($1, $2, 'T-2402', 'x') RETURNING id`, [equipo.id, r2])).rows[0].id;
         const f1 = (await pool.query(`INSERT INTO facturas (maquinaria_id, guia_recepcion_id, folio, archivo_url) VALUES ($1, $2, 'T-2403', 'x') RETURNING id`, [equipo.id, r1])).rows[0].id;
@@ -3179,11 +3237,11 @@ describe('bloque 2b (parte 1): correcciones de la revision experta', () => {
         const cliente = await algunCliente();
         const equipo = await crearEquipo(null);
         await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
-        const r = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
+        const r = await guia(equipo.id, 'recepcion', '2026-03-05T14:00:00-03:00', cliente);
         const f = (await pool.query(`INSERT INTO facturas (maquinaria_id, guia_recepcion_id, folio, archivo_url) VALUES ($1, $2, 'T-2404', 'x') RETURNING id`, [equipo.id, r])).rows[0].id;
         await pool.query('UPDATE facturas SET guia_despacho_id = NULL, periodo_desde = NULL, periodo_hasta = NULL WHERE id = $1', [f]);
         try {
-            await pool.query("UPDATE configuracion SET valor = 'false' WHERE clave = 'incluir_dia_recepcion'");
+            await pool.query("UPDATE configuracion SET valor = '23' WHERE clave = 'hora_corte_despacho'");
             const client = await pool.connect();
             try {
                 await client.query('BEGIN');
@@ -3193,7 +3251,7 @@ describe('bloque 2b (parte 1): correcciones de la revision experta', () => {
                 client.release();
             }
         } finally {
-            await pool.query("UPDATE configuracion SET valor = 'true', actualizado_por = NULL WHERE clave = 'incluir_dia_recepcion'");
+            await pool.query("UPDATE configuracion SET valor = '13', actualizado_por = NULL WHERE clave = 'hora_corte_despacho'");
         }
         const fila = (await pool.query(`SELECT to_char(periodo_hasta, 'YYYY-MM-DD') AS hasta FROM facturas WHERE id = $1`, [f])).rows[0];
         assert.equal(fila.hasta, '2026-03-05');
@@ -3215,8 +3273,8 @@ describe('bloque 2b (parte 1): correcciones de la revision experta', () => {
         for (let vuelta = 0; vuelta < 5; vuelta++) {
             const equipo = await crearEquipo(null);
             await guia(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
-            const r1 = await guia(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
-            const r2 = await guia(equipo.id, 'recepcion', '2026-03-06T10:00:00-03:00', cliente);
+            const r1 = await guia(equipo.id, 'recepcion', '2026-03-05T14:00:00-03:00', cliente);
+            const r2 = await guia(equipo.id, 'recepcion', '2026-03-06T14:00:00-03:00', cliente);
             const insertar = (r, folio) => pool.query(
                 `INSERT INTO facturas (maquinaria_id, guia_recepcion_id, folio, archivo_url) VALUES ($1, $2, $3, 'x') RETURNING id`, [equipo.id, r, folio]);
             const resultados = await Promise.allSettled([insertar(r1, `T-25${vuelta}1`), insertar(r2, `T-25${vuelta}2`)]);
@@ -3226,7 +3284,7 @@ describe('bloque 2b (parte 1): correcciones de la revision experta', () => {
 });
 
 describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
-    const DEFECTO = { dia_facturacion: 5, hora_corte_despacho: 13, incluir_dia_recepcion: true, corte_cierra_periodo: true };
+    const DEFECTO = { dia_facturacion: 5, hora_corte_despacho: 13, corte_cierra_periodo: true };
 
     async function restaurar() {
         for (const [clave, valor] of Object.entries(DEFECTO)) {
@@ -3264,7 +3322,7 @@ describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
 
     test('propuesta: del inicio de cobro al primer corte, con las opciones hasta el fin', async (t) => {
         if (!requiereBase(t)) return;
-        const { d } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T10:00:00-03:00');
+        const { d } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T14:00:00-03:00');
         const r = await propuesta(d);
         assert.equal(r.status, 200);
         assert.equal(r.body.desde, '2026-08-01');
@@ -3281,7 +3339,7 @@ describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
 
     test('facturar por periodos encadenados hasta el final, sin huecos', async (t) => {
         if (!requiereBase(t)) return;
-        const { d, r: recep, cliente } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T10:00:00-03:00');
+        const { d, r: recep, cliente } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T14:00:00-03:00');
         const ids = [];
         for (const [desde, hasta] of [['2026-08-01', '2026-08-05'], ['2026-08-06', '2026-09-05'], ['2026-09-06', '2026-10-05'], ['2026-10-06', '2026-10-20']]) {
             const p = await propuesta(d);
@@ -3307,7 +3365,7 @@ describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
 
     test('un periodo parcial deja el resto pendiente en /pendientes', async (t) => {
         if (!requiereBase(t)) return;
-        const { d, r: recep } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T10:00:00-03:00');
+        const { d, r: recep } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T14:00:00-03:00');
         const f = await facturar({ guia_despacho_id: d, periodo_desde: '2026-08-01', periodo_hasta: '2026-08-05', folio: 'PP-1' });
         assert.equal(f.status, 201);
         const pend = (await pedir('GET', '/api/facturacion/pendientes', 'administrativo')).body.arriendos.find((a) => a.guia_despacho_id === d);
@@ -3320,7 +3378,7 @@ describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
 
     test('periodo con hueco, solape o fin invalido se rechaza y no sube el PDF', async (t) => {
         if (!requiereBase(t)) return;
-        const { d } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T10:00:00-03:00');
+        const { d } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T14:00:00-03:00');
         const subidos = datos.storage.subidos.length;
         const hueco = await facturar({ guia_despacho_id: d, periodo_desde: '2026-08-03', periodo_hasta: '2026-08-05', folio: 'H-1' });
         assert.equal(hueco.status, 409);
@@ -3342,7 +3400,7 @@ describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
 
     test('dos facturas simultaneas del mismo periodo: una entra y la otra se rechaza', async (t) => {
         if (!requiereBase(t)) return;
-        const { d } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T10:00:00-03:00');
+        const { d } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T14:00:00-03:00');
         const campos = { guia_despacho_id: d, periodo_desde: '2026-08-01', periodo_hasta: '2026-08-05' };
         const [a, b] = await Promise.all([facturar({ ...campos, folio: 'C-1' }), facturar({ ...campos, folio: 'C-2' })]);
         assert.deepEqual([a.status, b.status].sort(), [201, 409]);
@@ -3351,7 +3409,7 @@ describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
 
     test('compatibilidad: solo con guia_recepcion_id factura todo hasta el fin (panel antiguo)', async (t) => {
         if (!requiereBase(t)) return;
-        const { d, r } = await arriendo('2026-03-01T09:00:00-03:00', '2026-03-04T10:00:00-03:00');
+        const { d, r } = await arriendo('2026-03-01T09:00:00-03:00', '2026-03-04T14:00:00-03:00');
         const f = await facturar({ guia_recepcion_id: r, folio: 'L-1', monto: 500 });
         assert.equal(f.status, 201, JSON.stringify(f.body));
         assert.equal(f.body.guia_despacho_id, d);
@@ -3391,7 +3449,7 @@ describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
         const p1 = await propuesta(d1);
         assert.equal(p1.body.falta_recepcion, true);
         assert.equal(p1.body.en_curso, false);
-        assert.equal(p1.body.fin, '2026-02-10', 'cierra el dia del segundo despacho');
+        assert.equal(p1.body.fin, '2026-02-09', 'el segundo despacho de las 11 (antes del corte) cobra ese dia al cliente nuevo');
         assert.equal(p1.body.cliente_id, c1);
         const p2 = await propuesta(d2);
         assert.equal(p2.body.en_curso, true);
@@ -3418,7 +3476,7 @@ describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
 
     test('monto de la factura de arriendo: solo enteros de pesos, 400 antes de subir el PDF', async (t) => {
         if (!requiereBase(t)) return;
-        const { d } = await arriendo('2026-03-01T09:00:00-03:00', '2026-03-05T10:00:00-03:00');
+        const { d } = await arriendo('2026-03-01T09:00:00-03:00', '2026-03-05T14:00:00-03:00');
         const subidosAntes = datos.storage.subidos.length;
         for (const monto of ['249.900', '249,9', '-1000', '1e3', '12.5', 'abc', '1 000']) {
             const r = await facturar({ guia_despacho_id: d, periodo_desde: '2026-03-01', periodo_hasta: '2026-03-05', folio: 'M-1', monto });
@@ -3431,23 +3489,26 @@ describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
         assert.equal(Number(ok.body.monto), 249900);
     });
 
-    test('con el dia de recepcion apagado el arriendo termina el dia anterior', async (t) => {
+    test('la recepcion antes del corte no cobra ese dia; con otra hora de corte vigente al registrarla si', async (t) => {
         if (!requiereBase(t)) return;
         const { d } = await arriendo('2026-10-10T09:00:00-03:00', '2026-10-20T10:00:00-03:00');
+        const p0 = await propuesta(d);
+        assert.equal(p0.body.fin, '2026-10-19');
+        assert.deepEqual(p0.body.opciones_hasta, ['2026-10-19']);
         try {
-            assert.equal((await pedir('PUT', '/api/facturacion/configuracion', 'gerente', { incluir_dia_recepcion: false })).status, 200);
-            const p = await propuesta(d);
-            assert.equal(p.body.fin, '2026-10-19');
-            assert.deepEqual(p.body.opciones_hasta, ['2026-10-19']);
+            assert.equal((await pedir('PUT', '/api/facturacion/configuracion', 'gerente', { hora_corte_despacho: 9 })).status, 200);
+            assert.equal((await propuesta(d)).body.fin, '2026-10-19', 'lo ya registrado no cambia');
+            const { d: d2 } = await arriendo('2026-10-10T09:00:00-03:00', '2026-10-20T10:00:00-03:00');
+            assert.equal((await propuesta(d2)).body.fin, '2026-10-20', 'registrada con corte 9 cobra ese dia');
         } finally {
             await restaurar();
         }
-        assert.equal((await propuesta(d)).body.fin, '2026-10-20');
+        assert.equal((await propuesta(d)).body.fin, '2026-10-19');
     });
 
     test('si el corte no cierra el periodo, el periodo termina el dia anterior al corte', async (t) => {
         if (!requiereBase(t)) return;
-        const { d } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T10:00:00-03:00');
+        const { d } = await arriendo('2026-08-01T09:00:00-03:00', '2026-10-20T14:00:00-03:00');
         try {
             const put = await pedir('PUT', '/api/facturacion/configuracion', 'gerente', { corte_cierra_periodo: false });
             assert.equal(put.status, 200);
@@ -3468,7 +3529,7 @@ describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
         // en curso se puede facturar de una vez hasta cualquier corte vencido
         assert.equal((await facturar({ guia_despacho_id: d, periodo_desde: '2026-08-01', periodo_hasta: '2026-09-05', folio: 'R-1' })).status, 201);
         // la recepcion se registra despues, con fecha anterior a lo facturado
-        await guiaSql(equipo.id, 'recepcion', '2026-08-20T10:00:00-03:00', cliente);
+        await guiaSql(equipo.id, 'recepcion', '2026-08-20T14:00:00-03:00', cliente);
         const p = await propuesta(d);
         assert.equal(p.body.facturado_de_mas, true);
         assert.equal(p.body.nada_que_facturar, true);
@@ -3485,15 +3546,15 @@ describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
 
     test('/pendientes con recepciones repetidas ya no duplica el arriendo', async (t) => {
         if (!requiereBase(t)) return;
-        const { equipo, d, cliente } = await arriendo('2026-03-01T09:00:00-03:00', '2026-03-05T10:00:00-03:00');
-        await guiaSql(equipo.id, 'recepcion', '2026-03-06T10:00:00-03:00', cliente); // recepcion repetida (huerfana)
+        const { equipo, d, cliente } = await arriendo('2026-03-01T09:00:00-03:00', '2026-03-05T14:00:00-03:00');
+        await guiaSql(equipo.id, 'recepcion', '2026-03-06T14:00:00-03:00', cliente); // recepcion repetida (huerfana)
         const pend = (await pedir('GET', '/api/facturacion/pendientes', 'administrativo')).body.arriendos.filter((a) => a.guia_despacho_id === d);
         assert.equal(pend.length, 1);
     });
 
     test('valorizar y facturar una OT no se mezclan con los arriendos (campos nuevos en /pendientes)', async (t) => {
         if (!requiereBase(t)) return;
-        const { d } = await arriendo('2026-03-01T09:00:00-03:00', '2026-03-05T10:00:00-03:00');
+        const { d } = await arriendo('2026-03-01T09:00:00-03:00', '2026-03-05T14:00:00-03:00');
         const fila = (await pedir('GET', '/api/facturacion/pendientes', 'gerente')).body.arriendos.find((a) => a.guia_despacho_id === d);
         for (const campo of ['guia_recepcion_id', 'maquinaria_codigo', 'cliente_nombre', 'fecha_despacho', 'fecha_recepcion', 'dias', 'desde', 'hasta_sugerido', 'es_final']) {
             assert.ok(campo in fila, `falta ${campo}`);
@@ -5939,6 +6000,263 @@ describe('bloque 6 (parte 1): correcciones de la revision experta', () => {
         assert.ok(pendientes.body.length <= todas.body.length);
         assert.equal((await pedir('GET', '/api/solicitudes?estado=inventado', 'administrativo')).status, 400);
         assert.equal((await pedir('GET', '/api/solicitudes?estado=pendiente', 'mecanico')).status, 403);
+    });
+});
+
+describe('cambio de cliente y recepcion: el dia se cobra segun la hora de corte', () => {
+    const guiaSql = async (equipoId, tipo, fecha, clienteId) => (await pool.query(
+        `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, $2::tipo_guia, 'x', $3, $4) RETURNING id`,
+        [equipoId, tipo, fecha, clienteId])).rows[0].id;
+
+    const dosClientes = async () => {
+        const r = await pool.query('SELECT id FROM clientes ORDER BY id LIMIT 2');
+        if (r.rows.length < 2) return null;
+        return [r.rows[0].id, r.rows[1].id];
+    };
+
+    const propuesta = (d) => pedir('GET', `/api/facturacion/arriendos/${d}/propuesta`, 'administrativo');
+    const enCurso = async (equipoId) => (await pedir('GET', '/api/facturacion/arriendos-en-curso', 'administrativo')).body
+        .arriendos.find((a) => a.maquinaria_id === equipoId);
+    const pendiente = async (equipoId) => (await pedir('GET', '/api/facturacion/pendientes', 'administrativo')).body
+        .arriendos.find((a) => a.maquinaria_id === equipoId);
+
+    test('ACSA a Prize a las 10:00: el dia 10 se cobra a Prize y ACSA termina el 9', async (t) => {
+        if (!requiereBase(t)) return;
+        const clientes = await dosClientes();
+        if (!clientes) return t.skip('la semilla tiene menos de dos clientes');
+        const [acsa, prize] = clientes;
+        const equipo = await crearEquipo(null);
+        const dA = await guiaSql(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', acsa);
+        const dP = await guiaSql(equipo.id, 'despacho', '2026-03-10T10:00:00-03:00', prize);
+        const pA = await propuesta(dA);
+        assert.equal(pA.status, 200);
+        assert.equal(pA.body.falta_recepcion, true);
+        assert.equal(pA.body.desde, '2026-03-01');
+        assert.equal(pA.body.fin, '2026-03-09');
+        assert.equal(pA.body.dias, 9);
+        const pendA = await pendiente(equipo.id);
+        assert.equal(pendA.cliente_id, acsa);
+        assert.equal(pendA.dias, 9);
+        assert.equal(pendA.falta_recepcion, true);
+        // Prize esta en curso y parte el mismo dia 10
+        const curso = await enCurso(equipo.id);
+        assert.equal(curso.guia_despacho_id, dP);
+        assert.equal(curso.cliente_id, prize);
+        assert.equal(curso.inicio_cobro, '2026-03-10');
+        assert.equal(curso.desde, '2026-03-10');
+    });
+
+    test('ACSA a Prize a las 15:00: el dia 10 se cobra a ACSA y Prize parte el 11', async (t) => {
+        if (!requiereBase(t)) return;
+        const clientes = await dosClientes();
+        if (!clientes) return t.skip('la semilla tiene menos de dos clientes');
+        const [acsa, prize] = clientes;
+        const equipo = await crearEquipo(null);
+        const dA = await guiaSql(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', acsa);
+        await guiaSql(equipo.id, 'despacho', '2026-03-10T15:00:00-03:00', prize);
+        const pA = await propuesta(dA);
+        assert.equal(pA.body.fin, '2026-03-10');
+        assert.equal(pA.body.dias, 10);
+        const curso = await enCurso(equipo.id);
+        assert.equal(curso.cliente_id, prize);
+        assert.equal(curso.inicio_cobro, '2026-03-11');
+        assert.equal(curso.desde, '2026-03-11');
+    });
+
+    test('los dias de ACSA y de Prize son contiguos y suman el total, a cualquier hora', async (t) => {
+        if (!requiereBase(t)) return;
+        const clientes = await dosClientes();
+        if (!clientes) return t.skip('la semilla tiene menos de dos clientes');
+        const [acsa, prize] = clientes;
+        for (const hora of ['00:00', '09:59', '12:59', '13:00', '23:59']) {
+            const equipo = await crearEquipo(null);
+            const dA = await guiaSql(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', acsa);
+            const dP = await guiaSql(equipo.id, 'despacho', `2026-03-10T${hora}:00-03:00`, prize);
+            const pA = await propuesta(dA);
+            const curso = await enCurso(equipo.id);
+            assert.equal(curso.guia_despacho_id, dP);
+            const finA = new Date(`${pA.body.fin}T00:00:00Z`).getTime();
+            const inicioP = new Date(`${curso.inicio_cobro}T00:00:00Z`).getTime();
+            assert.equal(inicioP - finA, 86400000, `fin de ACSA ${pA.body.fin} e inicio de Prize ${curso.inicio_cobro} a las ${hora}`);
+        }
+    });
+
+    test('el cliente anterior que empezo el mismo dia del cambio queda en 0 dias: nada que facturar', async (t) => {
+        if (!requiereBase(t)) return;
+        const clientes = await dosClientes();
+        if (!clientes) return t.skip('la semilla tiene menos de dos clientes');
+        const [acsa, prize] = clientes;
+        const equipo = await crearEquipo(null);
+        const dA = await guiaSql(equipo.id, 'despacho', '2026-03-10T09:00:00-03:00', acsa);
+        await guiaSql(equipo.id, 'despacho', '2026-03-10T10:00:00-03:00', prize);
+        const pA = await propuesta(dA);
+        assert.equal(pA.body.dias, 0);
+        assert.equal(pA.body.nada_que_facturar, true);
+        const pend = await pendiente(equipo.id);
+        assert.equal(pend, undefined, 'sin dias por facturar no aparece en la lista');
+    });
+
+    test('recepcion normal por la ruta real: 10:00 no cobra el dia, 13:00 si', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        for (const [hora, fin] of [['10:00', '2026-03-09'], ['12:59', '2026-03-09'], ['13:00', '2026-03-10']]) {
+            const equipo = await crearEquipo(null);
+            const dA = await guiaSql(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', cliente);
+            await pool.query('UPDATE maquinarias SET cliente_id = $1 WHERE id = $2', [cliente, equipo.id]);
+            const formulario = new FormData();
+            formulario.append('tipo', 'recepcion');
+            formulario.append('sin_documento', 'true');
+            formulario.append('fecha_hora', `2026-03-10T${hora}:00-03:00`);
+            const r = await fetch(`${base}/api/maquinarias/${equipo.id}/guias`, {
+                method: 'POST', headers: { Authorization: `Bearer ${tokens.administrativo}` }, body: formulario });
+            assert.equal(r.status, 201, hora);
+            const p = await propuesta(dA);
+            assert.equal(p.body.fin, fin, `recepcion a las ${hora}`);
+        }
+    });
+});
+
+describe('fin de arriendo guardado: la configuracion nueva rige solo hacia adelante', () => {
+    const SQL_028 = () => require('fs').readFileSync(
+        require('path').join(__dirname, '../../db/migrations/028_fin_arriendo_hora_corte.sql'), 'utf8');
+    const guiaSql = async (equipoId, tipo, fecha, clienteId) => (await pool.query(
+        `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id) VALUES ($1, $2::tipo_guia, 'x', $3, $4) RETURNING id`,
+        [equipoId, tipo, fecha, clienteId])).rows[0].id;
+    const dosClientes = async () => {
+        const r = await pool.query('SELECT id FROM clientes ORDER BY id LIMIT 2');
+        return r.rows.length < 2 ? null : [r.rows[0].id, r.rows[1].id];
+    };
+    const propuesta = (d) => pedir('GET', `/api/facturacion/arriendos/${d}/propuesta`, 'administrativo');
+    const pendiente = async (equipoId) => (await pedir('GET', '/api/facturacion/pendientes', 'administrativo')).body
+        .arriendos.find((a) => a.maquinaria_id === equipoId);
+    const restaurarConfiguracion = async () => {
+        for (const [clave, valor] of Object.entries({ dia_facturacion: 5, hora_corte_despacho: 13, corte_cierra_periodo: true })) {
+            await pool.query('UPDATE configuracion SET valor = $2::jsonb, actualizado_por = NULL WHERE clave = $1', [clave, JSON.stringify(valor)]);
+        }
+    };
+    const aplicarMigracion = async () => {
+        const client = await pool.connect();
+        try {
+            await client.query('BEGIN');
+            await client.query(SQL_028());
+            await client.query('COMMIT');
+        } finally {
+            client.release();
+        }
+    };
+
+    test('factura final emitida antes de la migracion (recepcion a las 10): no queda facturado de mas ni pendiente', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const d = await guiaSql(equipo.id, 'despacho', '2026-10-01T09:00:00-03:00', cliente);
+        const r = await guiaSql(equipo.id, 'recepcion', '2026-11-05T10:00:00-03:00', cliente);
+        // como estaba antes de la 028: la recepcion sin fin guardado y la factura final hasta el dia de la recepcion
+        await pool.query('UPDATE guias SET fin_cobro = NULL WHERE id = $1', [r]);
+        await pool.query(
+            `INSERT INTO facturas (maquinaria_id, guia_despacho_id, guia_recepcion_id, periodo_desde, periodo_hasta, folio, archivo_url, monto)
+             VALUES ($1, $2, $3, '2026-10-01', '2026-11-05', 'T-2801', 'x', 1000)`, [equipo.id, d, r]);
+        await aplicarMigracion();
+        const fin = (await pool.query("SELECT to_char(fin_cobro, 'YYYY-MM-DD') AS d FROM guias WHERE id = $1", [r])).rows[0].d;
+        assert.equal(fin, '2026-11-05', 'el relleno usa la regla con la que se facturo');
+        const p = await propuesta(d);
+        assert.equal(p.body.fin, '2026-11-05');
+        assert.equal(p.body.facturado_de_mas, false);
+        assert.equal(p.body.nada_que_facturar, true);
+        assert.equal(await pendiente(equipo.id), undefined, 'no aparece en /pendientes');
+    });
+
+    test('una recepcion nueva a las 10:00 si termina el dia anterior', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const d = await guiaSql(equipo.id, 'despacho', '2026-10-01T09:00:00-03:00', cliente);
+        await guiaSql(equipo.id, 'recepcion', '2026-11-05T10:00:00-03:00', cliente);
+        assert.equal((await propuesta(d)).body.fin, '2026-11-04');
+    });
+
+    test('el relleno respeta incluir_dia_recepcion=false con el que se facturo y es idempotente', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        const equipo = await crearEquipo(null);
+        const r = await guiaSql(equipo.id, 'recepcion', '2026-03-05T10:00:00-03:00', cliente);
+        await pool.query('UPDATE guias SET fin_cobro = NULL WHERE id = $1', [r]);
+        try {
+            await pool.query("UPDATE configuracion SET valor = 'false' WHERE clave = 'incluir_dia_recepcion'");
+            await aplicarMigracion();
+            await aplicarMigracion();
+        } finally {
+            await pool.query("UPDATE configuracion SET valor = 'true', actualizado_por = NULL WHERE clave = 'incluir_dia_recepcion'");
+        }
+        const fin = (await pool.query("SELECT to_char(fin_cobro, 'YYYY-MM-DD') AS d FROM guias WHERE id = $1", [r])).rows[0].d;
+        assert.equal(fin, '2026-03-04');
+    });
+
+    test('cambiar la hora de corte despues de registrar el cambio de cliente y la recepcion no altera ningun fin ni inicio', async (t) => {
+        if (!requiereBase(t)) return;
+        const clientes = await dosClientes();
+        if (!clientes) return t.skip('la semilla tiene menos de dos clientes');
+        const [acsa, prize] = clientes;
+        const equipo = await crearEquipo(null);
+        const dA = await guiaSql(equipo.id, 'despacho', '2026-03-01T09:00:00-03:00', acsa);
+        const dP = await guiaSql(equipo.id, 'despacho', '2026-03-10T12:00:00-03:00', prize);
+        const rP = await guiaSql(equipo.id, 'recepcion', '2026-03-20T11:00:00-03:00', prize);
+        const foto = async () => {
+            const a = (await propuesta(dA)).body;
+            const p = (await propuesta(dP)).body;
+            return { finA: a.fin, desdeA: a.desde, desdeP: p.desde, finP: p.fin };
+        };
+        const antes = await foto();
+        assert.deepEqual(antes, { finA: '2026-03-09', desdeA: '2026-03-01', desdeP: '2026-03-10', finP: '2026-03-19' });
+        try {
+            for (const corte of [0, 9, 12, 23]) {
+                assert.equal((await pedir('PUT', '/api/facturacion/configuracion', 'gerente', { hora_corte_despacho: corte })).status, 200);
+                assert.deepEqual(await foto(), antes, `con corte ${corte} nada cambia`);
+            }
+        } finally {
+            await restaurarConfiguracion();
+        }
+        assert.ok(rP);
+    });
+
+    test('el PUT con solo incluir_dia_recepcion (obsoleta) responde 200 sin guardar ni tocar quien/cuando', async (t) => {
+        if (!requiereBase(t)) return;
+        const antes = (await pool.query("SELECT valor::text AS v, actualizado_por, actualizado_at FROM configuracion WHERE clave = 'incluir_dia_recepcion'")).rows[0];
+        const r = await pedir('PUT', '/api/facturacion/configuracion', 'gerente', { incluir_dia_recepcion: !(antes.v === 'true') });
+        assert.equal(r.status, 200);
+        assert.equal('incluir_dia_recepcion' in r.body, false);
+        const despues = (await pool.query("SELECT valor::text AS v, actualizado_por, actualizado_at FROM configuracion WHERE clave = 'incluir_dia_recepcion'")).rows[0];
+        assert.deepEqual(despues, antes, 'la fila no cambia');
+        // una clave obsoleta junto a una vigente guarda solo la vigente
+        const r2 = await pedir('PUT', '/api/facturacion/configuracion', 'gerente', { incluir_dia_recepcion: false, dia_facturacion: 6 });
+        assert.equal(r2.status, 200);
+        assert.equal(r2.body.dia_facturacion, 6);
+        await restaurarConfiguracion();
+    });
+
+    test('recepcion antes del corte en los flujos de periodos: parcial, facturado de mas y recepcion repetida', async (t) => {
+        if (!requiereBase(t)) return;
+        const cliente = await algunCliente();
+        // periodo parcial: el fin es el dia anterior a la recepcion de las 10
+        const e1 = await crearEquipo(null);
+        const d1 = await guiaSql(e1.id, 'despacho', '2026-08-01T09:00:00-03:00', cliente);
+        await guiaSql(e1.id, 'recepcion', '2026-10-20T10:00:00-03:00', cliente);
+        const p1 = await propuesta(d1);
+        assert.equal(p1.body.fin, '2026-10-19');
+        assert.equal(p1.body.opciones_hasta[p1.body.opciones_hasta.length - 1], '2026-10-19');
+        // recepcion repetida (huerfana): no cambia el fin del arriendo
+        await guiaSql(e1.id, 'recepcion', '2026-10-22T10:00:00-03:00', cliente);
+        assert.equal((await propuesta(d1)).body.fin, '2026-10-19');
+        // facturado de mas: se facturo hasta el 20 y la recepcion (a las 10) registrada despues cierra el 19
+        const e2 = await crearEquipo(null);
+        const d2 = await guiaSql(e2.id, 'despacho', '2026-10-01T09:00:00-03:00', cliente);
+        await pool.query(
+            `INSERT INTO facturas (maquinaria_id, guia_despacho_id, periodo_desde, periodo_hasta, folio, archivo_url)
+             VALUES ($1, $2, '2026-10-01', '2026-10-20', 'T-2802', 'x')`, [e2.id, d2]);
+        await guiaSql(e2.id, 'recepcion', '2026-10-20T10:00:00-03:00', cliente);
+        const p2 = await propuesta(d2);
+        assert.equal(p2.body.fin, '2026-10-19');
+        assert.equal(p2.body.facturado_de_mas, true);
     });
 });
 

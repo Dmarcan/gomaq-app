@@ -1,6 +1,8 @@
 const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
+const { leerConfiguracion } = require('../utils/configuracion');
+const { diaSantiago } = require('../utils/diasArriendo');
 const {
     calcularRentabilidad,
     calcularDiasArrendado,
@@ -26,7 +28,14 @@ function rangoDeFechas(query) {
         desde = new Date(hasta);
         desde.setFullYear(desde.getFullYear() - 1);
     }
-    return { desde, hasta };
+    // dias de calendario del periodo para contar dias de arriendo: si llegan como 'YYYY-MM-DD' se usan tal
+    // cual (un Date a medianoche UTC caeria el dia anterior en Santiago); si no, el dia de Santiago
+    const esDia = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
+    return {
+        desde, hasta,
+        desdeDia: esDia(query.desde) ? query.desde : diaSantiago(desde),
+        hastaDia: esDia(query.hasta) ? query.hasta : diaSantiago(hasta),
+    };
 }
 
 // Gasto en repuestos por equipo. Cuenta TODAS las lineas, cobradas o no: es el costo real
@@ -63,7 +72,8 @@ function agruparPorMaquinaria(filas) {
 // Guias de despacho y recepcion hasta el fin del periodo: hacen falta tambien las anteriores al
 // inicio, porque un arriendo que empezo antes sigue contando sus dias dentro del periodo.
 const SQL_GUIAS = `
-    SELECT maquinaria_id, tipo, fecha, fallido
+    SELECT maquinaria_id, tipo, fecha, fallido,
+           to_char(inicio_cobro, 'YYYY-MM-DD') AS inicio_cobro, to_char(fin_cobro, 'YYYY-MM-DD') AS fin_cobro
     FROM guias
     WHERE fecha <= $1
     ORDER BY maquinaria_id, fecha
@@ -122,7 +132,7 @@ function comparadorDeOrden(orden, dir) {
 // Parametros: desde/hasta, q (busqueda), resultado (a_perdida | con_ganancia | sin_movimiento |
 // equilibrio), orden + dir (ver COLUMNAS_ORDEN) y limit/offset.
 router.get('/', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
-    const { desde, hasta } = rangoDeFechas(req.query);
+    const { desde, hasta, desdeDia, hastaDia } = rangoDeFechas(req.query);
     const { limit, offset } = parsearPaginacion(req.query);
     const q = parsearBusqueda(req.query);
     const filtroResultado = RESULTADOS.includes(req.query.resultado) ? req.query.resultado : null;
@@ -140,6 +150,7 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo'), async (re
         const guiasPorEquipo = agruparPorMaquinaria(guias.rows);
         const lecturasPorEquipo = agruparPorMaquinaria(lecturas.rows);
         const diasPeriodo = diasDelPeriodo(desde, hasta);
+        const config = await leerConfiguracion(pool);
 
         // se calcula sobre TODA la flota y despues se filtra: el resumen de arriba no debe cambiar
         // al buscar un equipo, ni el "3 a perdida" al pulsar "cargar mas"
@@ -149,7 +160,7 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo'), async (re
                 facturas: facturasPorEquipo.get(equipo.id) || [],
             });
             const horas = calcularHorasEnPeriodo(lecturasPorEquipo.get(equipo.id) || [], desde, hasta);
-            const dias = calcularDiasArrendado(guiasPorEquipo.get(equipo.id) || [], desde, hasta);
+            const dias = calcularDiasArrendado(guiasPorEquipo.get(equipo.id) || [], desdeDia, hastaDia, { horaCorte: config.hora_corte_despacho });
             return {
                 ...equipo,
                 ...base,

@@ -23,17 +23,6 @@ function diaCalendarioUtc(fecha) {
     return Date.UTC(fecha.getFullYear(), fecha.getMonth(), fecha.getDate());
 }
 
-// Dias facturables: desde el dia de inicio de cobro hasta el dia de la recepcion INCLUSIVE
-// (regla de cierre pendiente de confirmar con la administrativa, igual que HORA_CORTE). Con
-// incluirDiaRecepcion = false el dia de la recepcion no cuenta. Sin recepcion: hasta hoy inclusive.
-// Los valores por defecto mantienen el comportamiento de siempre.
-function calcularDiasTranscurridos(fechaDespacho, fechaFin, { horaCorte = HORA_CORTE, incluirDiaRecepcion = true } = {}) {
-    const inicioCobro = calcularInicioCobro(fechaDespacho, horaCorte);
-    const fin = fechaFin ? new Date(fechaFin) : new Date();
-    const dias = (diaCalendarioUtc(fin) - diaCalendarioUtc(inicioCobro)) / (1000 * 60 * 60 * 24) + (incluirDiaRecepcion ? 1 : 0);
-    return Math.max(0, dias);
-}
-
 // ---------------------------------------------------------------------------------------------
 // Funciones de zona fija (America/Santiago), independientes de process.env.TZ. Trabajan con dias
 // de calendario 'YYYY-MM-DD'. inicioCobroDia es espejo de gomaq_inicio_cobro (migracion 022).
@@ -77,6 +66,24 @@ function inicioCobroDia(fechaDespacho, horaCorte = HORA_CORTE) {
     return horaSantiago(fechaDespacho) >= horaCorte ? sumarDias(dia, 1) : dia;
 }
 
+// Ultimo dia que se cobra cuando el equipo sale del cliente en el instante `instante` (recepcion, o
+// despacho del equipo a otro cliente): el mismo dia si ocurre desde la hora de corte, y el dia
+// anterior si ocurre antes. Es la contraparte de inicioCobroDia: con el mismo corte, cada dia se cobra
+// a un solo cliente, sin huecos ni solapes (el cliente que recibe el equipo parte en
+// inicioCobroDia del mismo instante).
+function finCobroDia(instante, horaCorte = HORA_CORTE) {
+    const dia = diaSantiago(instante);
+    return horaSantiago(instante) >= horaCorte ? dia : sumarDias(dia, -1);
+}
+
+// Dias facturables de un arriendo cerrado: desde su inicio de cobro hasta su ultimo dia (finCobroDia),
+// ambos inclusive y nunca negativo. Sin cierre (fechaFin null): hasta hoy inclusive.
+function calcularDiasTranscurridos(fechaDespacho, fechaFin, { horaCorte = HORA_CORTE } = {}) {
+    const inicio = inicioCobroDia(fechaDespacho, horaCorte);
+    const fin = fechaFin ? finCobroDia(fechaFin, horaCorte) : diaSantiago(new Date());
+    return diasEntre(inicio, fin);
+}
+
 const diaDelMes = (anio, mes, dia) => `${anio}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
 
 // dias de corte (el dia de facturacion de cada mes) dentro de [desde, hasta], ambos inclusive
@@ -108,5 +115,5 @@ function proximoCorte(hoy, diaFacturacion) {
 
 module.exports = {
     HORA_CORTE, calcularInicioCobro, calcularDiasTranscurridos, diaCalendarioUtc,
-    diaSantiago, horaSantiago, sumarDias, diasEntre, inicioCobroDia, fechasDeCorte, proximoCorte,
+    diaSantiago, horaSantiago, sumarDias, diasEntre, inicioCobroDia, finCobroDia, fechasDeCorte, proximoCorte,
 };

@@ -1,8 +1,8 @@
 // Periodos de facturacion de un arriendo (bloque 2b). Funciones puras sobre dias de calendario
 // 'YYYY-MM-DD', sin zona horaria ni base de datos.
 //
-// Un arriendo va del inicio de cobro de su despacho hasta su fin (el dia de la recepcion, o el dia
-// anterior si el dia de recepcion no cuenta). Se factura por periodos que terminan en el "fin de
+// Un arriendo va del inicio de cobro de su despacho hasta su fin (el dia en que sale del cliente si
+// eso ocurre desde la hora de corte, o el dia anterior si ocurre antes: ver finCobroDia). Se factura por periodos que terminan en el "fin de
 // periodo" de cada mes: el dia de corte (corteCierraPeriodo = true) o el dia anterior al corte
 // (false). El ultimo periodo termina en el fin del arriendo. El aviso de que hay un periodo por
 // facturar aparece desde el propio dia de corte en ambos casos.
