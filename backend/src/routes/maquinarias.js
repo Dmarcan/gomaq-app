@@ -7,7 +7,7 @@ const { rutaArchivo } = require('../utils/rutaArchivo');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 const { calcularEstadoMantencion } = require('../utils/mantencion');
 const { ordenSql } = require('../utils/ordenFlota');
-const { visiblePara, construirSqlDocumentos, filaPublica } = require('../utils/documentosEquipo');
+const { visiblePara, construirSqlDocumentos, construirSqlEquiposDelCliente, filaPublica } = require('../utils/documentosEquipo');
 
 const router = express.Router();
 
@@ -98,6 +98,27 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar tu flota' });
+    }
+});
+
+// GET /api/maquinarias/mias/historicos - portal cliente: los equipos con documentos propios, los
+// que tiene hoy (actual = true) y los que tuvo antes. Sale SOLO de los documentos que llevan su
+// cliente_id (guias, OT y facturas, con las mismas reglas que /:id/documentos), nunca del cliente
+// actual del equipo; el cliente sale del token y no se acepta por parametro. /mias no cambia.
+router.get('/mias/historicos', verifyToken, requireRole('cliente'), async (req, res) => {
+    const clienteId = Number(req.user.cliente_id);
+    if (!Number.isSafeInteger(clienteId) || clienteId < 1 || clienteId > 2147483647) {
+        return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
+    }
+    try {
+        // sin registro de la 010 no se puede confiar en ninguna guia anterior
+        const m = await pool.query("SELECT aplicada_at FROM schema_migraciones WHERE nombre LIKE '010%' LIMIT 1");
+        const r = await pool.query(construirSqlEquiposDelCliente(), [clienteId, m.rows[0] ? m.rows[0].aplicada_at : 'infinity']);
+        res.set('Cache-Control', 'no-store');
+        res.json(r.rows);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al consultar tus equipos anteriores' });
     }
 });
 

@@ -5,6 +5,7 @@ import 'package:provider/provider.dart';
 import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
+import '../../utils/equipos_anteriores.dart';
 import '../../widgets/dialogos.dart';
 import '../../widgets/documentos_equipo.dart';
 import '../../widgets/estado_chip.dart';
@@ -19,6 +20,10 @@ class ClienteMisEquiposScreen extends StatefulWidget {
 
 class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
   List<dynamic> _maquinarias = [];
+  // equipos que tuviste antes (con documentos tuyos): se cargan aparte para que un fallo no tumbe la lista de hoy
+  List<Map<String, dynamic>> _anteriores = [];
+  String? _errorAnteriores;
+  bool _cargandoAnteriores = true;
   bool _cargando = true;
   String? _error;
 
@@ -28,7 +33,10 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
   }
 
-  Future<void> _cargar() async {
+  /// Mis equipos y los anteriores se piden a la vez; cada uno falla por su lado.
+  Future<void> _cargar() => Future.wait([_cargarActuales(), _cargarAnteriores()]);
+
+  Future<void> _cargarActuales() async {
     setState(() {
       _cargando = true;
       _error = null;
@@ -42,6 +50,24 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
       if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
+    }
+  }
+
+  Future<void> _cargarAnteriores() async {
+    if (mounted) {
+      setState(() {
+        _cargandoAnteriores = true;
+        _errorAnteriores = null;
+      });
+    }
+    try {
+      final data = await ApiClient.instance.get('/api/maquinarias/mias/historicos');
+      if (!mounted) return;
+      setState(() => _anteriores = soloEquiposAnteriores(data));
+    } catch (e) {
+      if (mounted) setState(() => _errorAnteriores = mensajeErrorCarga(e));
+    } finally {
+      if (mounted) setState(() => _cargandoAnteriores = false);
     }
   }
 
@@ -159,6 +185,54 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
                             ),
                             OutlinedButton.icon(
                               onPressed: () => _verDocumentos(m),
+                              icon: const Icon(Icons.folder_open_outlined, size: 18),
+                              label: const Text('Documentos'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+          const SizedBox(height: 24),
+          Text('Equipos anteriores', style: Theme.of(context).textTheme.titleMedium),
+          const SizedBox(height: 4),
+          const Text('Equipos que tuviste antes y sus documentos.'),
+          const SizedBox(height: 8),
+          if (_cargandoAnteriores)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 12),
+              child: Center(child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))),
+            )
+          else if (_errorAnteriores != null)
+            EstadoError(titulo: 'No se pudieron cargar tus equipos anteriores', mensaje: _errorAnteriores!, onReintentar: _cargarAnteriores)
+          else if (_anteriores.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 8),
+              child: Text('Aún no tienes equipos anteriores.'),
+            )
+          else
+            for (final e in _anteriores)
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      ListTile(
+                        title: Text('${e['codigo']} - ${e['tipo']}'),
+                        subtitle: Text(rangoDocumentos(e['primer_documento'], e['ultimo_documento'])),
+                      ),
+                      // igual que las tarjetas de arriba: el botón va debajo, así a 375 px no aprieta el texto
+                      Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 12),
+                        child: Wrap(
+                          spacing: 8,
+                          runSpacing: 8,
+                          children: [
+                            OutlinedButton.icon(
+                              onPressed: () => _verDocumentos(e),
                               icon: const Icon(Icons.folder_open_outlined, size: 18),
                               label: const Text('Documentos'),
                             ),

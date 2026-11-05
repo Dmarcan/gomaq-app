@@ -60,7 +60,7 @@ function construirSqlDocumentos({ rol }) {
         FROM ordenes_trabajo ot
         WHERE ot.maquinaria_id = $1 ${filtroOt}
         UNION ALL
-        SELECT 'factura', f.id, COALESCE(f.fecha_emision::timestamptz, f.created_at), f.folio,
+        SELECT 'factura', f.id, COALESCE(f.fecha_emision::timestamp AT TIME ZONE 'America/Santiago', f.created_at), f.folio,
                COALESCE(f.cliente_id, ot.cliente_id), f.archivo_url, false, false,
                NULL, NULL, f.periodo_desde, f.periodo_hasta, ${idOtFactura}, NULL, NULL
         FROM facturas f
@@ -81,4 +81,41 @@ function filaPublica(fila, { rol, urlFirmada }) {
     return salida;
 }
 
-module.exports = { visiblePara, construirSqlDocumentos, filaPublica };
+
+/**
+ * Equipos con al menos un documento propio de un cliente (los que tiene hoy y los que tuvo antes),
+ * con las mismas reglas de visibilidad que construirSqlDocumentos para el rol cliente.
+ * Parametros: $1 = cliente_id del token, $2 = momento en que se aplico la migracion 010.
+ * Devuelve por equipo: id, codigo, tipo, actual (esta con el cliente hoy), primer_documento y
+ * ultimo_documento. Nunca datos de otros clientes ni costos.
+ */
+function construirSqlEquiposDelCliente() {
+    return `
+        WITH docs AS (
+            SELECT g.maquinaria_id, g.fecha AS fecha
+            FROM guias g
+            WHERE g.cliente_id = $1 AND g.created_at >= $2::timestamptz
+            UNION ALL
+            SELECT ot.maquinaria_id, ot.fecha_creacion
+            FROM ordenes_trabajo ot
+            WHERE ot.cliente_id = $1
+            UNION ALL
+            SELECT COALESCE(f.maquinaria_id, ot.maquinaria_id), COALESCE(f.fecha_emision::timestamp AT TIME ZONE 'America/Santiago', f.created_at)
+            FROM facturas f
+            LEFT JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
+            WHERE COALESCE(f.cliente_id, ot.cliente_id) = $1
+              AND COALESCE(f.maquinaria_id, ot.maquinaria_id) IS NOT NULL
+              AND (f.guia_recepcion_id IS NULL OR EXISTS (
+                   SELECT 1 FROM guias gr WHERE gr.id = f.guia_recepcion_id AND gr.created_at >= $2::timestamptz))
+              AND (f.guia_despacho_id IS NULL OR EXISTS (
+                   SELECT 1 FROM guias gd WHERE gd.id = f.guia_despacho_id AND gd.created_at >= $2::timestamptz))
+        )
+        SELECT m.id, m.codigo, m.tipo, COALESCE(m.cliente_id = $1, false) AS actual,
+               MIN(d.fecha) AS primer_documento, MAX(d.fecha) AS ultimo_documento
+        FROM docs d
+        JOIN maquinarias m ON m.id = d.maquinaria_id
+        GROUP BY m.id, m.codigo, m.tipo, m.cliente_id
+        ORDER BY COALESCE(m.cliente_id = $1, false) DESC, MAX(d.fecha) DESC, m.codigo`;
+}
+
+module.exports = { visiblePara, construirSqlDocumentos, construirSqlEquiposDelCliente, filaPublica };

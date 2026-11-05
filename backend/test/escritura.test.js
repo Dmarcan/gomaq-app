@@ -5941,3 +5941,239 @@ describe('bloque 6 (parte 1): correcciones de la revision experta', () => {
         assert.equal((await pedir('GET', '/api/solicitudes?estado=pendiente', 'mecanico')).status, 403);
     });
 });
+
+describe('portal del cliente: equipos anteriores (mias/historicos)', () => {
+    const esc = {};
+    const tokenCliente = (clienteId) => jwt.sign({ id: 987655, rol: 'cliente', cliente_id: clienteId }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    async function pedirConToken(ruta, token) {
+        const r = await fetch(`${base}${ruta}`, { headers: { Authorization: `Bearer ${token}` } });
+        let json = null;
+        try { json = await r.json(); } catch (_) { /* sin cuerpo */ }
+        return { status: r.status, body: json };
+    }
+
+    const guia = async (equipoId, tipo, fecha, clienteId, creada = null) => (await pool.query(
+        `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id, created_at)
+         VALUES ($1, $2::tipo_guia, 'x', $3, $4, COALESCE($5, now())) RETURNING id`,
+        [equipoId, tipo, fecha, clienteId, creada])).rows[0].id;
+
+    before(async () => {
+        if (!HABILITADO) return;
+        const nuevoCliente = async (nombre) => (await pool.query(
+            "INSERT INTO clientes (nombre, email) VALUES ($1, 'hist@gomaq.test') RETURNING id", [`${nombre} ${crypto.randomUUID().slice(0, 6)}`])).rows[0].id;
+        esc.acsa = await nuevoCliente('ACSA');
+        esc.prize = await nuevoCliente('Prize');
+        esc.servinut = await nuevoCliente('Servinut');
+        esc.sin = await nuevoCliente('Sin documentos');
+        // equipo 1: ACSA, Prize, Servinut y de nuevo ACSA (vigente hoy)
+        esc.e1 = await crearEquipo(null);
+        await guia(esc.e1.id, 'despacho', '2026-01-02T09:00:00-03:00', esc.acsa);
+        await guia(esc.e1.id, 'recepcion', '2026-01-20T10:00:00-03:00', esc.acsa);
+        await guia(esc.e1.id, 'despacho', '2026-02-02T09:00:00-03:00', esc.prize);
+        await guia(esc.e1.id, 'recepcion', '2026-02-10T10:00:00-03:00', esc.prize);
+        await guia(esc.e1.id, 'despacho', '2026-03-02T09:00:00-03:00', esc.servinut);
+        await guia(esc.e1.id, 'recepcion', '2026-03-12T10:00:00-03:00', esc.servinut);
+        await guia(esc.e1.id, 'despacho', '2026-04-02T09:00:00-03:00', esc.acsa);
+        await pool.query('UPDATE maquinarias SET cliente_id = $1 WHERE id = $2', [esc.acsa, esc.e1.id]);
+        // equipo 2: solo de ACSA (Prize no debe verlo)
+        esc.e2 = await crearEquipo(null);
+        await guia(esc.e2.id, 'despacho', '2026-05-02T09:00:00-03:00', esc.acsa);
+        // equipo 3: Prize solo tiene una guia anterior a la migracion 010 (relleno poco confiable): no debe verlo
+        esc.e3 = await crearEquipo(null);
+        await guia(esc.e3.id, 'despacho', '2025-06-01T09:00:00-03:00', esc.prize, '2000-01-01T00:00:00Z');
+        // equipo 4: Servinut tiene solo una factura de reparacion (por su OT), sin guias
+        esc.e4 = await crearEquipo(null);
+        esc.ot = (await pool.query(
+            "INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, estado, motivo) VALUES ($1, $2, 'finalizada', 'Reparacion Servinut') RETURNING id",
+            [esc.e4.id, esc.servinut])).rows[0].id;
+        datos.ordenes.push(esc.ot);
+        await pool.query("INSERT INTO facturas (orden_trabajo_id, folio, archivo_url, monto) VALUES ($1, 'H-1', 'facturas/h1.pdf', 5000)", [esc.ot]);
+    });
+
+    after(async () => {
+        if (!HABILITADO || !esc.e1) return;
+        const equipos = [esc.e1.id, esc.e2.id, esc.e3.id, esc.e4.id];
+        await pool.query('DELETE FROM facturas WHERE maquinaria_id = ANY($1) OR orden_trabajo_id = $2', [equipos, esc.ot]);
+        await pool.query('DELETE FROM guias WHERE maquinaria_id = ANY($1)', [equipos]);
+        await purgarOrdenes([esc.ot]);
+        await pool.query('UPDATE maquinarias SET cliente_id = NULL WHERE id = ANY($1)', [equipos]);
+        await pool.query('DELETE FROM clientes WHERE id = ANY($1)', [[esc.acsa, esc.prize, esc.servinut, esc.sin]]);
+    });
+
+    const ids = (r) => r.body.map((e) => e.id).sort((a, b) => a - b);
+
+    test('Prize ve el equipo que tuvo aunque hoy este con ACSA, y no ve nada de ACSA', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedirConToken('/api/maquinarias/mias/historicos', tokenCliente(esc.prize));
+        assert.equal(r.status, 200);
+        assert.deepEqual(ids(r), [esc.e1.id], 'solo el equipo 1: el 2 es de ACSA y el 3 solo tiene una guia anterior a la 010');
+        const e1 = r.body[0];
+        assert.equal(e1.actual, false, 'hoy esta con ACSA');
+        assert.equal(e1.codigo, esc.e1.codigo);
+        assert.ok(e1.primer_documento && e1.ultimo_documento);
+        assert.ok(new Date(e1.primer_documento) <= new Date(e1.ultimo_documento));
+        assert.equal(new Date(e1.primer_documento).toISOString().slice(0, 10), '2026-02-02');
+        assert.equal(new Date(e1.ultimo_documento).toISOString().slice(0, 10), '2026-02-10');
+        // nada que identifique a otro cliente ni costos
+        assert.deepEqual(Object.keys(e1).sort(), ['actual', 'codigo', 'id', 'primer_documento', 'tipo', 'ultimo_documento']);
+    });
+
+    test('ACSA ve su equipo vigente y el otro que tuvo, ambos con sus fechas; el actual va primero', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedirConToken('/api/maquinarias/mias/historicos', tokenCliente(esc.acsa));
+        assert.equal(r.status, 200);
+        assert.deepEqual(ids(r), [esc.e1.id, esc.e2.id].sort((a, b) => a - b));
+        const e1 = r.body.find((e) => e.id === esc.e1.id);
+        assert.equal(e1.actual, true);
+        assert.equal(new Date(e1.primer_documento).toISOString().slice(0, 10), '2026-01-02');
+        assert.equal(new Date(e1.ultimo_documento).toISOString().slice(0, 10), '2026-04-02');
+        assert.equal(r.body[0].actual, true, 'los vigentes primero');
+    });
+
+    test('un equipo que solo tiene una factura de reparacion del cliente tambien aparece', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedirConToken('/api/maquinarias/mias/historicos', tokenCliente(esc.servinut));
+        assert.deepEqual(ids(r), [esc.e1.id, esc.e4.id].sort((a, b) => a - b));
+    });
+
+    test('un cliente sin documentos recibe una lista vacia', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedirConToken('/api/maquinarias/mias/historicos', tokenCliente(esc.sin));
+        assert.equal(r.status, 200);
+        assert.deepEqual(r.body, []);
+    });
+
+    test('permisos: mecanico, administrativo y gerente 403; token sin cliente_id 400; ?cliente_id se ignora', async (t) => {
+        if (!requiereBase(t)) return;
+        assert.equal((await pedir('GET', '/api/maquinarias/mias/historicos', 'mecanico')).status, 403);
+        assert.equal((await pedir('GET', '/api/maquinarias/mias/historicos', 'administrativo')).status, 403);
+        assert.equal((await pedir('GET', '/api/maquinarias/mias/historicos', 'gerente')).status, 403);
+        assert.equal((await pedirConToken('/api/maquinarias/mias/historicos', tokenCliente(null))).status, 400);
+        assert.equal((await pedirConToken('/api/maquinarias/mias/historicos', tokenCliente(0))).status, 400);
+        const r = await pedirConToken(`/api/maquinarias/mias/historicos?cliente_id=${esc.acsa}`, tokenCliente(esc.prize));
+        assert.deepEqual(ids(r), [esc.e1.id], 'sigue siendo Prize');
+    });
+
+    test('/mias (equipos de hoy) no cambia y no confunde la ruta nueva con un id', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedirConToken('/api/maquinarias/mias', tokenCliente(esc.acsa));
+        assert.equal(r.status, 200);
+        assert.deepEqual(r.body.map((e) => e.id), [esc.e1.id]);
+        const p = await pedirConToken('/api/maquinarias/mias', tokenCliente(esc.prize));
+        assert.deepEqual(p.body, []);
+    });
+
+    test('el boton Documentos del equipo anterior abre exactamente los documentos del cliente', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedirConToken(`/api/maquinarias/${esc.e1.id}/documentos`, tokenCliente(esc.prize));
+        assert.equal(r.status, 200);
+        assert.equal(r.body.documentos.length, 2);
+        assert.ok(r.body.documentos.every((d) => d.cliente_id === esc.prize));
+    });
+});
+
+describe('portal del cliente: equipos anteriores, casos de la revision', () => {
+    const esc = {};
+    const tokenCliente = (clienteId) => jwt.sign({ id: 987656, rol: 'cliente', cliente_id: clienteId }, process.env.JWT_SECRET, { expiresIn: '1h' });
+
+    async function historicos(clienteId) {
+        const r = await fetch(`${base}/api/maquinarias/mias/historicos`, { headers: { Authorization: `Bearer ${tokenCliente(clienteId)}` } });
+        return { status: r.status, body: await r.json() };
+    }
+
+    const guia = async (equipoId, tipo, fecha, clienteId, creada = null) => (await pool.query(
+        `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id, created_at)
+         VALUES ($1, $2::tipo_guia, 'x', $3, $4, COALESCE($5, now())) RETURNING id`,
+        [equipoId, tipo, fecha, clienteId, creada])).rows[0].id;
+
+    before(async () => {
+        if (!HABILITADO) return;
+        const nuevoCliente = async (nombre) => (await pool.query(
+            "INSERT INTO clientes (nombre, email) VALUES ($1, 'hist2@gomaq.test') RETURNING id", [`${nombre} ${crypto.randomUUID().slice(0, 6)}`])).rows[0].id;
+        esc.a = await nuevoCliente('Cliente A');
+        esc.b = await nuevoCliente('Cliente B');
+        // equipo sin cliente hoy, con una guia de A
+        esc.libre = await crearEquipo(null);
+        await guia(esc.libre.id, 'despacho', '2026-02-02T09:00:00-03:00', esc.a);
+        await guia(esc.libre.id, 'recepcion', '2026-02-10T10:00:00-03:00', esc.a);
+        // equipo hoy con B, que A tuvo antes
+        esc.deB = await crearEquipo(null);
+        await guia(esc.deB.id, 'despacho', '2026-02-02T09:00:00-03:00', esc.a);
+        await guia(esc.deB.id, 'despacho', '2026-03-02T09:00:00-03:00', esc.b);
+        await pool.query('UPDATE maquinarias SET cliente_id = $1 WHERE id = $2', [esc.b, esc.deB.id]);
+        // equipo con una factura colgada de una recepcion anterior a la 010 y otra de un despacho anterior a la 010
+        esc.viejo = await crearEquipo(null);
+        esc.dVieja = await guia(esc.viejo.id, 'despacho', '2025-05-01T09:00:00-03:00', esc.a, '2000-01-01T00:00:00Z');
+        esc.rVieja = await guia(esc.viejo.id, 'recepcion', '2025-05-20T09:00:00-03:00', esc.a, '2000-01-01T00:00:00Z');
+        await pool.query(
+            `INSERT INTO facturas (maquinaria_id, guia_recepcion_id, cliente_id, folio, archivo_url) VALUES ($1, $2, $3, 'HV-1', 'x')`,
+            [esc.viejo.id, esc.rVieja, esc.a]);
+        esc.viejo2 = await crearEquipo(null);
+        esc.dVieja2 = await guia(esc.viejo2.id, 'despacho', '2025-06-01T09:00:00-03:00', esc.a, '2000-01-01T00:00:00Z');
+        await pool.query(
+            `INSERT INTO facturas (maquinaria_id, guia_despacho_id, periodo_desde, periodo_hasta, cliente_id, folio, archivo_url)
+             VALUES ($1, $2, '2025-06-02', '2025-06-30', $3, 'HV-2', 'x')`,
+            [esc.viejo2.id, esc.dVieja2, esc.a]);
+        // equipo con una factura de reparacion con fecha_emision (DATE): debe contar el dia de Santiago
+        esc.fe = await crearEquipo(null);
+        esc.otFe = (await pool.query(
+            "INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, estado, motivo) VALUES ($1, $2, 'finalizada', 'Reparacion') RETURNING id",
+            [esc.fe.id, esc.a])).rows[0].id;
+        datos.ordenes.push(esc.otFe);
+        await pool.query("INSERT INTO facturas (orden_trabajo_id, folio, archivo_url, fecha_emision) VALUES ($1, 'HV-3', 'x', '2026-03-05')", [esc.otFe]);
+    });
+
+    after(async () => {
+        if (!HABILITADO || !esc.libre) return;
+        const equipos = [esc.libre.id, esc.deB.id, esc.viejo.id, esc.viejo2.id, esc.fe.id];
+        await pool.query('DELETE FROM facturas WHERE maquinaria_id = ANY($1) OR orden_trabajo_id = $2', [equipos, esc.otFe]);
+        await pool.query('DELETE FROM guias WHERE maquinaria_id = ANY($1)', [equipos]);
+        await purgarOrdenes([esc.otFe]);
+        await pool.query('UPDATE maquinarias SET cliente_id = NULL WHERE id = ANY($1)', [equipos]);
+        await pool.query('DELETE FROM clientes WHERE id = ANY($1)', [[esc.a, esc.b]]);
+    });
+
+    test('actual es siempre true o false: un equipo sin cliente o con otro cliente da false', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await historicos(esc.a);
+        assert.equal(r.status, 200);
+        for (const id of [esc.libre.id, esc.deB.id]) {
+            const e = r.body.find((x) => x.id === id);
+            assert.ok(e, `aparece ${id}`);
+            assert.strictEqual(e.actual, false);
+        }
+        assert.ok(r.body.every((e) => typeof e.actual === 'boolean'), 'nunca null');
+    });
+
+    test('una factura colgada de una recepcion o de un despacho anterior a la 010 no hace aparecer el equipo', async (t) => {
+        if (!requiereBase(t)) return;
+        const ids = (await historicos(esc.a)).body.map((e) => e.id);
+        assert.ok(!ids.includes(esc.viejo.id), 'factura de recepcion anterior a la 010');
+        assert.ok(!ids.includes(esc.viejo2.id), 'factura de despacho anterior a la 010');
+    });
+
+    test('sin registro de la migracion 010 no aparecen equipos que solo tienen guias (falla cerrado)', async (t) => {
+        if (!requiereBase(t)) return;
+        const original = (await pool.query("SELECT nombre FROM schema_migraciones WHERE nombre LIKE '010%'")).rows[0].nombre;
+        try {
+            await pool.query("UPDATE schema_migraciones SET nombre = 'x-' || nombre WHERE nombre = $1", [original]);
+            const r = await historicos(esc.a);
+            assert.equal(r.status, 200);
+            const ids = r.body.map((e) => e.id);
+            assert.ok(!ids.includes(esc.libre.id) && !ids.includes(esc.deB.id), 'solo tenian guias');
+            assert.ok(ids.includes(esc.fe.id), 'el equipo con una OT propia sigue');
+        } finally {
+            await pool.query("UPDATE schema_migraciones SET nombre = $1 WHERE nombre = 'x-' || $1", [original]);
+        }
+        assert.ok((await pool.query('SELECT 1 FROM schema_migraciones WHERE nombre = $1', [original])).rows.length === 1, 'registro restaurado');
+    });
+
+    test('la fecha de una factura con fecha_emision es el dia de Santiago, no el del servidor', async (t) => {
+        if (!requiereBase(t)) return;
+        const e = (await historicos(esc.a)).body.find((x) => x.id === esc.fe.id);
+        assert.ok(e);
+        // la OT es de hoy; la factura es del 5 de marzo de 2026 y es la fecha mas antigua del equipo
+        assert.equal(new Date(e.primer_documento).toLocaleDateString('en-CA', { timeZone: 'America/Santiago' }), '2026-03-05');
+    });
+});
