@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
@@ -8,7 +9,9 @@ import '../../widgets/dialogos.dart';
 import '../../utils/rut.dart';
 
 class ClientesScreen extends StatefulWidget {
-  const ClientesScreen({super.key});
+  /// Pestaña con la que se abre: 'cuentas' (Cuentas por aprobar) llega desde el menú y el dashboard.
+  final String? pestanaInicial;
+  const ClientesScreen({super.key, this.pestanaInicial});
 
   @override
   State<ClientesScreen> createState() => _ClientesScreenState();
@@ -20,7 +23,13 @@ class _ClientesScreenState extends State<ClientesScreen> with SingleTickerProvid
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _tabController = TabController(length: 2, vsync: this, initialIndex: widget.pestanaInicial == 'cuentas' ? 1 : 0);
+    // el título y el ítem del menú siguen a la pestaña: Cuentas por aprobar es /cuentas y Clientes /clientes
+    _tabController.addListener(() {
+      if (_tabController.indexIsChanging) return;
+      final ruta = _tabController.index == 1 ? '/cuentas' : '/clientes';
+      if (GoRouterState.of(context).uri.path != ruta) context.go(ruta);
+    });
   }
 
   @override

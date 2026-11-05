@@ -1,7 +1,11 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../services/api_client.dart';
+import '../../services/auth_service.dart';
+import '../../services/pendientes_service.dart';
 import '../../theme/gomaq_theme.dart';
+import '../../widgets/bloque_pendientes.dart';
 import '../../widgets/estado_vacio.dart';
 
 class DashboardScreen extends StatefulWidget {
@@ -32,6 +36,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
       _cargando = true;
       _error = null;
     });
+    // los pendientes se piden aparte: si fallan, el bloque muestra su error y el resto del dashboard sigue
+    PendientesService.instance.cargar(forzar: true);
     try {
       // las tres consultas son independientes: en paralelo, cargan en lo que tarda la más lenta
       final r = await Future.wait([
@@ -119,30 +125,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
     if (onTap == null) return Expanded(child: contenido);
     return Expanded(child: InkWell(onTap: onTap, borderRadius: BorderRadius.circular(12), child: contenido));
-  }
-
-  Widget _tarjetaAtajo(String numero, String etiqueta, VoidCallback onTap) {
-    return Expanded(
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: GomaqColors.primario.withValues(alpha: 0.08),
-            borderRadius: BorderRadius.circular(12),
-          ),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(numero, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: GomaqColors.accion)),
-              const SizedBox(height: 4),
-              Text(etiqueta, style: const TextStyle(fontSize: 12, color: Colors.black87)),
-            ],
-          ),
-        ),
-      ),
-    );
   }
 
   // ---------- grafico 1: dona de estado operativo ----------
@@ -399,28 +381,25 @@ class _DashboardScreenState extends State<DashboardScreen> {
   @override
   Widget build(BuildContext context) {
     if (_cargando) return const Center(child: CircularProgressIndicator());
-    if (_error != null) {
-      return EstadoError(titulo: 'No se pudo cargar el dashboard', mensaje: _error!, onReintentar: _cargar);
+    if (_error != null && _resumen == null) {
+      // /resumen falló: los pendientes (otra consulta) se muestran igual, y el resto dice su error
+      return ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          BloquePendientes(compacto: MediaQuery.sizeOf(context).width < 600, onNavegar: widget.onNavegar, rol: context.read<AuthService>().rol),
+          const SizedBox(height: 16),
+          EstadoError(titulo: 'No se pudo cargar el dashboard', mensaje: _error!, onReintentar: _cargar),
+        ],
+      );
     }
 
     final flota = _resumen!['flota'];
-    final atajos = _resumen!['atajos'];
     final ejecutivos = (_ventasPorEjecutivo?['ejecutivos'] as List?) ?? const [];
     final totalVentas = (_ventasPorEjecutivo?['total_general'] as num?) ?? 0;
 
     // En un teléfono (<600 px) los bloques que iban lado a lado se apilan: la leyenda de la dona
     // quedaba de ~40 px (el texto bajaba una letra por línea) y los 4 atajos se cortaban.
     final compacto = MediaQuery.sizeOf(context).width < 600;
-
-    final atajosTarjetas = [
-      // el número cuenta órdenes de reparación sin monto, no equipos
-      _tarjetaAtajo('${atajos['pendientes_facturar']}', 'Reparaciones por valorizar', () => widget.onNavegar('/facturacion', filtro: {'pestana': 'valorizar'})),
-      _tarjetaAtajo('${atajos['solicitudes_pendientes']}', 'Asistencias por atender', () => widget.onNavegar('/asistencias')),
-      // la aprobación de cuentas vive en una pestaña de Clientes: sin este atajo no se veía
-      _tarjetaAtajo('${atajos['cuentas_por_aprobar'] ?? 0}', 'Cuentas por aprobar', () => widget.onNavegar('/clientes')),
-      // con error, o pendientes que llevan más de 10 min sin que el worker los tome (worker caído)
-      _tarjetaAtajo('${(atajos['notificaciones_error'] ?? 0) + (atajos['notificaciones_atrasadas'] ?? 0)}', 'Avisos con problemas', () => widget.onNavegar('/notificaciones')),
-    ];
 
     final panelDona = _panelGrafico(titulo: 'ESTADO OPERATIVO', child: _donaEstadoFlota(flota));
     final panelLinea = _panelGrafico(titulo: 'ÓRDENES DE TRABAJO POR MES', child: _lineaOtsPorMes());
@@ -487,39 +466,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             ),
           const SizedBox(height: 24),
 
-          _tituloSeccion('ATAJOS'),
-          const SizedBox(height: 8),
-          if (compacto)
-            Column(
-              children: [
-                Row(children: [atajosTarjetas[0], const SizedBox(width: 12), atajosTarjetas[1]]),
-                const SizedBox(height: 12),
-                Row(children: [atajosTarjetas[2], const SizedBox(width: 12), atajosTarjetas[3]]),
-              ],
-            )
-          else
-            Row(
-              children: [
-                for (var i = 0; i < atajosTarjetas.length; i++) ...[
-                  if (i > 0) const SizedBox(width: 16),
-                  atajosTarjetas[i],
-                ],
-              ],
-            ),
-          if (((atajos['guias_sin_documento'] ?? 0) as num) > 0) ...[
-            const SizedBox(height: 12),
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () => widget.onNavegar('/guias'),
-                icon: const Icon(Icons.description_outlined, size: 18),
-                label: Text(
-                  '${atajos['guias_sin_documento']} '
-                  '${atajos['guias_sin_documento'] == 1 ? 'guía sin documento' : 'guías sin documento'}: falta adjuntar el PDF',
-                ),
-              ),
-            ),
-          ],
+          BloquePendientes(compacto: compacto, onNavegar: widget.onNavegar, rol: context.read<AuthService>().rol),
           const SizedBox(height: 24),
 
           if (ejecutivos.isNotEmpty) ...[

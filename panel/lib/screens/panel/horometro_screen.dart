@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import '../../services/api_client.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../utils/formato.dart';
 import '../../widgets/dialogos.dart';
+import '../../widgets/estado_vacio.dart';
 import '../../utils/numeros.dart';
 
 /// Horometro y mantencion preventiva (entrevista el jefe de taller/la administrativa, 20-21 julio 2026).
@@ -12,7 +14,10 @@ import '../../utils/numeros.dart';
 ///    la lectura; al registrarla desaparecen de la lista.
 ///  - "Mantencion": los equipos que ya cumplieron el intervalo o estan a 50 h o menos.
 class HorometroScreen extends StatefulWidget {
-  const HorometroScreen({super.key});
+  /// Filtro que llega por la URL desde el dashboard: 'vencida' o 'proxima'. Abre la pestaña
+  /// Mantención y deja solo esos equipos (el mismo criterio con que el dashboard cuenta).
+  final String? filtroInicial;
+  const HorometroScreen({super.key, this.filtroInicial});
 
   @override
   State<HorometroScreen> createState() => _HorometroScreenState();
@@ -25,11 +30,21 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
   int _horasAviso = 50;
   bool _cargando = true;
   String? _error;
+  String? _filtro;
+
+  /// Las alertas con el filtro del dashboard aplicado. Vencida = `vencida`; próxima = por vencer
+  /// y aún no vencida (igual que contarAlertas del backend).
+  List<dynamic> get _alertasVisibles => switch (_filtro) {
+        'vencida' => _alertas.where((e) => e['vencida'] == true).toList(),
+        'proxima' => _alertas.where((e) => e['por_vencer'] == true && e['vencida'] != true).toList(),
+        _ => _alertas,
+      };
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 2, vsync: this);
+    _filtro = (widget.filtroInicial == 'vencida' || widget.filtroInicial == 'proxima') ? widget.filtroInicial : null;
+    _tabController = TabController(length: 2, vsync: this, initialIndex: _filtro != null ? 1 : 0);
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
   }
 
@@ -55,6 +70,9 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
       });
     } on ApiException catch (e) {
       if (mounted) setState(() => _error = e.message);
+    } catch (e) {
+      // sin red o dato inesperado: un mensaje entendible y Reintentar, no una excepción suelta
+      if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -198,19 +216,50 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
   }
 
   Widget _construirAlertas() {
-    if (_alertas.isEmpty) {
-      return _Vacio(
-        icono: Icons.verified_outlined,
-        titulo: 'Ningún equipo necesita mantención',
-        detalle: 'Aparecen aquí al quedar $_horasAviso h o menos para cumplir su intervalo.',
+    final visibles = _alertasVisibles;
+    if (visibles.isEmpty) {
+      return Column(
+        children: [
+          if (_filtro != null) _chipFiltro(0),
+          Expanded(
+            child: _Vacio(
+              icono: Icons.verified_outlined,
+              titulo: _filtro == null ? 'Ningún equipo necesita mantención' : 'Ningún equipo con ese filtro',
+              detalle: 'Aparecen aquí al quedar $_horasAviso h o menos para cumplir su intervalo.',
+            ),
+          ),
+        ],
       );
     }
+    return Column(
+      children: [
+        if (_filtro != null) _chipFiltro(visibles.length),
+        Expanded(child: _listaAlertas(visibles)),
+      ],
+    );
+  }
+
+  /// Aviso de que la lista viene filtrada desde el dashboard, con la salida para ver todas.
+  Widget _chipFiltro(int cantidad) {
+    final texto = _filtro == 'vencida' ? 'vencidas' : 'por vencer';
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(24, 12, 24, 0),
+      child: Row(
+        children: [
+          Expanded(child: Text('Mostrando solo las $texto ($cantidad)', style: const TextStyle(fontSize: 13))),
+          TextButton(onPressed: () => context.go('/mantencion'), child: const Text('Ver todas')),
+        ],
+      ),
+    );
+  }
+
+  Widget _listaAlertas(List<dynamic> visibles) {
     return ListView.separated(
       padding: const EdgeInsets.only(top: 12),
-      itemCount: _alertas.length,
+      itemCount: visibles.length,
       separatorBuilder: (_, _) => const Divider(height: 1),
       itemBuilder: (context, i) {
-        final e = _alertas[i] as Map<String, dynamic>;
+        final e = visibles[i] as Map<String, dynamic>;
         final vencida = e['vencida'] == true;
         final restantes = (e['horas_restantes'] as num?) ?? 0;
         return _filaConAcciones(

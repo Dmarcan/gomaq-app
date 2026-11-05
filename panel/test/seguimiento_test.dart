@@ -81,7 +81,9 @@ void main() {
     });
 
     test('resumenPaso lleva el número de paso y la hora si la hay', () {
-      final texto = resumenPaso(orden);
+      // el reloj se inyecta: con el real, la hora de la fixture deja de ser 'de hoy' al pasar la medianoche
+      final enElMismoDia = DateTime.parse(orden['en_camino_at'] as String).add(const Duration(hours: 1));
+      final texto = resumenPaso(orden, ahora: enElMismoDia);
       expect(texto, startsWith('Paso 4 de 6: Técnico en camino, desde las '));
       expect(resumenPaso({'estado': 'en_terreno', 'llegada_at': null}), 'Paso 5 de 6: Trabajando en tu equipo');
       expect(resumenPaso({'estado': null}), 'Paso 1 de 6: Solicitud recibida');

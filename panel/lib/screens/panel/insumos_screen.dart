@@ -9,7 +9,9 @@ import '../../widgets/estado_vacio.dart';
 import 'descuadres_tab.dart';
 
 class InsumosScreen extends StatefulWidget {
-  const InsumosScreen({super.key});
+  /// Pestaña con la que se abre: 'descuadres' llega desde el dashboard.
+  final String? pestanaInicial;
+  const InsumosScreen({super.key, this.pestanaInicial});
 
   @override
   State<InsumosScreen> createState() => _InsumosScreenState();
@@ -28,7 +30,7 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this);
+    _tabController = TabController(length: 3, vsync: this, initialIndex: switch (widget.pestanaInicial) { 'consumos' => 1, 'descuadres' => 2, _ => 0 });
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
   }
 

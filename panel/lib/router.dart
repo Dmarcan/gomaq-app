@@ -20,6 +20,7 @@ import 'screens/panel/insumos_screen.dart';
 import 'screens/panel/horometro_screen.dart';
 import 'screens/panel/rentabilidad_screen.dart';
 import 'screens/panel/vehiculos_screen.dart';
+import 'utils/pendientes.dart' show destinoConFiltro;
 import 'widgets/estado_vacio.dart';
 
 /// Rutas del panel.
@@ -41,15 +42,17 @@ const List<ItemMenu> itemsMenu = [
   (ruta: '/flota', icono: Icons.local_shipping, etiqueta: 'Flota', grupo: 'Operación'),
   (ruta: '/ordenes', icono: Icons.assignment, etiqueta: 'Órdenes de Trabajo', grupo: 'Operación'),
   (ruta: '/asistencias', icono: Icons.support_agent, etiqueta: 'Asistencias', grupo: 'Operación'),
+  // la mantención se calcula con las lecturas del horómetro; en el menú se llama por lo que se hace con ella
+  (ruta: '/mantencion', icono: Icons.build_circle_outlined, etiqueta: 'Mantención', grupo: 'Operación'),
 
   (ruta: '/insumos', icono: Icons.inventory_2, etiqueta: 'Insumos', grupo: 'Inventario'),
-  (ruta: '/horometro', icono: Icons.timer, etiqueta: 'Horómetro', grupo: 'Inventario'),
   (ruta: '/vehiculos', icono: Icons.local_shipping_outlined, etiqueta: 'Vehículos', grupo: 'Inventario'),
 
   (ruta: '/guias', icono: Icons.description, etiqueta: 'Guías', grupo: 'Comercial'),
   (ruta: '/facturacion', icono: Icons.receipt_long, etiqueta: 'Facturación', grupo: 'Comercial'),
   (ruta: '/costos', icono: Icons.trending_up, etiqueta: 'Costo por equipo', grupo: 'Comercial'),
   (ruta: '/clientes', icono: Icons.people, etiqueta: 'Clientes', grupo: 'Comercial'),
+  (ruta: '/cuentas', icono: Icons.how_to_reg_outlined, etiqueta: 'Cuentas por aprobar', grupo: 'Comercial'),
 
   (ruta: '/notificaciones', icono: Icons.notifications, etiqueta: 'Notificaciones', grupo: 'Administración'),
 ];
@@ -172,9 +175,30 @@ GoRouter construirRouter(AuthService auth) {
           ),
           // Asignación se integró en Órdenes (pestaña "Sin asignar")
           GoRoute(path: '/asignacion', redirect: (_, _) => '/ordenes?pestana=sin_asignar'),
-          GoRoute(path: '/asistencias', builder: (_, _) => const SolicitudesScreen()),
-          GoRoute(path: '/insumos', builder: (_, _) => const InsumosScreen()),
-          GoRoute(path: '/horometro', builder: (_, _) => const HorometroScreen()),
+          GoRoute(
+            path: '/asistencias',
+            // la llave lleva la consulta: llegar con otro filtro desde el dashboard recarga la lista
+            builder: (_, estado) => SolicitudesScreen(
+              key: ValueKey(estado.uri.query),
+              filtroInicial: estado.uri.queryParameters['filtro'],
+            ),
+          ),
+          GoRoute(
+            path: '/insumos',
+            builder: (_, estado) => InsumosScreen(
+              key: ValueKey(estado.uri.query),
+              pestanaInicial: estado.uri.queryParameters['pestana'],
+            ),
+          ),
+          GoRoute(
+            path: '/mantencion',
+            builder: (_, estado) => HorometroScreen(
+              key: ValueKey(estado.uri.query),
+              filtroInicial: estado.uri.queryParameters['filtro'],
+            ),
+          ),
+          // el Horómetro pasó a llamarse Mantención: los enlaces guardados siguen funcionando
+          GoRoute(path: '/horometro', redirect: (_, estado) => destinoConFiltro('/mantencion', estado.uri.queryParameters)),
           GoRoute(path: '/vehiculos', builder: (_, _) => const VehiculosScreen()),
           GoRoute(path: '/guias', builder: (_, _) => const GuiasScreen()),
           GoRoute(
@@ -183,11 +207,20 @@ GoRouter construirRouter(AuthService auth) {
             builder: (_, estado) => FacturacionScreen(
               key: ValueKey(estado.uri.query),
               pestanaInicial: estado.uri.queryParameters['pestana'],
+              filtroInicial: estado.uri.queryParameters['filtro'],
             ),
           ),
           GoRoute(path: '/costos', builder: (_, _) => const RentabilidadScreen()),
           GoRoute(path: '/clientes', builder: (_, _) => const ClientesScreen()),
-          GoRoute(path: '/notificaciones', builder: (_, _) => const NotificacionesScreen()),
+          // Cuentas por aprobar es la segunda pestaña de Clientes, con su propia entrada en el menú
+          GoRoute(path: '/cuentas', builder: (_, _) => const ClientesScreen(pestanaInicial: 'cuentas')),
+          GoRoute(
+            path: '/notificaciones',
+            builder: (_, estado) => NotificacionesScreen(
+              key: ValueKey(estado.uri.query),
+              filtroInicial: estado.uri.queryParameters['filtro'],
+            ),
+          ),
         ],
       ),
     ],

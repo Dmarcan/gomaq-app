@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
@@ -15,7 +16,10 @@ import 'facturacion_screen.dart' show FacturaPendienteDialog;
 /// (día de facturación, hora de corte del despacho y si el día de la recepción cuenta); el
 /// administrativo solo las ve. Cambiar la hora de corte afecta a los despachos nuevos.
 class ArriendosEnCursoTab extends StatefulWidget {
-  const ArriendosEnCursoTab({super.key});
+  /// 'aviso' llega desde el dashboard: solo los arriendos que ya pasaron un corte sin facturar, que son
+  /// los que cuenta el número "Arriendos con aviso".
+  final String? filtroInicial;
+  const ArriendosEnCursoTab({super.key, this.filtroInicial});
 
   @override
   State<ArriendosEnCursoTab> createState() => _ArriendosEnCursoTabState();
@@ -26,10 +30,12 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
   Map<String, dynamic> _config = {};
   bool _cargando = true;
   String? _error;
+  bool _soloConAviso = false;
 
   @override
   void initState() {
     super.initState();
+    _soloConAviso = widget.filtroInicial == 'aviso';
     _cargar();
   }
 
@@ -117,6 +123,19 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
     if (guardado) _cargar();
   }
 
+  /// Aviso de que la lista viene filtrada desde el dashboard, con la salida para ver todos.
+  Widget _encabezadoFiltro(int cantidad) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 4),
+      child: Row(
+        children: [
+          Expanded(child: Text('Arriendos con aviso: $cantidad', style: const TextStyle(fontSize: 13))),
+          TextButton(onPressed: () => context.go('/facturacion?pestana=en_curso'), child: const Text('Ver todos')),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_cargando) return const Center(child: CircularProgressIndicator());
@@ -124,6 +143,7 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
       return EstadoError(titulo: 'No se pudieron cargar los arriendos en curso', mensaje: _error!, onReintentar: _cargar);
     }
     final esGerente = context.watch<AuthService>().esGerente;
+    final visibles = _soloConAviso ? _arriendos.where((a) => a['aviso'] == true).toList() : _arriendos;
     return RefreshIndicator(
       onRefresh: _cargar,
       child: ListView(
@@ -131,13 +151,16 @@ class _ArriendosEnCursoTabState extends State<ArriendosEnCursoTab> {
         children: [
           _tarjetaConfiguracion(esGerente),
           const SizedBox(height: 8),
-          if (_arriendos.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 48),
-              child: Center(child: Text('No hay equipos arrendados en este momento')),
+          if (_soloConAviso) _encabezadoFiltro(visibles.length),
+          if (visibles.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 48),
+              child: Center(
+                child: Text(_soloConAviso ? 'Ningún arriendo con períodos sin facturar' : 'No hay equipos arrendados en este momento'),
+              ),
             )
           else
-            for (final a in _arriendos) _tarjetaArriendo(a as Map<String, dynamic>),
+            for (final a in visibles) _tarjetaArriendo(a as Map<String, dynamic>),
         ],
       ),
     );

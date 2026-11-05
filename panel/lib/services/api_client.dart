@@ -15,6 +15,17 @@ class ApiClient {
   /// para cerrar la sesion y volver al login en vez de dejar la app "muerta".
   static void Function()? onSesionExpirada;
 
+  /// Se invoca tras cada escritura exitosa (POST, PATCH, PUT y subidas): lo que alguien hace cambia los
+  /// pendientes del dashboard y los contadores del menú, y así se actualizan sin que cada pantalla tenga
+  /// que acordarse de avisar. PendientesService lo registra al crearse.
+  static void Function()? alEscribir;
+
+  Future<T> _tras<T>(Future<T> escritura) async {
+    final r = await escritura;
+    alEscribir?.call();
+    return r;
+  }
+
   // URL base vacia por defecto: el backend sirve este mismo build de Flutter Web
   // (server.js) desde el mismo origen que la API, asi que las rutas relativas
   // ('/api/...') apuntan solas al servidor correcto sin importar si se accede por
@@ -54,11 +65,11 @@ class ApiClient {
 
   Future<dynamic> get(String path) => _api.get(path);
   Future<dynamic> post(String path, Map<String, dynamic> body, {Map<String, String>? cabeceras}) =>
-      _api.post(path, body, cabeceras: cabeceras);
+      _tras(_api.post(path, body, cabeceras: cabeceras));
   Future<dynamic> patch(String path, Map<String, dynamic> body, {Map<String, String>? cabeceras}) =>
-      _api.patch(path, body, cabeceras: cabeceras);
+      _tras(_api.patch(path, body, cabeceras: cabeceras));
   Future<dynamic> put(String path, Map<String, dynamic> body, {Map<String, String>? cabeceras}) =>
-      _api.put(path, body, cabeceras: cabeceras);
+      _tras(_api.put(path, body, cabeceras: cabeceras));
 
   /// Subida de archivo (PDF de guia/factura, foto de equipo) via multipart, usando los
   /// campos de texto en [fields]. El archivo es opcional (ej. crear un equipo sin foto todavia).
@@ -68,7 +79,7 @@ class ApiClient {
     String? filename,
     Map<String, String> fields = const {},
   }) =>
-      _api.postMultipart(path, bytes: bytes, filename: filename, fields: fields);
+      _tras(_api.postMultipart(path, bytes: bytes, filename: filename, fields: fields));
 
   Future<dynamic> patchMultipart(
     String path, {
@@ -76,5 +87,5 @@ class ApiClient {
     String? filename,
     Map<String, String> fields = const {},
   }) =>
-      _api.patchMultipart(path, bytes: bytes, filename: filename, fields: fields);
+      _tras(_api.patchMultipart(path, bytes: bytes, filename: filename, fields: fields));
 }

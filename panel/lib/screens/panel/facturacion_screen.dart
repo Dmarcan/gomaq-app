@@ -16,7 +16,10 @@ class FacturacionScreen extends StatefulWidget {
   /// Pestaña con la que se abre: 'valorizar' llega desde el atajo del Dashboard y 'en_curso' abre
   /// los arriendos en curso.
   final String? pestanaInicial;
-  const FacturacionScreen({super.key, this.pestanaInicial});
+
+  /// 'aviso' (con pestana=en_curso) deja solo los arriendos con períodos sin facturar.
+  final String? filtroInicial;
+  const FacturacionScreen({super.key, this.pestanaInicial, this.filtroInicial});
 
   @override
   State<FacturacionScreen> createState() => _FacturacionScreenState();
@@ -96,7 +99,7 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
               ? EstadoError(titulo: 'No se pudo cargar la facturación', mensaje: _error!, onReintentar: _cargar)
               : TabBarView(
                   controller: _tabController,
-                  children: [_construirPorFacturar(), _construirPendienteValorizar(), const ArriendosEnCursoTab()],
+                  children: [_construirPorFacturar(), _construirPendienteValorizar(), ArriendosEnCursoTab(filtroInicial: widget.filtroInicial)],
                 ),
     );
   }

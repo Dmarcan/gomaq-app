@@ -3,7 +3,9 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../router.dart';
 import '../../services/auth_service.dart';
+import '../../services/pendientes_service.dart';
 import '../../theme/gomaq_theme.dart';
+import '../../utils/pendientes.dart';
 import '../../widgets/confirmar_cerrar_sesion.dart';
 
 /// Marco del panel: barra lateral fija y el contenido de la seccion activa.
@@ -33,10 +35,28 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   ItemMenu get _itemActivo => itemsMenu.firstWhere(_esRutaActiva, orElse: () => itemsMenu.first);
 
   @override
+  void initState() {
+    super.initState();
+    // los contadores del menú: se piden al abrir el panel (la caché de 5 minutos evita repetirlo)
+    WidgetsBinding.instance.addPostFrameCallback((_) => PendientesService.instance.cargar());
+  }
+
+  @override
+  void dispose() {
+    // al cerrar sesión no debe quedar el dato de la persona anterior
+    PendientesService.instance.limpiar();
+    super.dispose();
+  }
+
+  @override
   void didUpdateWidget(AdminDashboardScreen oldWidget) {
     super.didUpdateWidget(oldWidget);
     // al cambiar de seccion la key vuelve a ser unica, para que la nueva pantalla cargue
-    if (oldWidget.rutaActual != widget.rutaActual) _refreshKey = UniqueKey();
+    if (oldWidget.rutaActual != widget.rutaActual) {
+      _refreshKey = UniqueKey();
+      // al cambiar de sección se pide de nuevo solo si la caché de 5 minutos ya venció
+      PendientesService.instance.cargar();
+    }
   }
 
   @override
@@ -86,7 +106,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
               IconButton(
                 icon: const Icon(Icons.refresh),
                 tooltip: 'Refrescar',
-                onPressed: () => setState(() => _refreshKey = UniqueKey()),
+                onPressed: () {
+                  PendientesService.instance.cargar(forzar: true);
+                  setState(() => _refreshKey = UniqueKey());
+                },
               ),
             ],
           ),
@@ -203,7 +226,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           onTap: () {
             // en el menú desplegable, elegir una sección también lo cierra
             if (cerrarAlNavegar) Navigator.of(context).maybePop();
-            context.go(item.ruta);
+            context.go(destinoMenu(item.ruta, PendientesService.instance.datos));
           },
           child: Padding(
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
@@ -217,11 +240,37 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     style: TextStyle(color: activo ? Colors.white : Colors.white70, fontSize: 13),
                   ),
                 ),
+                _contador(item.ruta),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// El número de cosas por hacer de una sección, junto a su nombre en el menú. Blanco sobre el naranja
+  /// de acción (5,2:1); el de marca no llega al contraste mínimo con texto blanco.
+  Widget _contador(String ruta) {
+    return ListenableBuilder(
+      listenable: PendientesService.instance,
+      builder: (context, _) {
+        final n = contadorMenu(ruta, PendientesService.instance.datos);
+        if (n <= 0) return const SizedBox.shrink();
+        return Semantics(
+          label: '$n pendientes',
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+            decoration: BoxDecoration(color: GomaqColors.accion, borderRadius: BorderRadius.circular(10)),
+            child: ExcludeSemantics(
+              child: Text(
+                n > 99 ? '99+' : '$n',
+                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+              ),
+            ),
+          ),
+        );
+      },
     );
   }
 

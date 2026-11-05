@@ -152,6 +152,12 @@ class _GuiasScreenState extends State<GuiasScreen> {
       _cargando = true;
       _errorCarga = null;
     });
+    // el Gerente no registra guías: solo ve cuáles faltan de documento (lo que cuenta el dashboard)
+    if (!context.read<AuthService>().esAdministrativo) {
+      await _cargarRecientes();
+      if (mounted) setState(() => _cargando = false);
+      return;
+    }
     _cargarRecientes();
     try {
       await _cargarMaquinarias();
@@ -381,29 +387,73 @@ class _GuiasScreenState extends State<GuiasScreen> {
     }
   }
 
+  /// Las guías ya registradas a las que les falta el PDF. El administrativo puede adjuntarlo; el Gerente
+  /// solo la ve (es la lista a la que lleva el número del dashboard).
+  List<Widget> _seccionFaltaDocumento({required bool puedeAdjuntar}) {
+    if (_errorRecientes != null && _faltaDocumento.isEmpty && !puedeAdjuntar) {
+      return [
+        Text('No se pudo cargar la lista. $_errorRecientes', style: const TextStyle(fontSize: 13)),
+        TextButton(onPressed: _cargarRecientes, child: const Text('Reintentar')),
+      ];
+    }
+    if (_faltaDocumento.isEmpty) return const [];
+    return [
+      Text('FALTA EL DOCUMENTO (${_faltaDocumento.length})',
+          style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: GomaqColors.estadoAdvertencia)),
+      const SizedBox(height: 4),
+      Text(
+        puedeAdjuntar
+            ? 'Estas guías ya asignaron o liberaron el equipo, pero no tienen el PDF.'
+            : 'Estas guías ya asignaron o liberaron el equipo, pero no tienen el PDF. Lo adjunta Administrativo.',
+        style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
+      ),
+      const SizedBox(height: 8),
+      for (final g in _faltaDocumento)
+        ListTile(
+          dense: true,
+          contentPadding: EdgeInsets.zero,
+          leading: Icon(g['tipo'] == 'despacho' ? Icons.north_east : Icons.south_west, color: GomaqColors.estadoAdvertencia),
+          title: Text('${g['tipo'] == 'despacho' ? 'Despacho' : 'Recepción'} · ${g['maquinaria_codigo']}'),
+          subtitle: Text(
+            '${g['cliente_nombre'] ?? 'Sin cliente'} · ${Formato.fechaHora(g['fecha'])}'
+            '${g['registrada_por_nombre'] != null ? ' · registró ${g['registrada_por_nombre']}' : ''}',
+          ),
+          trailing: puedeAdjuntar
+              ? TextButton.icon(
+                  onPressed: () => _adjuntarDocumento(Map<String, dynamic>.from(g as Map)),
+                  icon: const Icon(Icons.attach_file, size: 18),
+                  label: const Text('Adjuntar PDF'),
+                )
+              : null,
+        ),
+      const SizedBox(height: 24),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_cargando) return const Center(child: CircularProgressIndicator());
-    if (_errorCarga != null && _maquinarias.isEmpty) {
+    if (_errorCarga != null && _maquinarias.isEmpty && context.read<AuthService>().esAdministrativo) {
       return EstadoError(titulo: 'No se pudo cargar Guías', mensaje: _errorCarga!, onReintentar: _cargarDatos);
     }
 
     // el registro de guias es exclusivo de Administrativo (backend igual);
     // al Gerente se le explica en vez de mostrarle un formulario que le fallara
     if (!context.watch<AuthService>().esAdministrativo) {
-      return const Center(
-        child: Padding(
-          padding: EdgeInsets.all(32),
+      return SingleChildScrollView(
+        padding: const EdgeInsets.all(24),
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 520),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Icon(Icons.description_outlined, size: 56, color: Colors.grey),
-              SizedBox(height: 16),
-              Text('El registro de guías lo realiza Administrativo', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
-              SizedBox(height: 8),
-              Text(
+              ..._seccionFaltaDocumento(puedeAdjuntar: false),
+              const Icon(Icons.description_outlined, size: 40, color: Colors.grey),
+              const SizedBox(height: 12),
+              const Text('El registro de guías lo realiza Administrativo', style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600)),
+              const SizedBox(height: 8),
+              const Text(
                 'Los días de arriendo calculados a partir de las guías se ven en Facturación y en el perfil de cada equipo.',
-                textAlign: TextAlign.center,
                 style: TextStyle(color: Colors.black54),
               ),
             ],
@@ -419,31 +469,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            if (_faltaDocumento.isNotEmpty) ...[
-              Text('FALTA EL DOCUMENTO (${_faltaDocumento.length})',
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: GomaqColors.estadoAdvertencia)),
-              const SizedBox(height: 4),
-              Text('Estas guías ya asignaron o liberaron el equipo, pero no tienen el PDF.',
-                  style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
-              const SizedBox(height: 8),
-              for (final g in _faltaDocumento)
-                ListTile(
-                  dense: true,
-                  contentPadding: EdgeInsets.zero,
-                  leading: Icon(g['tipo'] == 'despacho' ? Icons.north_east : Icons.south_west, color: GomaqColors.estadoAdvertencia),
-                  title: Text('${g['tipo'] == 'despacho' ? 'Despacho' : 'Recepción'} · ${g['maquinaria_codigo']}'),
-                  subtitle: Text(
-                    '${g['cliente_nombre'] ?? 'Sin cliente'} · ${Formato.fechaHora(g['fecha'])}'
-                    '${g['registrada_por_nombre'] != null ? ' · registró ${g['registrada_por_nombre']}' : ''}',
-                  ),
-                  trailing: TextButton.icon(
-                    onPressed: () => _adjuntarDocumento(Map<String, dynamic>.from(g as Map)),
-                    icon: const Icon(Icons.attach_file, size: 18),
-                    label: const Text('Adjuntar PDF'),
-                  ),
-                ),
-              const SizedBox(height: 24),
-            ],
+            ..._seccionFaltaDocumento(puedeAdjuntar: true),
             const Text('El sistema calcula automáticamente los días de arriendo al cruzar ambos documentos',
                 style: TextStyle(color: Colors.black54)),
             const SizedBox(height: 20),

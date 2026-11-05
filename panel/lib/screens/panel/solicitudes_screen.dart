@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import '../../services/api_client.dart';
 import '../../widgets/estado_chip.dart';
 import '../../widgets/estado_vacio.dart';
 
 class SolicitudesScreen extends StatefulWidget {
-  const SolicitudesScreen({super.key});
+  /// 'pendiente' llega desde el dashboard: solo las asistencias por atender, que son las que ese número cuenta.
+  final String? filtroInicial;
+  const SolicitudesScreen({super.key, this.filtroInicial});
 
   @override
   State<SolicitudesScreen> createState() => _SolicitudesScreenState();
@@ -14,10 +17,12 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
   List<dynamic> _solicitudes = [];
   bool _cargando = true;
   String? _error;
+  bool _soloPendientes = false;
 
   @override
   void initState() {
     super.initState();
+    _soloPendientes = widget.filtroInicial == 'pendiente';
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
   }
 
@@ -27,11 +32,13 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
       _error = null;
     });
     try {
-      final data = await ApiClient.instance.get('/api/solicitudes');
+      final data = await ApiClient.instance.get(_soloPendientes ? '/api/solicitudes?estado=pendiente' : '/api/solicitudes');
       if (!mounted) return;
       setState(() => _solicitudes = data);
     } on ApiException catch (e) {
-      setState(() => _error = e.message);
+      if (mounted) setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -47,6 +54,22 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
     }
+  }
+
+  /// Aviso de que la lista viene filtrada desde el dashboard, con la salida para ver todas.
+  Widget _encabezadoFiltro() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Row(
+        children: [
+          Expanded(child: Text('Asistencias por atender: ${_solicitudes.length}', style: const TextStyle(fontSize: 13))),
+          TextButton(
+            onPressed: () => context.go('/asistencias'),
+            child: const Text('Ver todas'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// Foto que adjuntó el cliente al reportar la falla. La URL viene firmada por el backend
@@ -86,18 +109,22 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
       child: _cargando
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(child: Text('Error: $_error'))
+              ? EstadoError(titulo: 'No se pudieron cargar las asistencias', mensaje: _error!, onReintentar: _cargar)
               : _solicitudes.isEmpty
-                  ? const EstadoVacio(
+                  ? EstadoVacio(
                       icono: Icons.support_agent,
-                      titulo: 'No hay asistencias de clientes',
+                      titulo: _soloPendientes ? 'No hay asistencias por atender' : 'No hay asistencias de clientes',
                       mensaje: 'Cuando un cliente reporte una falla o pida una mantención desde su portal, '
                           'aparecerá aquí para convertirla en orden de trabajo.',
                     )
                   : ListView.builder(
                   padding: const EdgeInsets.all(16),
-                  itemCount: _solicitudes.length,
+                  itemCount: _solicitudes.length + (_soloPendientes ? 1 : 0),
                   itemBuilder: (context, i) {
+                    if (_soloPendientes) {
+                      if (i == 0) return _encabezadoFiltro();
+                      i -= 1;
+                    }
                     final s = _solicitudes[i];
                     return Card(
                       child: Column(
