@@ -107,7 +107,7 @@ class AsignarMecanicoState extends State<AsignarMecanicoDialog> {
                   subtitle: Text(
                     m['ot_abiertas'] == 0 || m['ot_abiertas'] == '0'
                         ? 'Sin OT abiertas'
-                        : '${m['ot_abiertas']} OT abiertas',
+                        : (m['ot_abiertas'].toString() == '1' ? '1 OT abierta' : '${m['ot_abiertas']} OT abiertas'),
                     style: TextStyle(
                       color: (m['ot_abiertas'] == 0 || m['ot_abiertas'] == '0') ? GomaqColors.estadoPositivo : GomaqColors.estadoAdvertencia,
                     ),

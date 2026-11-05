@@ -37,11 +37,45 @@ class Pestanas extends StatelessWidget {
   }
 }
 
-class _Pestana extends StatelessWidget {
+class _Pestana extends StatefulWidget {
   final ItemPestana item;
   final bool activa;
   final VoidCallback onTap;
   const _Pestana({required this.item, required this.activa, required this.onTap});
+
+  @override
+  State<_Pestana> createState() => _PestanaState();
+}
+
+class _PestanaState extends State<_Pestana> {
+  ItemPestana get item => widget.item;
+  bool get activa => widget.activa;
+  VoidCallback get onTap => widget.onTap;
+
+  @override
+  void initState() {
+    super.initState();
+    _mostrarSiActiva();
+  }
+
+  @override
+  void didUpdateWidget(covariant _Pestana anterior) {
+    super.didUpdateWidget(anterior);
+    if (widget.activa && !anterior.activa) _mostrarSiActiva();
+  }
+
+  /// En un teléfono la fila se desplaza: la pestaña elegida no debe quedar cortada al borde.
+  void _mostrarSiActiva() {
+    if (!widget.activa) return;
+    // en el primer cuadro la fila aún no conoce su ancho total: se espera un cuadro más
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        Scrollable.ensureVisible(context, duration: const Duration(milliseconds: 200), alignment: 0.5);
+      });
+      WidgetsBinding.instance.scheduleFrame();
+    });
+  }
 
   @override
   Widget build(BuildContext context) {

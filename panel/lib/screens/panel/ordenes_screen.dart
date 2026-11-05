@@ -383,34 +383,45 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-            child: Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    onChanged: _buscar,
-                    decoration: const InputDecoration(
-                      prefixIcon: Icon(Icons.search),
-                      hintText: 'Buscar por equipo, cliente o motivo...',
-                      isDense: true,
-                    ),
+            child: LayoutBuilder(
+              builder: (context, caja) {
+                final buscador = TextField(
+                  onChanged: _buscar,
+                  decoration: InputDecoration(
+                    prefixIcon: const Icon(Icons.search),
+                    hintText: caja.maxWidth < 600 ? 'Equipo, cliente o motivo' : 'Buscar por equipo, cliente o motivo...',
+                    isDense: true,
                   ),
-                ),
-                if (_pestana == 'todas') ...[
-                  const SizedBox(width: 12),
-                  DropdownButton<String?>(
-                    value: _estadoFiltro,
-                    hint: const Text('Todos los estados'),
-                    items: [
-                      const DropdownMenuItem<String?>(value: null, child: Text('Todos los estados')),
-                      for (final e in _estados) DropdownMenuItem<String?>(value: e, child: Text(GomaqColors.etiquetaEstado(e))),
-                    ],
-                    onChanged: (v) {
-                      setState(() => _estadoFiltro = v);
-                      _cargar();
-                    },
-                  ),
-                ],
-              ],
+                );
+                final selector = DropdownButton<String?>(
+                  value: _estadoFiltro,
+                  isExpanded: caja.maxWidth < 600,
+                  hint: const Text('Todos los estados'),
+                  items: [
+                    const DropdownMenuItem<String?>(value: null, child: Text('Todos los estados')),
+                    for (final e in _estados) DropdownMenuItem<String?>(value: e, child: Text(GomaqColors.etiquetaEstado(e))),
+                  ],
+                  onChanged: (v) {
+                    setState(() => _estadoFiltro = v);
+                    _cargar();
+                  },
+                );
+                final conSelector = _pestana == 'todas';
+                // Bajo 600 px el selector va debajo del buscador: al lado le dejaba unos 150 px al
+                // texto y el aviso de qué se busca quedaba cortado.
+                if (caja.maxWidth < 600) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [buscador, if (conSelector) ...[const SizedBox(height: 8), selector]],
+                  );
+                }
+                return Row(
+                  children: [
+                    Expanded(child: buscador),
+                    if (conSelector) ...[const SizedBox(width: 12), selector],
+                  ],
+                );
+              },
             ),
           ),
           Expanded(child: _estadoDeLaLista()),

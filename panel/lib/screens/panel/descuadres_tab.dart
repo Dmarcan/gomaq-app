@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../../utils/unidades.dart';
 import '../../services/api_client.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../utils/formato.dart';
@@ -65,7 +66,7 @@ class DescuadresTab extends StatelessWidget {
         children: [
           LineaInfo(
             icono: Icons.inventory,
-            texto: 'Falta ${Formato.medida(falta, unidad)} en el furgón. En bodega hay ${Formato.medida(bodega, unidad)}.',
+            texto: 'Falta ${medidaConUnidad(falta, unidad)} en el furgón. En bodega hay ${medidaConUnidad(bodega, unidad)}.',
           ),
           separadorCampos,
           TextFormField(
@@ -144,14 +145,14 @@ class DescuadresTab extends StatelessWidget {
                 'Cantidad contada',
                 obligatorio: true,
                 sufijo: unidad,
-                ayuda: 'El sistema tiene ${Formato.medida(actual, unidad)}.',
+                ayuda: 'El sistema tiene ${medidaConUnidad(actual, unidad)}.',
               ),
               validator: (v) => (parsearNumero(v ?? '') ?? -1) < 0 ? 'Escribe lo que contaste (0 o más).' : null,
             ),
             if (contada != null && contada >= 0) ...[
               const SizedBox(height: 8),
               Text(
-                'Diferencia que se registrará: ${contada - actual >= 0 ? '+' : ''}${formatoCampo(contada - actual)} $unidad',
+                'Diferencia que se registrará: ${contada - actual >= 0 ? '+' : ''}${formatoCampo(contada - actual)} ${unidadSegunCantidad(contada - actual, unidad)}',
                 style: const TextStyle(fontSize: 13),
               ),
             ],
@@ -262,7 +263,7 @@ class DescuadresTab extends StatelessWidget {
                       ),
                       const SizedBox(width: 8),
                       Text(
-                        Formato.medida(parsearNumero('${d['cantidad']}'), unidad),
+                        medidaConUnidad(parsearNumero('${d['cantidad']}'), unidad),
                         style: const TextStyle(color: GomaqColors.estadoNegativo, fontWeight: FontWeight.w700, fontSize: 15),
                       ),
                     ],
@@ -363,7 +364,7 @@ class _MovimientosDelCasoState extends State<_MovimientosDelCaso> {
 
   String _titulo(Map<String, dynamic> m) {
     final ubicacion = widget.descuadre['ubicacion_id'];
-    final cantidad = '${m['cantidad']} ${m['unidad_medida'] ?? ''}'.trim();
+    final cantidad = medidaConUnidad(parsearNumero('${m['cantidad']}'), '${m['unidad_medida'] ?? ''}');
     switch ('${m['tipo']}') {
       case 'ingreso':
         return 'Ingreso de $cantidad';

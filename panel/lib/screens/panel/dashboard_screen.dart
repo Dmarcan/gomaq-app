@@ -428,6 +428,11 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Row(children: [Expanded(child: resumen), botonNuevaOt]),
           const SizedBox(height: 20),
 
+          // Lo accionable va primero: los pendientes quedaban bajo los gráficos, a casi dos pantallas
+          // de scroll en un teléfono.
+          BloquePendientes(compacto: compacto, onNavegar: widget.onNavegar, rol: context.read<AuthService>().rol),
+          const SizedBox(height: 24),
+
           _tituloSeccion('DISPONIBILIDAD COMERCIAL'),
           const SizedBox(height: 8),
           Row(
@@ -464,9 +469,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 Expanded(child: panelLinea),
               ],
             ),
-          const SizedBox(height: 24),
-
-          BloquePendientes(compacto: compacto, onNavegar: widget.onNavegar, rol: context.read<AuthService>().rol),
           const SizedBox(height: 24),
 
           if (ejecutivos.isNotEmpty) ...[
