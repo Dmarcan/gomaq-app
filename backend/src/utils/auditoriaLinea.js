@@ -112,6 +112,27 @@ function validarPrecioUnitario(valor) {
 }
 
 /**
+ * Monto en pesos chilenos: entero, sin signo, sin notacion exponencial. Devuelve el entero, o null si
+ * no es valido. Acepta un entero JSON o un texto de solo digitos.
+ */
+function montoEnteroONulo(valor) {
+    const texto = typeof valor === 'number' ? (Number.isSafeInteger(valor) ? String(valor) : '') : String(valor ?? '').trim();
+    if (!/^\d{1,12}$/.test(texto)) return null;
+    return Number(texto);
+}
+
+/**
+ * Cantidad de una linea de repuesto o de un ingreso: mayor que 0, hasta 2 decimales (litros, metros;
+ * las columnas son NUMERIC(12,2)), sin notacion exponencial. Devuelve el numero o null.
+ */
+function cantidadValidaONulo(valor) {
+    const texto = typeof valor === 'number' ? (Number.isFinite(valor) ? String(valor) : '') : String(valor ?? '').trim();
+    if (!/^\d{1,10}(\.\d{1,2})?$/.test(texto)) return null;
+    const n = Number(texto);
+    return n > 0 ? n : null;
+}
+
+/**
  * Detalle del evento 'factura_anulada': el rastro completo de lo que se borro de `facturas`.
  */
 function detalleFacturaAnulada(factura, { motivoCodigo, motivo }) {
@@ -220,6 +241,6 @@ function debeAnularValorizacion({ valorizacion, antes, despues }) {
 
 module.exports = {
     MOTIVOS_CAMBIO, ETIQUETAS_MOTIVO, MIN_CARACTERES_MOTIVO, MAX_CARACTERES_MOTIVO,
-    mensajeOrdenFacturada, validarPrecioUnitario, esIdPositivo, detalleFacturaAnulada, validarMotivo, evaluarCompuertas, difLinea, cambiaLoFacturable,
+    mensajeOrdenFacturada, validarPrecioUnitario, esIdPositivo, montoEnteroONulo, cantidadValidaONulo, detalleFacturaAnulada, validarMotivo, evaluarCompuertas, difLinea, cambiaLoFacturable,
     debeAnularValorizacion,
 };

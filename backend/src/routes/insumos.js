@@ -3,7 +3,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularFacturableOt } = require('../utils/facturableOt');
 const { avisarPorValorizar, avisarAjusteInventario } = require('../utils/avisos');
-const { evaluarCompuertas, difLinea, debeAnularValorizacion, validarPrecioUnitario, esIdPositivo } = require('../utils/auditoriaLinea');
+const { evaluarCompuertas, difLinea, debeAnularValorizacion, validarPrecioUnitario, esIdPositivo, montoEnteroONulo, cantidadValidaONulo } = require('../utils/auditoriaLinea');
 const { dejarEvento } = require('../utils/eventosOt');
 const { validarTransferencia, validarMotivoAjuste, calcularAjuste, reconstruirDescuadre, MOTIVOS_CONTEO } = require('../utils/stock');
 const { diaSantiago, diasEntre } = require('../utils/diasArriendo');
@@ -99,10 +99,14 @@ router.post('/', verifyToken, requireRole('administrativo'), async (req, res) =>
     if (!nombre || !unidad_medida) {
         return res.status(400).json({ error: 'nombre y unidad_medida son requeridos' });
     }
+    const vacio = costo_unitario === undefined || costo_unitario === null || costo_unitario === '';
+    if (!vacio && montoEnteroONulo(costo_unitario) === null) {
+        return res.status(400).json({ error: 'El costo debe ser un monto entero en pesos, mayor o igual a 0' });
+    }
     try {
         const result = await pool.query(
             `INSERT INTO insumos (nombre, unidad_medida, costo_unitario) VALUES ($1, $2, $3) RETURNING *`,
-            [nombre, unidad_medida, costo_unitario || null]
+            [nombre, unidad_medida, vacio ? null : montoEnteroONulo(costo_unitario)]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {
@@ -114,6 +118,11 @@ router.post('/', verifyToken, requireRole('administrativo'), async (req, res) =>
 // PATCH /api/insumos/:id - editar nombre/unidad/costo
 router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res) => {
     const { nombre, unidad_medida, costo_unitario } = req.body;
+    if (!esIdPositivo(req.params.id)) return res.status(400).json({ error: 'Id de insumo inválido' });
+    const sinCosto = costo_unitario === undefined || costo_unitario === null || costo_unitario === '';
+    if (!sinCosto && montoEnteroONulo(costo_unitario) === null) {
+        return res.status(400).json({ error: 'El costo debe ser un monto entero en pesos, mayor o igual a 0' });
+    }
     try {
         const result = await pool.query(
             `UPDATE insumos SET
@@ -121,7 +130,7 @@ router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res
                 unidad_medida = COALESCE($2, unidad_medida),
                 costo_unitario = COALESCE($3, costo_unitario)
              WHERE id = $4 RETURNING *`,
-            [nombre || null, unidad_medida || null, costo_unitario || null, req.params.id]
+            [nombre || null, unidad_medida || null, sinCosto ? null : montoEnteroONulo(costo_unitario), req.params.id]
         );
         if (result.rows.length === 0) {
             return res.status(404).json({ error: 'Insumo no encontrado' });
@@ -495,8 +504,9 @@ router.get('/por-ubicacion', verifyToken, requireRole('administrativo', 'gerente
 // POST /api/insumos/:id/ingreso - suma stock (compra de insumo)
 router.post('/:id/ingreso', verifyToken, requireRole('administrativo'), async (req, res) => {
     const { cantidad } = req.body;
-    if (!cantidad || isNaN(cantidad) || Number(cantidad) <= 0) {
-        return res.status(400).json({ error: 'Indica una cantidad mayor a 0' });
+    if (!esIdPositivo(req.params.id)) return res.status(400).json({ error: 'Id de insumo inválido' });
+    if (cantidadValidaONulo(cantidad) === null) {
+        return res.status(400).json({ error: 'Indica una cantidad mayor a 0, con hasta 2 decimales' });
     }
     const client = await pool.connect();
     try {
@@ -751,8 +761,8 @@ async function anularValorizacionSiCorresponde(client, req, orden, antes, { tipo
 router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrativo'), async (req, res) => {
     const { insumo_id, cantidad, descripcion, precio_unitario, facturable } = req.body;
     if (!esIdPositivo(req.params.ordenId)) return res.status(400).json({ error: 'Id de orden inválido' });
-    if (!cantidad || isNaN(cantidad) || Number(cantidad) <= 0) {
-        return res.status(400).json({ error: 'Indica una cantidad mayor a 0' });
+    if (cantidadValidaONulo(cantidad) === null) {
+        return res.status(400).json({ error: 'Indica una cantidad mayor a 0, con hasta 2 decimales' });
     }
     // el stock parte de cero y en el papel el repuesto se escribe a mano: se acepta una linea
     // sin catalogo mientras venga descrita

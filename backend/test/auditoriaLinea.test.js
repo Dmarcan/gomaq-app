@@ -2,7 +2,7 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 const {
     MOTIVOS_CAMBIO, ETIQUETAS_MOTIVO, validarMotivo, evaluarCompuertas, difLinea,
-    cambiaLoFacturable, debeAnularValorizacion, mensajeOrdenFacturada, validarPrecioUnitario, detalleFacturaAnulada, esIdPositivo,
+    cambiaLoFacturable, debeAnularValorizacion, mensajeOrdenFacturada, validarPrecioUnitario, detalleFacturaAnulada, esIdPositivo, montoEnteroONulo, cantidadValidaONulo,
 } = require('../src/utils/auditoriaLinea');
 
 describe('lista de motivos', () => {
@@ -278,6 +278,26 @@ describe('esIdPositivo', () => {
     test('rechaza lo demas', () => {
         for (const v of ['0', '-1', '01', '1.5', '1e3', 'abc', '', ' 1', '2147483648', '99999999999', undefined, null, 5]) {
             assert.equal(esIdPositivo(v), false, String(v));
+        }
+    });
+});
+
+describe('montos y cantidades', () => {
+    test('el monto es un entero de pesos: sin decimales, signo, texto ni exponente', () => {
+        assert.equal(montoEnteroONulo(0), 0);
+        assert.equal(montoEnteroONulo('5000'), 5000);
+        assert.equal(montoEnteroONulo(5000), 5000);
+        for (const malo of [1234.5, -5, 'abc', '1e3', '12.5', '', null, undefined, NaN, 1e21, '1000000000000000']) {
+            assert.equal(montoEnteroONulo(malo), null, String(malo));
+        }
+    });
+
+    test('la cantidad acepta hasta 2 decimales (litros, metros) pero no exponente ni cero', () => {
+        assert.equal(cantidadValidaONulo(1), 1);
+        assert.equal(cantidadValidaONulo('0.5'), 0.5);
+        assert.equal(cantidadValidaONulo(2.25), 2.25);
+        for (const mala of [0, '0', -1, '1e3', 1e-7, '1.234', 'abc', '', null, undefined, NaN, Infinity, '99999999999']) {
+            assert.equal(cantidadValidaONulo(mala), null, String(mala));
         }
     });
 });

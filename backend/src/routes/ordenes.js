@@ -8,6 +8,7 @@ const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 const { rutaPerteneceAOrden } = require('../utils/rutaArchivo');
+const { montoEnteroONulo } = require('../utils/auditoriaLinea');
 const {
     dejarEvento, leerUuidTarea, sincronizadoTarde, decidirEventoDiagnostico, decidirEventoAsignacion, esMismoTecnico,
 } = require('../utils/eventosOt');
@@ -823,9 +824,8 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
 // PATCH /api/ordenes-trabajo/:id/valorizacion - gerente aprueba monto (HU-04)
 router.patch('/:id/valorizacion', verifyToken, requireRole('gerente'), async (req, res) => {
     const { valorizacion } = req.body;
-    if (valorizacion === undefined || valorizacion === null || valorizacion === '' || isNaN(valorizacion)
-        || Number(valorizacion) < 0) {
-        return res.status(400).json({ error: 'El monto debe ser mayor o igual a 0' });
+    if (montoEnteroONulo(valorizacion) === null) {
+        return res.status(400).json({ error: 'El monto debe ser un número entero de pesos, mayor o igual a 0' });
     }
     let client = null;
     try {

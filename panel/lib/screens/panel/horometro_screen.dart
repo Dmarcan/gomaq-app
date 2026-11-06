@@ -357,11 +357,31 @@ class _DialogoLecturaState extends State<_DialogoLectura> {
           ),
         ],
       ),
-      alGuardar: () => ApiClient.instance.post('/api/horometro/maquinaria/${widget.equipo['id']}', {
-        'valor': parsearNumero(_valorCtrl.text),
-        'observacion': _obsCtrl.text.trim().isEmpty ? null : _obsCtrl.text.trim(),
-        'reiniciar_contador': _reiniciar,
-      }),
+      alGuardar: () async {
+        final valor = parsearNumero(_valorCtrl.text);
+        final anterior = num.tryParse('${widget.equipo['ultima_lectura'] ?? ''}');
+        // un horómetro no baja, salvo que lo hayan cambiado: un error de tipeo (25 en vez de 250)
+        // escondería una mantención, así que se pregunta antes de guardar
+        if (valor != null && anterior != null && valor < anterior) {
+          final seguir = await showDialog<bool>(
+            context: context,
+            builder: (dialogContext) => AlertDialog(
+              title: const Text('La lectura es menor'),
+              content: Text('Es menor que la última registrada (${Formato.medida(anterior, 'h')}). ¿Guardarla de todos modos?'),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(dialogContext, false), child: const Text('Revisar')),
+                FilledButton(onPressed: () => Navigator.pop(dialogContext, true), child: const Text('Guardar igual')),
+              ],
+            ),
+          );
+          if (seguir != true) throw ApiException(0, 'Revisa la lectura: es menor que la última registrada.');
+        }
+        await ApiClient.instance.post('/api/horometro/maquinaria/${widget.equipo['id']}', {
+          'valor': valor,
+          'observacion': _obsCtrl.text.trim().isEmpty ? null : _obsCtrl.text.trim(),
+          'reiniciar_contador': _reiniciar,
+        });
+      },
     );
   }
 }

@@ -354,6 +354,10 @@ router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (r
         if (v.error) return res.status(400).json({ error: v.error });
         folioNuevo = v.folio;
     }
+    // pesos chilenos enteros, igual que al crear la factura
+    if (monto !== undefined && monto !== null && monto !== '' && !/^\d+$/.test(String(monto).trim())) {
+        return res.status(400).json({ error: 'El monto debe ser un número entero de pesos, sin puntos ni decimales' });
+    }
     const client = await pool.connect();
     try {
         await client.query('BEGIN');

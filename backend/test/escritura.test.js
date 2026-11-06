@@ -2348,7 +2348,7 @@ describe('cambios de lo facturable: respuestas que no cambian y limpieza', () =>
         const ruta = rutaLinea(ot, linea.id);
 
         const agregarSinCantidad = await pedir('POST', `/api/insumos/orden/${ot}`, 'administrativo', { descripcion: 'X' });
-        assert.deepEqual([agregarSinCantidad.status, agregarSinCantidad.body.error], [400, 'Indica una cantidad mayor a 0']);
+        assert.deepEqual([agregarSinCantidad.status, agregarSinCantidad.body.error], [400, 'Indica una cantidad mayor a 0, con hasta 2 decimales']);
         const sinRepuesto = await pedir('POST', `/api/insumos/orden/${ot}`, 'administrativo', { cantidad: 1 });
         assert.deepEqual([sinRepuesto.status, sinRepuesto.body.error], [400, 'Elige un repuesto del catálogo o escribe su descripción']);
         const malFact = await pedir('POST', `/api/insumos/orden/${ot}`, 'administrativo', { cantidad: 1, descripcion: 'X', facturable: 'tal vez' });
@@ -6496,5 +6496,70 @@ describe('portal del cliente: equipos anteriores, casos de la revision', () => {
         assert.ok(e);
         // la OT es de hoy; la factura es del 5 de marzo de 2026 y es la fecha mas antigua del equipo
         assert.equal(new Date(e.primer_documento).toLocaleDateString('en-CA', { timeZone: 'America/Santiago' }), '2026-03-05');
+    });
+});
+
+describe('validacion de dinero y cantidades (hallazgos del QA)', () => {
+    test('corregir el monto de una factura exige pesos enteros', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt();
+        await agregarLinea(ot, { facturable: 'si', precio_unitario: 1000 });
+        await cerrarOt(ot, 1000);
+        await facturarDirecto(ot, 'T-3001');
+        const id = (await pool.query('SELECT id FROM facturas WHERE orden_trabajo_id = $1', [ot])).rows[0].id;
+        for (const malo of [1234.5, -5, 'abc', '1e3']) {
+            const r = await pedir('PATCH', `/api/facturacion/${id}`, 'administrativo', { monto: malo });
+            assert.equal(r.status, 400, String(malo));
+        }
+        assert.equal(Number((await pool.query('SELECT monto FROM facturas WHERE id = $1', [id])).rows[0].monto), 100000);
+        const bien = await pedir('PATCH', `/api/facturacion/${id}`, 'administrativo', { monto: 123456 });
+        assert.equal(bien.status, 200);
+        assert.equal(Number(bien.body.monto), 123456);
+    });
+
+    test('la valorizacion de la OT exige pesos enteros', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt();
+        await agregarLinea(ot, { facturable: 'si', precio_unitario: 1000 });
+        await cerrarOt(ot, null);
+        for (const malo of [5000.5, -10, 'abc', '1e3']) {
+            const r = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/valorizacion`, 'gerente', { valorizacion: malo });
+            assert.equal(r.status, 400, String(malo));
+        }
+        const bien = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/valorizacion`, 'gerente', { valorizacion: 5000 });
+        assert.equal(bien.status, 200);
+    });
+
+    test('crear un insumo valida el costo y conserva el 0', async (t) => {
+        if (!requiereBase(t)) return;
+        const crear = (costo) => pedir('POST', '/api/insumos', 'administrativo', { nombre: `Insumo QA ${Date.now()}`, unidad_medida: 'lt', costo_unitario: costo });
+        for (const malo of [-50, 99.5, 'abc', '1e3']) {
+            assert.equal((await crear(malo)).status, 400, String(malo));
+        }
+        const cero = await crear(0);
+        assert.equal(cero.status, 201);
+        assert.equal(Number(cero.body.costo_unitario), 0);
+        const sin = await crear(undefined);
+        assert.equal(sin.status, 201);
+        assert.equal(sin.body.costo_unitario, null);
+        const mal = await pedir('PATCH', `/api/insumos/${cero.body.id}`, 'administrativo', { costo_unitario: 12.5 });
+        assert.equal(mal.status, 400);
+        await pool.query('DELETE FROM insumos WHERE id = ANY($1)', [[cero.body.id, sin.body.id]]);
+    });
+
+    test('la cantidad de un repuesto acepta litros (2 decimales) pero no exponente', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt();
+        const agregar = (cantidad) => pedir('POST', `/api/insumos/orden/${ot}`, 'administrativo', { cantidad, descripcion: 'Aceite', precio_unitario: 1000 });
+        for (const mala of ['1e3', '1.234', 0, -1, 'abc']) {
+            assert.equal((await agregar(mala)).status, 400, String(mala));
+        }
+        assert.equal((await agregar(0.5)).status, 201);
+    });
+
+    test('un id de insumo no numerico responde 400 y no 500', async (t) => {
+        if (!requiereBase(t)) return;
+        const r = await pedir('POST', '/api/insumos/abc/ingreso', 'administrativo', { cantidad: 1 });
+        assert.equal(r.status, 400);
     });
 });
