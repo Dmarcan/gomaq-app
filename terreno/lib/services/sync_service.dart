@@ -388,6 +388,61 @@ class SyncService extends ChangeNotifier {
     await db.update('cola_sincronizacion', {'ultimo_error': mensaje}, where: 'id = ?', whereArgs: [tareaId]);
   }
 
+  /// Descarta una tarea en error (por ejemplo la de una OT que se reasigno a otro tecnico y
+  /// responde 403 siempre). Sin esto la tarea y la OT ajena quedaban en el telefono para
+  /// siempre, y frenaban las demas tareas de esa orden. Solo borra tareas en 'error'. Tambien
+  /// quita lo local que la tarea habia creado (repuesto, foto u orden nueva) para que no quede
+  /// una linea que parece enviada.
+  Future<void> descartarTarea(int tareaId) async {
+    final db = await _db;
+    final filas = await db.query('cola_sincronizacion', where: "id = ? AND estado = 'error'", whereArgs: [tareaId]);
+    if (filas.isEmpty) return;
+    await db.transaction((txn) => _borrarTareaYLocal(txn, filas.first));
+    notifyListeners();
+    await sincronizar();
+  }
+
+  /// Descarta todas las tareas sin enviar de una orden (pendientes y en error). Para una OT
+  /// reasignada: son varias y cada una solo pasaria a error en una sincronizacion distinta.
+  Future<void> descartarOrden(int ordenId) async {
+    final db = await _db;
+    final filas = await db.query(
+      'cola_sincronizacion',
+      where: "orden_trabajo_id = ? AND estado IN ('pendiente', 'error')",
+      whereArgs: [ordenId],
+    );
+    if (filas.isEmpty) return;
+    await db.transaction((txn) async {
+      for (final fila in filas) {
+        await _borrarTareaYLocal(txn, fila);
+      }
+    });
+    notifyListeners();
+    await sincronizar();
+  }
+
+  Future<void> _borrarTareaYLocal(DatabaseExecutor txn, Map<String, Object?> fila) async {
+    final tipo = fila['tipo'] as String?;
+    final ordenId = fila['orden_trabajo_id'] as int;
+    Map<String, dynamic> payload = {};
+    try {
+      payload = Map<String, dynamic>.from(jsonDecode(fila['payload'] as String) as Map);
+    } catch (_) {}
+    if (tipo == 'evidencia' && payload['evidencia_local_id'] != null) {
+      await txn.delete('evidencias_locales', where: 'id = ?', whereArgs: [payload['evidencia_local_id']]);
+    } else if (tipo == 'insumo' && payload['insumo_local_id'] != null) {
+      await txn.delete('insumos_locales', where: 'id = ?', whereArgs: [payload['insumo_local_id']]);
+    } else if (tipo == 'crear_ot' && ordenId < 0) {
+      // la orden nunca llego al servidor: sus tareas hijas ya no tienen a donde ir
+      await txn.delete('cola_sincronizacion', where: 'orden_trabajo_id = ? AND id != ?', whereArgs: [ordenId, fila['id']]);
+      for (final tabla in ['evidencias_locales', 'insumos_locales', 'ot_servicios_locales', 'tramos_locales']) {
+        await txn.delete(tabla, where: 'orden_trabajo_id = ?', whereArgs: [ordenId]);
+      }
+      await txn.delete('ordenes_locales', where: 'id = ?', whereArgs: [ordenId]);
+    }
+    await txn.delete('cola_sincronizacion', where: 'id = ?', whereArgs: [fila['id']]);
+  }
+
   /// Devuelve las tareas en error al estado pendiente (con reintentos en cero)
   /// y dispara una sincronizacion inmediata.
   Future<void> reintentarErrores() async {
@@ -698,6 +753,19 @@ class SyncService extends ChangeNotifier {
     // para preservar el orden causal (ej. que "finalizar" no se ejecute si la
     // evidencia anterior de la misma OT fue rechazada) - quedan para el proximo push
     final otsConFallo = <int>{};
+
+    // Una tarea que ya quedo en 'error' en un ciclo anterior tambien frena las siguientes de su
+    // OT: antes la consulta solo traia las pendientes, y el cierre (o la evidencia posterior)
+    // pasaba por encima de un repuesto o una foto rechazados. Se libera al reintentar o descartar.
+    final enError = await db.query(
+      'cola_sincronizacion',
+      columns: ['orden_trabajo_id'],
+      where: "estado = 'error'",
+    );
+    for (final fila in enError) {
+      final id = fila['orden_trabajo_id'] as int;
+      if (id != 0) otsConFallo.add(_remapeos[id] ?? id);
+    }
 
     // Traduccion de id local (negativo) a id real, para las OT creadas en terreno sin señal.
     // Hace falta en memoria porque `pendientes` es un snapshot tomado ANTES del bucle: las

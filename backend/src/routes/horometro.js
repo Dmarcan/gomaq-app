@@ -1,10 +1,17 @@
 const express = require('express');
+require('../utils/asyncErrores');
+const { validarIdsEnRuta, validarCuerpo } = require('../utils/validacion');
+
+// NUMERIC(10,1) aguanta mucho mas, pero ningun equipo suma tantas horas: sirve de tope contra
+// Infinity, 1e400 y typos
+const MAX_HORAS = 9999999;
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularEstadoMantencion, requiereAviso, HORAS_AVISO_MANTENCION, cargarAlertasMantencion } = require('../utils/mantencion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 
 const router = express.Router();
+validarIdsEnRuta(router, ['id']);
 
 // Postgres devuelve NUMERIC como string (mismo caso que el COUNT(*) del dashboard):
 // sin esto las horas se concatenarian en vez de restarse.
@@ -68,10 +75,12 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
     const { id } = req.params;
     const { valor, orden_trabajo_id, observacion, reiniciar_contador } = req.body;
 
-    const lectura = Number(valor);
-    if (valor === undefined || valor === null || valor === '' || isNaN(lectura) || lectura < 0) {
+    const lectura = typeof valor === 'number' || typeof valor === 'string' ? Number(valor) : NaN;
+    if (valor === undefined || valor === null || valor === '' || !Number.isFinite(lectura) || lectura < 0 || lectura > MAX_HORAS) {
         return res.status(400).json({ error: 'El horómetro debe ser un número de horas mayor o igual a 0' });
     }
+    const errCuerpo = validarCuerpo(req.body, { textos: { observacion: 5000 }, ids: ['orden_trabajo_id'] });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     const { valido: uuidValido, uuid } = leerUuidCliente(req.body);
     if (!uuidValido) {
         return res.status(400).json({ error: 'uuid_cliente no es un UUID valido' });
@@ -89,14 +98,26 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
     const yaRegistrada = await buscarPorUuid(pool, 'lecturas_horometro', uuid);
     if (yaRegistrada) return responderExistente(yaRegistrada);
 
-    const client = await pool.connect();
+    let client;
     try {
+        client = await pool.connect();
         await client.query('BEGIN');
+
+        // Orden de bloqueo del proyecto: OT -> equipo. Si la lectura trae orden, se bloquea la fila
+        // de la OT antes de la del equipo (el INSERT de la lectura toma KEY SHARE sobre las dos), y
+        // asi no se cruza con un cierre que bloquea la OT y despues pide el equipo.
+        if (orden_trabajo_id && String(orden_trabajo_id) !== '0') {
+            const ot = await client.query('SELECT 1 FROM ordenes_trabajo WHERE id = $1 FOR NO KEY UPDATE', [orden_trabajo_id]);
+            if (ot.rows.length === 0) {
+                await client.query('ROLLBACK');
+                return res.status(400).json({ error: 'La orden de trabajo indicada no existe' });
+            }
+        }
 
         const maquinariaResult = await client.query(
             `SELECT id, codigo, cliente_id, intervalo_mantencion_horas, horometro_ultima_mantencion,
                     alerta_mantencion_enviada
-             FROM maquinarias WHERE id = $1 FOR UPDATE`,
+             FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE`,
             [id]
         );
         const maquinaria = maquinariaResult.rows[0];
@@ -151,7 +172,7 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
             avisos_encolados: avisosEncolados,
         });
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (client) await client.query('ROLLBACK').catch(() => {});
         if (esUuidDuplicado(err)) {
             const existente = await buscarPorUuid(pool, 'lecturas_horometro', uuid);
             if (existente) return responderExistente(existente);
@@ -159,7 +180,7 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
         console.error(err);
         res.status(500).json({ error: 'Error al registrar la lectura de horómetro' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 
@@ -264,12 +285,19 @@ router.get('/alertas', verifyToken, requireRole('gerente', 'administrativo', 'me
 router.post('/maquinaria/:id/reiniciar', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { id } = req.params;
     const { valor } = req.body;
-    const client = await pool.connect();
+    if (valor !== undefined && valor !== null && valor !== '') {
+        const n = typeof valor === 'number' || typeof valor === 'string' ? Number(valor) : NaN;
+        if (!Number.isFinite(n) || n < 0 || n > MAX_HORAS) {
+            return res.status(400).json({ error: 'El horómetro debe ser un número de horas mayor o igual a 0' });
+        }
+    }
+    let client;
     try {
+        client = await pool.connect();
         await client.query('BEGIN');
 
         const maquinariaResult = await client.query(
-            'SELECT id, cliente_id FROM maquinarias WHERE id = $1 FOR UPDATE',
+            'SELECT id, cliente_id FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE',
             [id]
         );
         if (maquinariaResult.rows.length === 0) {
@@ -318,18 +346,19 @@ router.post('/maquinaria/:id/reiniciar', verifyToken, requireRole('administrativ
             horometro_ultima_mantencion: num(actualizada.rows[0].horometro_ultima_mantencion),
         });
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al reiniciar el contador de mantención' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 
 // PATCH /api/horometro/maquinaria/:id/intervalo - ajustar el intervalo de un equipo puntual
 router.patch('/maquinaria/:id/intervalo', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
-    const intervalo = Number(req.body.intervalo_mantencion_horas);
-    if (isNaN(intervalo) || intervalo <= 0) {
+    const bruto = req.body.intervalo_mantencion_horas;
+    const intervalo = typeof bruto === 'number' || typeof bruto === 'string' ? Number(bruto) : NaN;
+    if (!Number.isFinite(intervalo) || intervalo <= 0 || intervalo > MAX_HORAS) {
         return res.status(400).json({ error: 'El intervalo de mantención debe ser mayor a 0 horas' });
     }
     try {

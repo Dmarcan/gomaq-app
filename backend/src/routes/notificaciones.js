@@ -1,10 +1,13 @@
 const express = require('express');
+require('../utils/asyncErrores');
+const { validarIdsEnRuta } = require('../utils/validacion');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { SQL_AVISOS_PROBLEMAS, TIPOS_INTERNOS } = require('../utils/avisos');
 const { envolver } = require('../utils/paginacion');
 
 const router = express.Router();
+validarIdsEnRuta(router, ['id']);
 
 // GET /api/notificaciones - listado (para reenvio manual / seguimiento de errores)
 router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
@@ -34,8 +37,9 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
 // del worker (reinicia intentos y backoff). Solo aplica a las que ya agotaron reintentos.
 router.post('/:id/reintentar', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     if (!/^\d{1,9}$/.test(String(req.params.id))) return res.status(400).json({ error: 'Id de notificación inválido' });
-    const client = await pool.connect();
+    let client;
     try {
+        client = await pool.connect();
         await client.query('BEGIN');
         const actual = await client.query(
             `SELECT id, payload FROM notificaciones_pendientes WHERE id = $1 AND estado = 'error' FOR UPDATE`,
@@ -80,11 +84,11 @@ router.post('/:id/reintentar', verifyToken, requireRole('administrativo', 'geren
         await client.query('COMMIT');
         res.json(result.rows[0]);
     } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
+        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al reintentar la notificación' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 

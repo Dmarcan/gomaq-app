@@ -1,10 +1,13 @@
 const express = require('express');
+require('../utils/asyncErrores');
+const { validarIdsEnRuta, validarCuerpo } = require('../utils/validacion');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 
 const { SQL_CUENTAS_POR_APROBAR } = require('../utils/pendientes');
 
 const router = express.Router();
+validarIdsEnRuta(router, ['id']);
 
 const ROLES_VALIDOS = ['gerente', 'administrativo', 'mecanico', 'cliente'];
 
@@ -57,8 +60,11 @@ router.get('/solicitudes', verifyToken, requireRole('administrativo', 'gerente')
 // POST /api/usuarios/solicitudes/:id/aprobar - crea (o vincula) el cliente y activa la cuenta
 router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { cliente_id } = req.body;
-    const client = await pool.connect();
+    const errCuerpo = validarCuerpo(req.body, { ids: ['cliente_id'] });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
+    let client;
     try {
+        client = await pool.connect();
         await client.query('BEGIN');
 
         // FOR UPDATE dentro de la transaccion: dos aprobaciones concurrentes de la misma
@@ -107,11 +113,11 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
         await client.query('COMMIT');
         res.json({ ok: true, usuario: nuevoUsuario.rows[0] });
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al aprobar la solicitud' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 
@@ -155,6 +161,8 @@ router.get('/mi-perfil', verifyToken, async (req, res) => {
 // El RUT lo pide el bloque de firmas del talonario y se le muestra al cliente en el aviso.
 router.patch('/mi-perfil', verifyToken, async (req, res) => {
     const { rut, telefono_whatsapp } = req.body;
+    const errCuerpo = validarCuerpo(req.body, { textos: { rut: 20, telefono_whatsapp: 30 } });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     if (rut === undefined && telefono_whatsapp === undefined) {
         return res.status(400).json({ error: 'Indique rut y/o telefono_whatsapp' });
     }
@@ -182,6 +190,8 @@ router.patch('/mi-perfil', verifyToken, async (req, res) => {
 // por SSH a editar el .env del servidor.
 router.patch('/:id/alertas', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { recibe_alertas_mantencion, telefono_whatsapp } = req.body;
+    const errCuerpo = validarCuerpo(req.body, { textos: { telefono_whatsapp: 30 } });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     if (recibe_alertas_mantencion === undefined && telefono_whatsapp === undefined) {
         return res.status(400).json({ error: 'Indique recibe_alertas_mantencion y/o telefono_whatsapp' });
     }

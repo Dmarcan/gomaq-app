@@ -24,7 +24,7 @@ const HABILITADO = process.env.GOMAQ_TEST_ESCRITURA === '1' && Boolean(process.e
 let servidor;
 let base;
 let pool;
-const datos = { ordenes: [], insumos: [], equipos: [], ubicaciones: [], solicitudes: [], storage: { subidos: [], borrados: [] } };
+const datos = { ordenes: [], insumos: [], equipos: [], ubicaciones: [], solicitudes: [], clientes: [], storage: { subidos: [], borrados: [] } };
 const tokens = {};
 
 function requiereBase(t) {
@@ -146,6 +146,9 @@ after(async () => {
         await pool.query('DELETE FROM guias WHERE maquinaria_id = ANY($1)', [datos.equipos]);
         await pool.query('DELETE FROM lecturas_horometro WHERE maquinaria_id = ANY($1)', [datos.equipos]);
         await pool.query('DELETE FROM maquinarias WHERE id = ANY($1)', [datos.equipos]);
+    }
+    if (datos.clientes.length) {
+        await pool.query('DELETE FROM clientes WHERE id = ANY($1)', [datos.clientes]);
     }
     await pool.query(
         `DELETE FROM notificaciones_pendientes
@@ -1586,7 +1589,7 @@ async function estadoValorizacion(ot) {
  * UPDATE) o sobre un indice unico de eventos (INSERT INTO ordenes_eventos). Es la forma de saber que
  * una peticion ya esta esperando, sin depender de un tiempo fijo.
  */
-async function esperarBloqueos(n, patron = '%FOR UPDATE%') {
+async function esperarBloqueos(n, patron = '%FOR %UPDATE%') {
     const limite = Date.now() + 10000;
     for (;;) {
         const r = await pool.query(
@@ -3334,7 +3337,7 @@ describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
         assert.equal((await propuesta(d, 'gerente')).status, 200);
         assert.equal((await propuesta(d, 'mecanico')).status, 403);
         assert.equal((await pedir('GET', '/api/facturacion/arriendos/99999999/propuesta', 'administrativo')).status, 404);
-        assert.equal((await pedir('GET', '/api/facturacion/arriendos/abc/propuesta', 'administrativo')).status, 404);
+        assert.equal((await pedir('GET', '/api/facturacion/arriendos/abc/propuesta', 'administrativo')).status, 400);
     });
 
     test('facturar por periodos encadenados hasta el final, sin huecos', async (t) => {
@@ -6560,6 +6563,163 @@ describe('validacion de dinero y cantidades (hallazgos del QA)', () => {
     test('un id de insumo no numerico responde 400 y no 500', async (t) => {
         if (!requiereBase(t)) return;
         const r = await pedir('POST', '/api/insumos/abc/ingreso', 'administrativo', { cantidad: 1 });
+        assert.equal(r.status, 400);
+    });
+});
+
+// ---------------------------------------------------------------------------------------------
+// Concurrencia de guias y orden de bloqueo OT -> equipo (auditoria H6/H7, revision de Codex)
+// ---------------------------------------------------------------------------------------------
+
+async function crearClienteDePrueba(nombre) {
+    const r = await pool.query('INSERT INTO clientes (nombre) VALUES ($1) RETURNING id', [`${nombre} ${crypto.randomUUID().slice(0, 6)}`]);
+    datos.clientes.push(r.rows[0].id);
+    return r.rows[0].id;
+}
+
+const haceDias = (n) => new Date(Date.now() - n * 86400000).toISOString();
+
+async function clienteDelEquipo(id) {
+    return (await pool.query('SELECT cliente_id FROM maquinarias WHERE id = $1', [id])).rows[0].cliente_id;
+}
+
+describe('el cliente del equipo sale de la guia mas reciente por fecha', () => {
+    const guia = (equipo, cuerpo) => pedir('POST', `/api/maquinarias/${equipo}/guias`, 'administrativo', { sin_documento: true, ...cuerpo });
+
+    test('una recepcion atrasada no deja sin cliente a un equipo con un despacho mas nuevo', async (t) => {
+        if (!requiereBase(t)) return;
+        const a = await crearClienteDePrueba('Cliente A');
+        const b = await crearClienteDePrueba('Cliente B');
+        const equipo = await crearEquipo();
+        assert.equal((await guia(equipo.id, { tipo: 'despacho', cliente_id: a, fecha_hora: haceDias(20) })).status, 201);
+        assert.equal((await guia(equipo.id, { tipo: 'despacho', cliente_id: b, fecha_hora: haceDias(1) })).status, 201);
+        assert.equal(await clienteDelEquipo(equipo.id), b);
+        // llega tarde la recepcion que cerraba el arriendo de A, 10 dias atras
+        const recepcion = await guia(equipo.id, { tipo: 'recepcion', fecha_hora: haceDias(10) });
+        assert.equal(recepcion.status, 201);
+        assert.equal(await clienteDelEquipo(equipo.id), b, 'el equipo sigue con B: su despacho es mas nuevo que la recepcion');
+        // la guia de recepcion queda a nombre del cliente que tenia el equipo en SU fecha (A)
+        assert.equal(recepcion.body.cliente_id, a);
+    });
+
+    test('un despacho atrasado no pisa un despacho mas nuevo', async (t) => {
+        if (!requiereBase(t)) return;
+        const a = await crearClienteDePrueba('Cliente A');
+        const b = await crearClienteDePrueba('Cliente B');
+        const equipo = await crearEquipo();
+        assert.equal((await guia(equipo.id, { tipo: 'despacho', cliente_id: b, fecha_hora: haceDias(1) })).status, 201);
+        assert.equal((await guia(equipo.id, { tipo: 'despacho', cliente_id: a, fecha_hora: haceDias(5) })).status, 201);
+        assert.equal(await clienteDelEquipo(equipo.id), b);
+    });
+
+    test('un despacho atrasado no ocupa un equipo cuya ultima guia es una recepcion', async (t) => {
+        if (!requiereBase(t)) return;
+        const a = await crearClienteDePrueba('Cliente A');
+        const equipo = await crearEquipo();
+        assert.equal((await guia(equipo.id, { tipo: 'despacho', cliente_id: a, fecha_hora: haceDias(30) })).status, 201);
+        assert.equal((await guia(equipo.id, { tipo: 'recepcion', fecha_hora: haceDias(1) })).status, 201);
+        assert.equal(await clienteDelEquipo(equipo.id), null);
+        assert.equal((await guia(equipo.id, { tipo: 'despacho', cliente_id: a, fecha_hora: haceDias(10) })).status, 201);
+        assert.equal(await clienteDelEquipo(equipo.id), null, 'la recepcion mas reciente manda');
+    });
+
+    test('una guia fallida no cambia el cliente del equipo', async (t) => {
+        if (!requiereBase(t)) return;
+        const a = await crearClienteDePrueba('Cliente A');
+        const b = await crearClienteDePrueba('Cliente B');
+        const equipo = await crearEquipo();
+        assert.equal((await guia(equipo.id, { tipo: 'despacho', cliente_id: a, fecha_hora: haceDias(5) })).status, 201);
+        assert.equal((await guia(equipo.id, { tipo: 'despacho', cliente_id: b, fecha_hora: haceDias(1), fallido: true })).status, 201);
+        assert.equal(await clienteDelEquipo(equipo.id), a);
+    });
+
+    test('despachos simultaneos a clientes distintos: queda el de la guia con fecha mas reciente', async (t) => {
+        if (!requiereBase(t)) return;
+        const a = await crearClienteDePrueba('Cliente A');
+        const b = await crearClienteDePrueba('Cliente B');
+        for (let i = 0; i < 12; i++) {
+            const equipo = await crearEquipo();
+            // el orden de llegada cambia entre vueltas: la ganadora es siempre la de fecha mas nueva
+            const viejo = () => guia(equipo.id, { tipo: 'despacho', cliente_id: a, fecha_hora: haceDias(2) });
+            const nuevo = () => guia(equipo.id, { tipo: 'despacho', cliente_id: b, fecha_hora: haceDias(1) });
+            const resultados = await Promise.all(i % 2 === 0 ? [viejo(), nuevo()] : [nuevo(), viejo()]);
+            assert.deepEqual(resultados.map((r) => r.status), [201, 201], `vuelta ${i}`);
+            assert.equal(await clienteDelEquipo(equipo.id), b, `vuelta ${i}`);
+        }
+    });
+
+    test('la guia espera si otra transaccion tiene bloqueado el equipo', async (t) => {
+        if (!requiereBase(t)) return;
+        const a = await crearClienteDePrueba('Cliente A');
+        const equipo = await crearEquipo();
+        const otra = await pool.connect();
+        try {
+            await otra.query('BEGIN');
+            await otra.query('SELECT 1 FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE', [equipo.id]);
+            let terminada = false;
+            const pendiente = guia(equipo.id, { tipo: 'despacho', cliente_id: a }).then((r) => { terminada = true; return r; });
+            await esperarBloqueos(1, '%FROM maquinarias%');
+            assert.equal(terminada, false, 'la guia no debe avanzar mientras el equipo esta bloqueado');
+            await otra.query('COMMIT');
+            assert.equal((await pendiente).status, 201);
+        } finally {
+            otra.release();
+        }
+        assert.equal(await clienteDelEquipo(equipo.id), a);
+    });
+});
+
+describe('orden de bloqueo OT -> equipo sin ciclos', () => {
+    test('un cierre de OT y una lectura de horometro con esa OT no se bloquean entre si', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo();
+        const ot = await crearOt('en_terreno', datos.mecanicoId, equipo.id);
+        const otra = await pool.connect();
+        try {
+            // esta transaccion hace lo que hace una lectura de horometro: toma el equipo y despues
+            // inserta una lectura que apunta a la OT (KEY SHARE sobre la OT)
+            await otra.query('BEGIN');
+            await otra.query('SELECT 1 FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE', [equipo.id]);
+            // el cierre toma la OT y pide el equipo: queda esperando a la transaccion de arriba
+            const cierre = pedir('PATCH', `/api/ordenes-trabajo/${ot}/finalizar`, 'mecanico', { sin_persona: true });
+            await esperarBloqueos(1, '%FROM maquinarias%');
+            // con FOR UPDATE sobre la OT esto formaba un ciclo (deadlock); con FOR NO KEY UPDATE no
+            await otra.query(
+                `INSERT INTO lecturas_horometro (maquinaria_id, valor, origen, orden_trabajo_id, usuario_id)
+                 VALUES ($1, 10, 'panel', $2, $3)`,
+                [equipo.id, ot, datos.mecanicoId]
+            );
+            await otra.query('COMMIT');
+            const r = await cierre;
+            assert.equal(r.status, 200, JSON.stringify(r.body));
+        } finally {
+            await otra.query('ROLLBACK').catch(() => {});
+            otra.release();
+        }
+    });
+
+    test('dos mecanicos abriendo una OT en terreno sobre el mismo equipo a la vez no se bloquean', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo();
+        const usados = [];
+        for (let vuelta = 0; vuelta < 8; vuelta++) {
+            const abrir = (rol) => {
+                const uuid = crypto.randomUUID();
+                return pedir('POST', '/api/ordenes-trabajo/en-terreno', rol, { maquinaria_id: equipo.id, uuid_cliente: uuid });
+            };
+            const rs = await Promise.all([abrir('mecanico'), abrir('mecanicoDos'), abrir('mecanico'), abrir('mecanicoDos')]);
+            for (const r of rs) {
+                assert.equal(r.status, 201, `vuelta ${vuelta}: ${JSON.stringify(r.body)}`);
+                usados.push(r.body.id);
+            }
+        }
+        datos.ordenes.push(...usados);
+    });
+
+    test('una lectura de horometro con una OT que no existe responde 400', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await crearEquipo();
+        const r = await pedir('POST', `/api/horometro/maquinaria/${equipo.id}`, 'administrativo', { valor: 5, orden_trabajo_id: 2000000000 });
         assert.equal(r.status, 400);
     });
 });

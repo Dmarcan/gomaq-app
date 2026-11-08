@@ -1,4 +1,5 @@
 const express = require('express');
+require('../utils/asyncErrores');
 const bcrypt = require('bcryptjs');
 const pool = require('../config/db');
 

@@ -1,4 +1,6 @@
 const express = require('express');
+require('../utils/asyncErrores');
+const { validarIdsEnRuta } = require('../utils/validacion');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { verificarDuenoOrden, MENSAJE_OT_CERRADA } = require('../utils/ordenes');
@@ -7,6 +9,7 @@ const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/id
 const { rutaArchivo, rutaPerteneceAOrden } = require('../utils/rutaArchivo');
 
 const router = express.Router();
+validarIdsEnRuta(router, ['id']);
 
 // POST /api/ordenes-trabajo/:id/evidencia/solicitar-upload
 // Genera una URL prefirmada de Supabase Storage para que el celular suba la foto directo

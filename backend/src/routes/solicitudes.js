@@ -1,4 +1,6 @@
 const express = require('express');
+require('../utils/asyncErrores');
+const { validarIdsEnRuta, validarCuerpo } = require('../utils/validacion');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaImagen } = require('../middleware/upload');
@@ -9,6 +11,7 @@ const { dejarEvento } = require('../utils/eventosOt');
 const { origenDeCliente } = require('../utils/estadoEquipo');
 
 const router = express.Router();
+validarIdsEnRuta(router, ['id']);
 
 const TIPOS_VALIDOS = ['falla', 'mantencion_preventiva'];
 const URL_EXPIRACION_SEGUNDOS = 3600;
@@ -27,6 +30,8 @@ async function conUrlFirmada(filas) {
 // POST /api/solicitudes - el cliente reporta una falla o pide mantencion sobre su propia maquinaria
 router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archivo'), async (req, res) => {
     const { maquinaria_id, descripcion, tipo } = req.body;
+    const errCuerpo = validarCuerpo(req.body, { textos: { descripcion: 2000, tipo: 50 }, ids: ['maquinaria_id'] });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     if (!maquinaria_id || !descripcion) {
         return res.status(400).json({ error: 'maquinaria_id y descripcion son requeridos' });
     }

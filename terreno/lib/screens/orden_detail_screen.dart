@@ -159,8 +159,13 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
 
   void _avisarGuardado() {
     if (!mounted) return;
+    final online = context.read<ConnectivityService>().online;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Guardado localmente, se sincroniza cuando haya señal')),
+      SnackBar(
+        content: Text(online
+            ? 'Guardado, enviando al servidor'
+            : 'Guardado en el teléfono, se enviará cuando haya señal'),
+      ),
     );
   }
 

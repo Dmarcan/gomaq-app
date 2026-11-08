@@ -1,4 +1,6 @@
 const express = require('express');
+require('../utils/asyncErrores');
+const { validarCuerpo } = require('../utils/validacion');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 
@@ -18,6 +20,8 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo'), async (re
 // POST /api/ejecutivos - crear ejecutivo
 router.post('/', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
     const { nombre } = req.body;
+    const errCuerpo = validarCuerpo(req.body, { textos: { nombre: 150 } });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     if (!nombre) {
         return res.status(400).json({ error: 'nombre es requerido' });
     }

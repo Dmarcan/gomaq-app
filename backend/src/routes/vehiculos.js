@@ -1,27 +1,20 @@
 const express = require('express');
+require('../utils/asyncErrores');
+const { validarIdsEnRuta, validarCuerpo } = require('../utils/validacion');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { rutaArchivo } = require('../utils/rutaArchivo');
-const multer = require('multer');
+const { subidaDocumento } = require('../middleware/upload');
 
 const router = express.Router();
+validarIdsEnRuta(router, ['id']);
 
 const URL_EXPIRACION_SEGUNDOS = 3600;
 const TIPOS_DOCUMENTO = ['permiso_circulacion', 'revision_tecnica', 'seguro', 'padron', 'otro'];
 
 // El documento de un vehiculo puede ser un PDF (permiso de circulacion) o una foto del papel,
-// asi que se aceptan ambos. Mismo tope que el resto de las subidas.
-const subidaDocumento = multer({
-    storage: multer.memoryStorage(),
-    limits: { fileSize: 10 * 1024 * 1024, files: 1 },
-    fileFilter: (req, file, cb) => {
-        if (file.mimetype === 'application/pdf' || file.mimetype.startsWith('image/')) return cb(null, true);
-        const err = new multer.MulterError('LIMITE_TIPO_ARCHIVO');
-        err.message = 'El documento debe ser un PDF o una imagen';
-        cb(err);
-    },
-});
+// asi que se aceptan ambos (middleware/upload.js, que ademas comprueba el contenido real).
 
 async function documentosConUrl(vehiculoId) {
     const result = await pool.query(
@@ -59,8 +52,8 @@ router.patch('/mio', verifyToken, requireRole('mecanico'), async (req, res) => {
     if (kilometraje === undefined) {
         return res.status(400).json({ error: 'Indica el kilometraje' });
     }
-    const km = Number(kilometraje);
-    if (isNaN(km) || km < 0) {
+    const km = typeof kilometraje === 'number' || typeof kilometraje === 'string' ? Number(kilometraje) : NaN;
+    if (!Number.isFinite(km) || km < 0 || km > 2147483647) {
         return res.status(400).json({ error: 'El kilometraje debe ser un número mayor o igual a 0' });
     }
     try {
@@ -99,11 +92,17 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
 // Un vehiculo sin mecanico (el furgon de compras, que no sale a terreno) no lleva stock.
 router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { patente, marca, modelo, anio, tipo, kilometraje, usuario_id } = req.body;
-    if (!patente || !patente.trim()) {
+    const errCuerpo = validarCuerpo(req.body, { textos: { marca: 100, modelo: 100, tipo: 50 }, ids: ['usuario_id'], numeros: { anio: [1900, 2200], kilometraje: [0, 2147483647] } });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
+    if (!patente || typeof patente !== 'string' || !patente.trim()) {
         return res.status(400).json({ error: 'patente es requerida' });
     }
-    const client = await pool.connect();
+    if (patente.trim().length > 15) {
+        return res.status(400).json({ error: 'patente puede tener hasta 15 caracteres' });
+    }
+    let client;
     try {
+        client = await pool.connect();
         await client.query('BEGIN');
         const result = await client.query(
             `INSERT INTO vehiculos (patente, marca, modelo, anio, tipo, kilometraje, usuario_id)
@@ -126,22 +125,25 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
         await client.query('COMMIT');
         res.status(201).json(vehiculo);
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (client) await client.query('ROLLBACK').catch(() => {});
         if (err.code === '23505') {
             return res.status(409).json({ error: 'Ya existe un vehículo con esa patente, o ese mecánico ya tiene uno' });
         }
         console.error(err);
         res.status(500).json({ error: 'Error al crear el vehículo' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 
 // PATCH /api/vehiculos/:id - editar datos o reasignar el vehiculo
 router.patch('/:id', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { marca, modelo, anio, tipo, kilometraje, usuario_id, activo } = req.body;
-    const client = await pool.connect();
+    const errCuerpo = validarCuerpo(req.body, { textos: { marca: 100, modelo: 100, tipo: 50 }, ids: ['usuario_id'], numeros: { anio: [1900, 2200], kilometraje: [0, 2147483647] } });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
+    let client;
     try {
+        client = await pool.connect();
         await client.query('BEGIN');
         // `usuario_id` NO puede ir por COALESCE: el panel ofrece "Sin asignar" y mandar null
         // con COALESCE conservaba el valor anterior, asi que desasignar un furgon no hacia
@@ -182,14 +184,14 @@ router.patch('/:id', verifyToken, requireRole('administrativo', 'gerente'), asyn
         await client.query('COMMIT');
         res.json(vehiculo);
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (client) await client.query('ROLLBACK').catch(() => {});
         if (err.code === '23505') {
             return res.status(409).json({ error: 'Ese mecánico ya tiene un vehículo asignado' });
         }
         console.error(err);
         res.status(500).json({ error: 'Error al actualizar el vehículo' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 

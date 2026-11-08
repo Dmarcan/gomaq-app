@@ -28,6 +28,7 @@ Future<void> _abrirRetiro(
                 codigo: 'EQ-12',
                 clienteActual: 'ACSA',
                 enviar: enviar,
+                leerUltimaLectura: (_) async => null,
               );
               resultado?.add(r);
             },

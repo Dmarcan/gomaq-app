@@ -8,6 +8,7 @@ import '../../utils/efecto_guia.dart';
 import '../../utils/enlaces.dart';
 import '../../utils/formato.dart';
 import '../../utils/motivo_cambio.dart' show nuevoUuid;
+import '../../widgets/confirmar_horometro.dart';
 import '../../widgets/estado_vacio.dart';
 
 /// Mismo tope que aplica el backend (middleware/upload.js).
@@ -308,6 +309,11 @@ class _GuiasScreenState extends State<GuiasScreen> {
       );
       return;
     }
+    if (horometro != null &&
+        !await confirmarHorometroMenor(context, maquinariaId: _seleccionada!['id'] as int, valor: num.tryParse(horometro))) {
+      return;
+    }
+    if (!mounted) return;
     setState(() => _subiendo = true);
     try {
       final respuesta = await ApiClient.instance.postMultipart(

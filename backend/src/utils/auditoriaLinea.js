@@ -1,3 +1,4 @@
+const { MAX_MONTO_PESOS } = require('./validacion');
 // Reglas de los cambios a las lineas de repuesto de una OT (bloque 1b).
 //
 // Una linea es lo que se cobra: agregarla, anularla o corregir su facturable, cantidad o precio
@@ -105,8 +106,8 @@ function evaluarCompuertas({ estado, facturaFolio = null, motivoCodigo, motivo }
 function validarPrecioUnitario(valor) {
     if (valor === undefined || valor === null || valor === '') return null;
     const n = typeof valor === 'string' ? (valor.trim() === '' ? NaN : Number(valor)) : valor;
-    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) {
-        return 'precio_unitario debe ser un monto entero en pesos, mayor o igual a 0';
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0 || n > MAX_MONTO_PESOS) {
+        return 'precio_unitario debe ser un monto entero en pesos, mayor o igual a 0 y de hasta 10 dígitos';
     }
     return null;
 }
@@ -117,7 +118,7 @@ function validarPrecioUnitario(valor) {
  */
 function montoEnteroONulo(valor) {
     const texto = typeof valor === 'number' ? (Number.isSafeInteger(valor) ? String(valor) : '') : String(valor ?? '').trim();
-    if (!/^\d{1,12}$/.test(texto)) return null;
+    if (!/^\d{1,10}$/.test(texto)) return null;
     return Number(texto);
 }
 

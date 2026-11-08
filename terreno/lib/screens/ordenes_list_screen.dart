@@ -70,7 +70,12 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
     if (!mounted) return;
     final termino = _syncEnCurso && !_sync.sincronizando;
     _syncEnCurso = _sync.sincronizando;
-    if (termino) _cargarLocal();
+    if (termino) {
+      _cargarLocal();
+    } else {
+      // para mostrar o quitar el aviso de carga inicial
+      setState(() {});
+    }
   }
 
   @override
@@ -204,6 +209,31 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
                     leading: const Icon(Icons.error_outline, color: GomaqColors.estadoNegativo),
                     title: Text(_describirTarea(t)),
                     subtitle: Text('${t['ultimo_error'] ?? 'Error desconocido'}', maxLines: 3, overflow: TextOverflow.ellipsis),
+                    trailing: t['estado'] == 'error'
+                        ? TextButton(
+                            onPressed: () async {
+                              final ok = await showDialog<bool>(
+                                context: dialogContext,
+                                builder: (c) => AlertDialog(
+                                  title: const Text('Descartar este cambio'),
+                                  content: Text(
+                                    '${_describirTarea(t)}\n\nSe borra del teléfono y no se enviará al servidor. Esta acción no se puede deshacer.',
+                                  ),
+                                  actions: [
+                                    TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancelar')),
+                                    FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Descartar')),
+                                  ],
+                                ),
+                              );
+                              if (ok != true) return;
+                              await syncService.descartarTarea(t['id'] as int);
+                              if (dialogContext.mounted) Navigator.pop(dialogContext);
+                              await _cargarLocal();
+                              if (mounted) _mostrarErroresDeSync();
+                            },
+                            child: const Text('Descartar'),
+                          )
+                        : null,
                   ),
               ],
             ),
@@ -211,6 +241,37 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(dialogContext), child: const Text('Cerrar')),
+          // una orden reasignada tiene varias tareas frenadas: descartarlas una a una tomaria una
+          // sincronizacion por cada una
+          if (tareas.any((t) => t['estado'] == 'error'))
+            TextButton(
+              onPressed: () async {
+                final ok = await showDialog<bool>(
+                  context: dialogContext,
+                  builder: (c) => AlertDialog(
+                    title: const Text('Descartar todo lo de las órdenes con error'),
+                    content: const Text(
+                      'Se borran del teléfono todos los cambios sin enviar de las órdenes que tienen un error. No se enviarán al servidor. Esta acción no se puede deshacer.',
+                    ),
+                    actions: [
+                      TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('Cancelar')),
+                      FilledButton(onPressed: () => Navigator.pop(c, true), child: const Text('Descartar todo')),
+                    ],
+                  ),
+                );
+                if (ok != true) return;
+                final ordenes = {
+                  for (final t in tareas)
+                    if (t['estado'] == 'error') t['orden_trabajo_id'] as int,
+                };
+                for (final id in ordenes) {
+                  await syncService.descartarOrden(id);
+                }
+                if (dialogContext.mounted) Navigator.pop(dialogContext);
+                await _cargarLocal();
+              },
+              child: const Text('Descartar todo'),
+            ),
           FilledButton(
             onPressed: () async {
               Navigator.pop(dialogContext);
@@ -422,7 +483,18 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
             onTapErrores: _mostrarErroresDeSync,
           ),
           Expanded(
-            child: _ordenes.isEmpty
+            child: _ordenes.isEmpty && _sync.sincronizando && _sync.ultimaSincronizacion == null
+                ? const Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        CircularProgressIndicator(),
+                        SizedBox(height: 12),
+                        Text('Cargando tus órdenes...', style: TextStyle(color: GomaqColors.textoSecundario)),
+                      ],
+                    ),
+                  )
+                : _ordenes.isEmpty
                 ? const Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,

@@ -1,4 +1,7 @@
 const express = require('express');
+require('../utils/asyncErrores');
+const { montoEnteroONulo } = require('../utils/auditoriaLinea');
+const { validarIdsEnRuta } = require('../utils/validacion');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf } = require('../middleware/upload');
@@ -15,6 +18,7 @@ const { detectarCliente } = require('../utils/detectarCliente');
 const { parsearFactura } = require('../utils/parsearDocumento');
 
 const router = express.Router();
+validarIdsEnRuta(router, ['facturaId', 'guiaDespachoId']);
 
 // un monto 0 es un monto valido: `monto || null` lo convertia en nulo
 const montoONulo = (v) => (v === undefined || v === null || v === '' ? null : v);
@@ -170,8 +174,8 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
         return res.status(400).json({ error: 'periodo_desde y periodo_hasta son requeridos (AAAA-MM-DD)' });
     }
     // pesos chilenos enteros: sin puntos, decimales ni signo (el panel ya manda un entero)
-    if (monto !== undefined && monto !== null && monto !== '' && !/^\d+$/.test(String(monto).trim())) {
-        return res.status(400).json({ error: 'El monto debe ser un número entero de pesos, sin puntos ni decimales' });
+    if (monto !== undefined && monto !== null && monto !== '' && montoEnteroONulo(monto) === null) {
+        return res.status(400).json({ error: 'El monto debe ser un número entero de pesos, sin puntos ni decimales, de hasta 10 dígitos' });
     }
     const idOrigen = Number(conPeriodo ? guia_despacho_id : guia_recepcion_id);
     if (!Number.isInteger(idOrigen) || idOrigen <= 0) {
@@ -291,8 +295,9 @@ router.put('/configuracion', verifyToken, requireRole('gerente'), async (req, re
     // guardan ni cambian quien/cuando: un PUT con solo ellas responde 200 con la configuracion vigente
     const vigentes = Object.entries(valores).filter(([clave]) => !CLAVES_OBSOLETAS.has(clave));
     if (vigentes.length === 0) return res.json(await leerConfiguracion(pool));
-    const client = await pool.connect();
+    let client;
     try {
+        client = await pool.connect();
         await client.query('BEGIN');
         for (const [clave, valor] of vigentes) {
             await client.query(
@@ -305,11 +310,11 @@ router.put('/configuracion', verifyToken, requireRole('gerente'), async (req, re
         await client.query('COMMIT');
         res.json(await leerConfiguracion(pool));
     } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
+        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al guardar la configuración' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 
@@ -355,11 +360,12 @@ router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (r
         folioNuevo = v.folio;
     }
     // pesos chilenos enteros, igual que al crear la factura
-    if (monto !== undefined && monto !== null && monto !== '' && !/^\d+$/.test(String(monto).trim())) {
-        return res.status(400).json({ error: 'El monto debe ser un número entero de pesos, sin puntos ni decimales' });
+    if (monto !== undefined && monto !== null && monto !== '' && montoEnteroONulo(monto) === null) {
+        return res.status(400).json({ error: 'El monto debe ser un número entero de pesos, sin puntos ni decimales, de hasta 10 dígitos' });
     }
-    const client = await pool.connect();
+    let client;
     try {
+        client = await pool.connect();
         await client.query('BEGIN');
         // se bloquea la fila: serializa con encolarCorreoFactura (que tambien la bloquea), asi un envio no
         // puede colarse entre la revision de abajo y el UPDATE
@@ -383,11 +389,11 @@ router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (r
         await client.query('COMMIT');
         res.json(result.rows[0]);
     } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
+        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al actualizar la factura' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 

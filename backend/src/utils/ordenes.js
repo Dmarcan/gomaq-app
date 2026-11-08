@@ -4,11 +4,11 @@ const { mecanicoPuedeEditar } = require('./estadosOt');
 
 // verifica que una orden de trabajo exista y pertenezca al mecanico dado. Devuelve tambien el
 // estado y si el mecanico todavia puede modificarla (no, una vez finalizada).
-// `db` es el cliente de una transaccion en curso, y `bloquear` toma la fila con FOR UPDATE: lo usa
+// `db` es el cliente de una transaccion en curso, y `bloquear` toma la fila con FOR NO KEY UPDATE (no FOR UPDATE: ver utils/estadoEquipo.js): lo usa
 // quien necesita que el estado leido siga siendo el real hasta el COMMIT (ver /diagnostico).
 async function verificarDuenoOrden(ordenId, mecanicoId, { db = pool, bloquear = false } = {}) {
     const result = await db.query(
-        `SELECT mecanico_id, estado, fecha_creacion, uuid_cliente FROM ordenes_trabajo WHERE id = $1${bloquear ? ' FOR UPDATE' : ''}`,
+        `SELECT mecanico_id, estado, fecha_creacion, uuid_cliente FROM ordenes_trabajo WHERE id = $1${bloquear ? ' FOR NO KEY UPDATE' : ''}`,
         [ordenId]
     );
     if (result.rows.length === 0) return { existe: false };

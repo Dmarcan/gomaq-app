@@ -1,8 +1,10 @@
 const express = require('express');
+require('../utils/asyncErrores');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularFacturableOt } = require('../utils/facturableOt');
 const { avisarPorValorizar, avisarAjusteInventario } = require('../utils/avisos');
+const { textoInvalido, validarIdsEnRuta, validarCuerpo } = require('../utils/validacion');
 const { evaluarCompuertas, difLinea, debeAnularValorizacion, validarPrecioUnitario, esIdPositivo, montoEnteroONulo, cantidadValidaONulo } = require('../utils/auditoriaLinea');
 const { dejarEvento } = require('../utils/eventosOt');
 const { validarTransferencia, validarMotivoAjuste, calcularAjuste, reconstruirDescuadre, MOTIVOS_CONTEO } = require('../utils/stock');
@@ -12,6 +14,7 @@ const { parsearPaginacion, envolver } = require('../utils/paginacion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 
 const router = express.Router();
+validarIdsEnRuta(router, ['id', 'ordenId', 'lineaId']);
 
 const num = (v) => (v === null || v === undefined ? null : Number(v));
 
@@ -96,6 +99,8 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
 // POST /api/insumos - crear item de catalogo
 router.post('/', verifyToken, requireRole('administrativo'), async (req, res) => {
     const { nombre, unidad_medida, costo_unitario } = req.body;
+    const errCuerpo = validarCuerpo(req.body, { textos: { nombre: 150, unidad_medida: 20 } });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     if (!nombre || !unidad_medida) {
         return res.status(400).json({ error: 'nombre y unidad_medida son requeridos' });
     }
@@ -118,6 +123,8 @@ router.post('/', verifyToken, requireRole('administrativo'), async (req, res) =>
 // PATCH /api/insumos/:id - editar nombre/unidad/costo
 router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res) => {
     const { nombre, unidad_medida, costo_unitario } = req.body;
+    const errCuerpo = validarCuerpo(req.body, { textos: { nombre: 150, unidad_medida: 20 } });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     if (!esIdPositivo(req.params.id)) return res.status(400).json({ error: 'Id de insumo inválido' });
     const sinCosto = costo_unitario === undefined || costo_unitario === null || costo_unitario === '';
     if (!sinCosto && montoEnteroONulo(costo_unitario) === null) {
@@ -144,8 +151,9 @@ router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res
 
 // GET /api/insumos/mi-furgon - lo que lleva el furgon del mecanico autenticado
 router.get('/mi-furgon', verifyToken, requireRole('mecanico'), async (req, res) => {
-    const client = await pool.connect();
+    let client;
     try {
+        client = await pool.connect();
         const furgon = await furgonDe(client, req.user.id);
         if (!furgon) {
             // no es error: puede que todavia no le hayan asignado vehiculo
@@ -167,7 +175,7 @@ router.get('/mi-furgon', verifyToken, requireRole('mecanico'), async (req, res) 
         console.error(err);
         res.status(500).json({ error: 'Error al consultar el stock de tu furgón' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 
@@ -188,7 +196,7 @@ router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrati
     if (!uuidValido) {
         return res.status(400).json({ error: 'uuid_cliente no es un UUID valido' });
     }
-    const client = await pool.connect();
+    let client;
     // la transferencia ya hecha con ese uuid, como respuesta de un reintento
     const respuestaPrevia = async () => {
         const previo = await buscarPorUuid(client, 'movimientos_insumo', uuid);
@@ -202,6 +210,7 @@ router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrati
         };
     };
     try {
+        client = await pool.connect();
         const previa = uuid ? await respuestaPrevia() : null;
         if (previa) return res.status(previa.status).json(previa.body);
 
@@ -281,7 +290,7 @@ router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrati
         await client.query('COMMIT');
         res.status(201).json({ ok: true, ubicacion_destino_id: destino, cantidad: Number(cantidad) });
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (client) await client.query('ROLLBACK').catch(() => {});
         // dos reintentos simultaneos: el segundo choca con el UNIQUE, y eso significa "ya estaba hecho"
         if (esUuidDuplicado(err)) {
             const previa = await respuestaPrevia();
@@ -290,7 +299,7 @@ router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrati
         console.error(err);
         res.status(500).json({ error: 'Error al cargar el furgón' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 
@@ -301,8 +310,9 @@ router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrati
 router.get('/descuadres', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     // una sola instantanea: los negativos y sus movimientos se leen en la misma transaccion de solo
     // lectura, asi un movimiento que se confirma entre las dos consultas no deja un caso a medias
-    const client = await pool.connect();
+    let client;
     try {
+        client = await pool.connect();
         await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
         const negativos = await client.query(
             `SELECT su.ubicacion_id, su.insumo_id, su.cantidad, i.nombre AS insumo_nombre, i.unidad_medida,
@@ -350,11 +360,11 @@ router.get('/descuadres', verifyToken, requireRole('administrativo', 'gerente'),
             };
         }));
     } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
+        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al consultar los descuadres de stock' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 
@@ -394,7 +404,7 @@ router.post('/ajuste', verifyToken, requireRole('administrativo'), async (req, r
         return res.status(400).json({ error: 'La nota no puede pasar de 500 caracteres' });
     }
 
-    const client = await pool.connect();
+    let client;
     const respuestaPrevia = async () => {
         const previo = await buscarPorUuid(client, 'movimientos_insumo', uuid);
         if (!previo) return null;
@@ -407,6 +417,7 @@ router.post('/ajuste', verifyToken, requireRole('administrativo'), async (req, r
         return { status: 200, body: { ok: true, ya_registrada: true, movimiento_id: previo.id } };
     };
     try {
+        client = await pool.connect();
         // el reintento se resuelve ANTES de comparar la cantidad esperada: la repeticion de un
         // conteo ya hecho vera un stock distinto y recibiria un 409 que no corresponde
         const previa = await respuestaPrevia();
@@ -467,7 +478,7 @@ router.post('/ajuste', verifyToken, requireRole('administrativo'), async (req, r
         if (calculo.delta === 0) return res.json({ ok: true, sin_cambios: true, delta: 0, movimiento_id: mov.rows[0].id });
         res.status(201).json({ ok: true, delta: calculo.delta, movimiento_id: mov.rows[0].id });
     } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
+        if (client) await client.query('ROLLBACK').catch(() => {});
         if (esUuidDuplicado(err)) {
             const previa = await respuestaPrevia();
             if (previa) return res.status(previa.status).json(previa.body);
@@ -475,7 +486,7 @@ router.post('/ajuste', verifyToken, requireRole('administrativo'), async (req, r
         console.error(err);
         res.status(500).json({ error: 'Error al registrar el conteo' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 
@@ -508,8 +519,9 @@ router.post('/:id/ingreso', verifyToken, requireRole('administrativo'), async (r
     if (cantidadValidaONulo(cantidad) === null) {
         return res.status(400).json({ error: 'Indica una cantidad mayor a 0, con hasta 2 decimales' });
     }
-    const client = await pool.connect();
+    let client;
     try {
+        client = await pool.connect();
         await client.query('BEGIN');
         const existe = await client.query('SELECT id FROM insumos WHERE id = $1', [req.params.id]);
         if (existe.rows.length === 0) {
@@ -532,11 +544,11 @@ router.post('/:id/ingreso', verifyToken, requireRole('administrativo'), async (r
         await client.query('COMMIT');
         res.json(result.rows[0]);
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al registrar ingreso de stock' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 
@@ -632,7 +644,7 @@ async function recalcularFacturableOt(client, ordenId) {
 //
 // Agregar, anular y modificar una linea cambian lo que se cobra, asi que las tres rutas siguen el
 // mismo camino, todo dentro de UNA transaccion:
-//   1. bloquear la fila de la OT (FOR UPDATE). Es obligatorio: el historial se ordena por el id de
+//   1. bloquear la fila de la OT (FOR NO KEY UPDATE). Es obligatorio: el historial se ordena por el id de
 //      los eventos y eso solo es el orden real si todo evento se escribe con la OT bloqueada; ademas
 //      impide que la factura se suba en medio de un cambio de linea
 //   2. leer estado, valorizacion y factura de la OT
@@ -662,7 +674,7 @@ async function bloquearOrden(client, ordenId) {
         `SELECT id, mecanico_id, estado, facturable, valorizacion
          FROM ordenes_trabajo
          WHERE id = $1
-         FOR UPDATE`,
+         FOR NO KEY UPDATE`,
         [ordenId]
     );
     if (!r.rows[0]) return null;
@@ -763,6 +775,9 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
     if (!esIdPositivo(req.params.ordenId)) return res.status(400).json({ error: 'Id de orden inválido' });
     if (cantidadValidaONulo(cantidad) === null) {
         return res.status(400).json({ error: 'Indica una cantidad mayor a 0, con hasta 2 decimales' });
+    }
+    if (textoInvalido(descripcion, 2000)) {
+        return res.status(400).json({ error: 'descripcion debe ser un texto de hasta 2000 caracteres' });
     }
     // el stock parte de cero y en el papel el repuesto se escribe a mano: se acepta una linea
     // sin catalogo mientras venga descrita
@@ -1022,6 +1037,9 @@ router.patch('/orden/:ordenId/linea/:lineaId', verifyToken, requireRole('adminis
     if (!esIdPositivo(req.params.lineaId)) return res.status(400).json({ error: 'Id de línea inválido' });
     if (facturable !== undefined && !FACTURABLE_VALIDOS.includes(facturable)) {
         return res.status(400).json({ error: `facturable debe ser uno de: ${FACTURABLE_VALIDOS.join(', ')}` });
+    }
+    if (textoInvalido(descripcion, 500)) {
+        return res.status(400).json({ error: 'descripcion debe ser un texto de hasta 500 caracteres' });
     }
     const errorPrecio = validarPrecioUnitario(precio_unitario);
     if (errorPrecio) return res.status(400).json({ error: errorPrecio });

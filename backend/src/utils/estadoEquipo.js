@@ -67,13 +67,17 @@ function origenPorEjecutivo(ejecutivoId) {
 
 // ---------------------------------------------------------------------------------------------
 // Acceso a la base. Reciben el cliente de la transaccion en curso. Orden de bloqueo: primero la
-// fila de la orden (ya tomada por quien llama) y despues la del equipo, nunca al reves; guias.js y
-// horometro.js actualizan el equipo sin bloquear la orden, asi que no se forma un ciclo.
+// fila de la orden (ya tomada por quien llama) y despues la del equipo, nunca al reves.
+// Las dos filas se bloquean con FOR NO KEY UPDATE, no con FOR UPDATE: guias.js y horometro.js
+// insertan guias y lecturas que apuntan a la orden y al equipo, y ese INSERT toma KEY SHARE sobre
+// la fila referenciada por la clave foranea. Un FOR UPDATE choca con KEY SHARE y formaba el ciclo
+// equipo -> orden (horometro) contra orden -> equipo (cierre); FOR NO KEY UPDATE no choca con
+// KEY SHARE, y nadie modifica la clave de la orden ni la del equipo.
 // ---------------------------------------------------------------------------------------------
 
 /** Una orden llega a terreno por primera vez: un equipo operativo pasa a en_mantencion. */
 async function aplicarEntradaEquipo(client, maquinariaId) {
-    const r = await client.query('SELECT estado, estado_origen FROM maquinarias WHERE id = $1 FOR UPDATE', [maquinariaId]);
+    const r = await client.query('SELECT estado, estado_origen FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE', [maquinariaId]);
     if (r.rows.length === 0) return null;
     const cambio = estadoTrasEntrada({ estadoEquipo: r.rows[0].estado });
     if (!cambio) return null;
@@ -88,7 +92,7 @@ async function aplicarEntradaEquipo(client, maquinariaId) {
  * Devuelve el estado anterior y el nuevo del equipo (iguales si no hubo cambio).
  */
 async function aplicarCierreEquipo(client, maquinariaId, ordenId, pedido) {
-    const r = await client.query('SELECT estado, estado_origen FROM maquinarias WHERE id = $1 FOR UPDATE', [maquinariaId]);
+    const r = await client.query('SELECT estado, estado_origen FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE', [maquinariaId]);
     if (r.rows.length === 0) return { anterior: null, nuevo: null };
     const otras = await client.query(
         `SELECT count(*)::int AS n FROM ordenes_trabajo

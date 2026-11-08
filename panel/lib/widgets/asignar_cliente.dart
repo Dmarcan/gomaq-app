@@ -3,6 +3,7 @@ import '../services/api_client.dart';
 import '../utils/efecto_guia.dart';
 import '../utils/formato.dart';
 import '../utils/motivo_cambio.dart' show nuevoUuid;
+import 'confirmar_horometro.dart';
 import 'dialogos.dart';
 
 /// Cómo se envía la guía al servidor: ruta y campos del formulario. En producción es
@@ -79,6 +80,7 @@ Future<bool> mostrarGuiaRapida(
   List<dynamic> clientes = const [],
   String? clienteActual,
   EnviarGuia enviar = _enviarPorApi,
+  Future<num?> Function(int maquinariaId)? leerUltimaLectura,
 }) async {
   final esDespacho = tipo == 'despacho';
   var llave = nuevoUuid();
@@ -211,6 +213,10 @@ Future<bool> mostrarGuiaRapida(
       final horometro = horometroParaEnvio(textoHorometro);
       if (textoHorometro.isNotEmpty && horometro == null) {
         throw ApiException(400, 'El horómetro no es un número válido. Escribe, por ejemplo, 1156 o 1156,5.');
+      }
+      if (horometro != null &&
+          !await confirmarHorometroMenor(context, maquinariaId: maquinariaId, valor: num.tryParse(horometro), leerUltima: leerUltimaLectura)) {
+        throw ApiException(0, 'Revisa la lectura: es menor que la última registrada.');
       }
       try {
         final respuesta = await enviar('/api/maquinarias/$maquinariaId/guias', {

@@ -1,4 +1,5 @@
 const express = require('express');
+require('../utils/asyncErrores');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { leerConfiguracion } = require('../utils/configuracion');
@@ -12,18 +13,25 @@ const {
     diasDelPeriodo,
     compararPorRelevancia,
 } = require('../utils/rentabilidad');
+const { fechaDeQuery, validarIdsEnRuta } = require('../utils/validacion');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 
 const router = express.Router();
+validarIdsEnRuta(router, ['id']);
 
 const num = (v) => (v === null || v === undefined ? null : Number(v));
 
 /** Por defecto los ultimos 12 meses, que es el horizonte con que se evalua un arriendo. */
 function rangoDeFechas(query) {
-    const hasta = query.hasta ? new Date(query.hasta) : new Date();
+    // desde/hasta mal formados (texto que no es fecha, arreglo, objeto) no llegan al calculo:
+    // la ruta responde 400. Antes, Intl lanzaba un RangeError que tumbaba el proceso.
+    const hastaLeida = fechaDeQuery(query.hasta);
+    const desdeLeida = fechaDeQuery(query.desde);
+    if (hastaLeida === undefined || desdeLeida === undefined) return { error: 'desde y hasta deben ser fechas válidas (AAAA-MM-DD)' };
+    const hasta = hastaLeida || new Date();
     let desde;
-    if (query.desde) {
-        desde = new Date(query.desde);
+    if (desdeLeida) {
+        desde = desdeLeida;
     } else {
         desde = new Date(hasta);
         desde.setFullYear(desde.getFullYear() - 1);
@@ -132,7 +140,9 @@ function comparadorDeOrden(orden, dir) {
 // Parametros: desde/hasta, q (busqueda), resultado (a_perdida | con_ganancia | sin_movimiento |
 // equilibrio), orden + dir (ver COLUMNAS_ORDEN) y limit/offset.
 router.get('/', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
-    const { desde, hasta, desdeDia, hastaDia } = rangoDeFechas(req.query);
+    const rango = rangoDeFechas(req.query);
+    if (rango.error) return res.status(400).json({ error: rango.error });
+    const { desde, hasta, desdeDia, hastaDia } = rango;
     const { limit, offset } = parsearPaginacion(req.query);
     const q = parsearBusqueda(req.query);
     const filtroResultado = RESULTADOS.includes(req.query.resultado) ? req.query.resultado : null;
@@ -198,7 +208,9 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo'), async (re
 
 // GET /api/rentabilidad/maquinaria/:id - detalle de un equipo, con el desglose que lo respalda
 router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
-    const { desde, hasta } = rangoDeFechas(req.query);
+    const rango = rangoDeFechas(req.query);
+    if (rango.error) return res.status(400).json({ error: rango.error });
+    const { desde, hasta } = rango;
     const { id } = req.params;
     try {
         const equipo = await pool.query('SELECT id, codigo, tipo, estado FROM maquinarias WHERE id = $1', [id]);

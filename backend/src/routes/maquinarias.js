@@ -1,4 +1,6 @@
 const express = require('express');
+require('../utils/asyncErrores');
+const { validarIdsEnRuta, validarCuerpo } = require('../utils/validacion');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaImagen } = require('../middleware/upload');
@@ -10,6 +12,7 @@ const { ordenSql } = require('../utils/ordenFlota');
 const { visiblePara, construirSqlDocumentos, construirSqlEquiposDelCliente, filaPublica } = require('../utils/documentosEquipo');
 
 const router = express.Router();
+validarIdsEnRuta(router, ['id']);
 
 const URL_EXPIRACION_SEGUNDOS = 3600;
 
@@ -277,6 +280,8 @@ router.post('/', verifyToken, requireRole('administrativo'), subidaImagen.single
         numero_serie, numero_motor, numero_chasis, numero_mastil,
         capacidad_carga, altura_trabajo, tipo_combustible,
     } = req.body;
+    const errCuerpo = validarCuerpo(req.body, { textos: { codigo: 20, tipo: 100, ubicacion: 150, marca: 100, modelo: 100, descripcion: 2000, numero_serie: 100, numero_motor: 100, numero_chasis: 100, numero_mastil: 100 }, ids: ['cliente_id'], numeros: { anio: [1900, 2200], capacidad_carga: [0, 99999999], altura_trabajo: [0, 99999999] } });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     if (!codigo || !tipo) {
         return res.status(400).json({ error: 'codigo y tipo son requeridos' });
     }
@@ -328,6 +333,8 @@ router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res
         numero_serie, numero_motor, numero_chasis, numero_mastil,
         capacidad_carga, altura_trabajo, tipo_combustible,
     } = req.body;
+    const errCuerpo = validarCuerpo(req.body, { textos: { codigo: 20, tipo: 100, ubicacion: 150, marca: 100, modelo: 100, descripcion: 2000, numero_serie: 100, numero_motor: 100, numero_chasis: 100, numero_mastil: 100 }, ids: ['cliente_id'], numeros: { anio: [1900, 2200], capacidad_carga: [0, 99999999], altura_trabajo: [0, 99999999] } });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     try {
         const result = await pool.query(
             `UPDATE maquinarias SET

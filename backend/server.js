@@ -17,6 +17,7 @@ if (faltantes.length > 0) {
 }
 
 const path = require('path');
+require('./src/utils/asyncErrores');
 const express = require('express');
 const cors = require('cors');
 const helmet = require('helmet');
@@ -42,6 +43,10 @@ const rentabilidadRouter = require('./src/routes/rentabilidad');
 const vehiculosRouter = require('./src/routes/vehiculos');
 const { iniciarWorker } = require('./src/workers/notificaciones');
 const { manejarErroresDeSubida } = require('./src/middleware/upload');
+const { manejarErrores, registrarRedDeSeguridad } = require('./src/middleware/errores');
+
+// una promesa rechazada o una excepcion suelta se registra y el servidor sigue en pie
+registrarRedDeSeguridad();
 
 const app = express();
 
@@ -149,6 +154,9 @@ app.get('*', (req, res, next) => {
         if (err) next();
     });
 });
+
+// manejador final: cualquier error de una ruta responde JSON sin filtrar detalles
+app.use(manejarErrores);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {

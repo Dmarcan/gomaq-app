@@ -1,4 +1,5 @@
 const express = require('express');
+require('../utils/asyncErrores');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 

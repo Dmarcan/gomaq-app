@@ -1,4 +1,7 @@
 const express = require('express');
+require('../utils/asyncErrores');
+const { recalcularClienteEquipo, clienteAlMomento } = require('../utils/clienteEquipo');
+const { validarIdsEnRuta, fechaHoraInvalida } = require('../utils/validacion');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf } = require('../middleware/upload');
@@ -14,6 +17,7 @@ const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/id
 const { sqlGuiasSinDocumento } = require('../utils/pendientes');
 
 const router = express.Router();
+validarIdsEnRuta(router, ['id', 'guiaId']);
 
 // POST /api/maquinarias/guias/detectar - lee el texto del PDF (si lo tiene) y prellena el
 // formulario con lo que reconozca (ver utils/parsearDocumento). Mejor esfuerzo: nunca falla
@@ -100,6 +104,14 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
     if (!req.file && !sinDocumento) {
         return res.status(400).json({ error: 'archivo (PDF) es requerido, o indica que se despacha sin documento' });
     }
+    // la guia mas reciente por fecha decide el cliente del equipo: una fecha futura o absurda lo
+    // dejaria pegado a ese cliente (no hay forma de editar una guia)
+    if (fecha_hora !== undefined && fecha_hora !== null && fecha_hora !== '') {
+        const t = typeof fecha_hora === 'string' ? new Date(fecha_hora).getTime() : NaN;
+        if (fechaHoraInvalida(fecha_hora) || t < Date.UTC(2000, 0, 1) || t > Date.now() + 24 * 3600 * 1000) {
+            return res.status(400).json({ error: 'fecha_hora no es válida (no puede ser futura ni anterior al año 2000)' });
+        }
+    }
     const esFallido = fallido === 'true' || fallido === true;
     if (tipo === 'despacho' && !esFallido && !cliente_id) {
         return res.status(400).json({ error: 'Elige el cliente al que se despacha el equipo' });
@@ -145,9 +157,16 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
         }
     }
 
-    const client = await pool.connect();
+    let client;
     let rutaStorage = null;
+    const borrarArchivoSubido = async () => {
+        if (rutaStorage) {
+            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+            rutaStorage = null;
+        }
+    };
     try {
+        client = await pool.connect();
         if (cliente_id) {
             const clienteExiste = await client.query('SELECT id FROM clientes WHERE id = $1', [cliente_id]);
             if (clienteExiste.rows.length === 0) {
@@ -155,19 +174,11 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
             }
         }
 
-        // la guia guarda su propio cliente (snapshot del momento del evento): en un despacho
-        // es el cliente elegido; en una recepcion, el que tenia la maquina antes de liberarse.
-        // Nunca derivarlo despues desde maquinarias.cliente_id - la recepcion lo pone en NULL
-        // y facturacion lo necesita (bug corregido en auditoria).
-        let clienteGuia = null;
-        if (tipo === 'despacho') {
-            clienteGuia = cliente_id || null;
-        } else {
-            const maq = await client.query('SELECT cliente_id FROM maquinarias WHERE id = $1', [id]);
-            if (maq.rows.length === 0) {
-                return res.status(404).json({ error: 'Maquinaria no encontrada' });
-            }
-            clienteGuia = maq.rows[0].cliente_id;
+        // el equipo debe existir; se revisa antes de subir el PDF para no dejar un archivo huerfano.
+        // El estado real del equipo se lee mas abajo, ya con su fila bloqueada.
+        const equipoExiste = await client.query('SELECT 1 FROM maquinarias WHERE id = $1', [id]);
+        if (equipoExiste.rows.length === 0) {
+            return res.status(404).json({ error: 'Maquinaria no encontrada' });
         }
 
         if (req.file) {
@@ -180,6 +191,27 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
 
         await client.query('BEGIN');
 
+        // Se bloquea la fila del equipo ANTES de leer su estado o escribir la guia: dos guias del
+        // mismo equipo se ejecutan una tras otra y la segunda ve lo que dejo la primera. Es
+        // FOR NO KEY UPDATE y no FOR UPDATE porque el INSERT de la guia (y el de la lectura de
+        // horometro) toma KEY SHARE sobre el equipo por la clave foranea. La guia no toca la OT,
+        // asi que respeta el orden de bloqueo OT -> equipo.
+        const equipo = await client.query('SELECT cliente_id FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE', [id]);
+        if (equipo.rows.length === 0) {
+            await client.query('ROLLBACK');
+            await borrarArchivoSubido();
+            return res.status(404).json({ error: 'Maquinaria no encontrada' });
+        }
+
+        // la guia guarda su propio cliente (snapshot del momento del evento): en un despacho
+        // es el cliente elegido; en una recepcion, el que tenia la maquina en la fecha de la guia
+        // (el del despacho vigente entonces), no el de hoy: una recepcion atrasada no debe quedar
+        // con el cliente de un despacho posterior. Nunca derivarlo despues desde
+        // maquinarias.cliente_id - la recepcion lo pone en NULL y facturacion lo necesita.
+        const clienteGuia = tipo === 'despacho'
+            ? (cliente_id || null)
+            : await clienteAlMomento(client, id, fecha_hora, equipo.rows[0].cliente_id);
+
         const result = await client.query(
             `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, fallido, cliente_id, registrada_por, uuid_cliente)
              VALUES ($1, $2::tipo_guia, $3, COALESCE($4, now()), COALESCE($5, false), $6, $7, $8)
@@ -187,12 +219,10 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
             [id, tipo, rutaStorage, fecha_hora || null, esFallido, clienteGuia, req.user.id, uuidCliente]
         );
 
+        // el cliente del equipo sale de la guia MAS RECIENTE por fecha, no de la ultima en llegar:
+        // un despacho o una recepcion atrasados no pisan un estado mas nuevo
         if (!esFallido) {
-            if (tipo === 'despacho') {
-                await client.query('UPDATE maquinarias SET cliente_id = $1 WHERE id = $2', [cliente_id, id]);
-            } else {
-                await client.query('UPDATE maquinarias SET cliente_id = NULL WHERE id = $1', [id]);
-            }
+            await recalcularClienteEquipo(client, id);
         }
 
         // la guia de entrega trae impreso "HOROMETRO: 1156": si el administrativo lo confirmo
@@ -201,11 +231,11 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
         const horometroLectura = horometro === undefined || horometro === null || horometro === ''
             ? null
             : Number(horometro);
-        if (horometroLectura !== null && !isNaN(horometroLectura) && horometroLectura >= 0 && !esFallido) {
+        if (horometroLectura !== null && !isNaN(horometroLectura) && horometroLectura >= 0 && horometroLectura <= 9999999 && !esFallido) {
             const maq = await client.query(
                 `SELECT id, codigo, intervalo_mantencion_horas, horometro_ultima_mantencion,
                         alerta_mantencion_enviada
-                 FROM maquinarias WHERE id = $1 FOR UPDATE`,
+                 FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE`,
                 [id]
             );
             if (maq.rows[0]) {
@@ -233,7 +263,7 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
         await client.query('COMMIT');
         res.status(201).json(result.rows[0]);
     } catch (err) {
-        await client.query('ROLLBACK');
+        if (client) await client.query('ROLLBACK').catch(() => {});
         // compensacion best-effort: si el PDF ya subio pero la BD fallo, no dejar el archivo huerfano
         if (rutaStorage) {
             await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
@@ -252,7 +282,7 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
         console.error(err);
         res.status(500).json({ error: 'Error al subir guía' });
     } finally {
-        client.release();
+        if (client) client.release();
     }
 });
 

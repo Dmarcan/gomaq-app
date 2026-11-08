@@ -1,4 +1,8 @@
 const express = require('express');
+require('../utils/asyncErrores');
+const { validarIdsEnRuta, validarCuerpo, fechaHoraInvalida } = require('../utils/validacion');
+
+const MAX_ELEMENTOS_CHECKLIST = 100;
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { verificarDuenoOrden, contactoCliente, MENSAJE_OT_CERRADA, SQL_OT_SIN_ASIGNAR } = require('../utils/ordenes');
@@ -20,6 +24,7 @@ const {
 const { EN_CURSO } = require('../utils/estadosOt');
 
 const router = express.Router();
+validarIdsEnRuta(router, ['id']);
 
 // Los seis tipos del talonario. Los marca el mecanico en terreno, que es quien sabe de que
 // se trato la visita; el administrativo no lo fija al crear la OT.
@@ -31,6 +36,8 @@ const TIPOS_SERVICIO = [
 // POST /api/ordenes-trabajo - crear OT
 router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { maquinaria_id, cliente_id, motivo } = req.body;
+    const errCuerpo = validarCuerpo(req.body, { textos: { motivo: 2000 }, ids: ['maquinaria_id', 'cliente_id'] });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     if (!maquinaria_id) {
         return res.status(400).json({ error: 'maquinaria_id es requerido' });
     }
@@ -86,6 +93,8 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
 // inmediato sin pasar por el administrativo.
 router.post('/en-terreno', verifyToken, requireRole('mecanico'), async (req, res) => {
     const { maquinaria_id, motivo } = req.body;
+    const errCuerpo = validarCuerpo(req.body, { textos: { motivo: 20000 }, ids: ['maquinaria_id'] });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     if (!maquinaria_id) {
         return res.status(400).json({ error: 'maquinaria_id es requerido' });
     }
@@ -107,12 +116,17 @@ router.post('/en-terreno', verifyToken, requireRole('mecanico'), async (req, res
         const yaCreada = await buscarPorUuid(client, 'ordenes_trabajo', uuid);
         if (yaCreada) return devolverExistente(yaCreada);
 
-        const maquinaria = await client.query('SELECT id, cliente_id FROM maquinarias WHERE id = $1', [maquinaria_id]);
-        if (maquinaria.rows.length === 0) {
-            return res.status(404).json({ error: 'Maquinaria no encontrada' });
-        }
         // la OT y su evento de creacion van en la misma transaccion (historial, migracion 020)
         await client.query('BEGIN');
+        // El equipo se bloquea ANTES de insertar la OT: el INSERT toma KEY SHARE sobre el equipo por la
+        // clave foranea y aplicarEntradaEquipo pide despues el bloqueo del mismo equipo; con dos
+        // mecanicos abriendo OT sobre el mismo equipo a la vez, cada uno esperaba al otro (deadlock).
+        // Ademas el cliente de la OT se lee ya con el equipo bloqueado, no antes.
+        const maquinaria = await client.query('SELECT id, cliente_id FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE', [maquinaria_id]);
+        if (maquinaria.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Maquinaria no encontrada' });
+        }
         const result = await client.query(
             `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, mecanico_id, origen, motivo, estado, uuid_cliente, llegada_at)
              VALUES ($1, $2, $3, $6::origen_orden, $4, 'en_terreno', $5, now())
@@ -403,6 +417,8 @@ router.patch('/:id/tomar', verifyToken, requireRole('mecanico'), async (req, res
 // inserta la notificacion pendiente (HU-07) para que nunca queden desincronizadas
 router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (req, res) => {
     const { mecanico_id } = req.body;
+    const errCuerpo = validarCuerpo(req.body, { ids: ['mecanico_id'] });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     if (!mecanico_id) {
         return res.status(400).json({ error: 'mecanico_id es requerido' });
     }
@@ -417,7 +433,7 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
         await client.query('BEGIN');
 
         const actual = await client.query(
-            'SELECT estado, mecanico_id FROM ordenes_trabajo WHERE id = $1 FOR UPDATE',
+            'SELECT estado, mecanico_id FROM ordenes_trabajo WHERE id = $1 FOR NO KEY UPDATE',
             [req.params.id]
         );
         if (actual.rows.length === 0) {
@@ -486,6 +502,8 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
 // PATCH /api/ordenes-trabajo/:id/diagnostico - mecanico registra diagnostico y avanza estado
 router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (req, res) => {
     const { diagnostico, estado, ocurrio_en } = req.body;
+    const errCuerpo = validarCuerpo(req.body, { textos: { diagnostico: 20000 } });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     const estadosValidos = ['aceptada', 'en_camino', 'en_terreno', 'en_reparacion'];
     if (estado && !estadosValidos.includes(estado)) {
         return res.status(400).json({ error: `estado debe ser uno de: ${estadosValidos.join(', ')}` });
@@ -578,6 +596,8 @@ router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (re
 // el panel); `observacion_final` es lo que se hizo. el jefe de taller pidio separarlas (entrevista, punto 5).
 router.patch('/:id/datos', verifyToken, requireRole('mecanico'), async (req, res) => {
     const { tipo_servicio, diagnostico, observacion_final, folio_papel } = req.body;
+    const errCuerpo = validarCuerpo(req.body, { textos: { diagnostico: 20000, observacion_final: 20000, folio_papel: 20 } });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     if (tipo_servicio !== undefined && tipo_servicio !== null && !TIPOS_SERVICIO.includes(tipo_servicio)) {
         return res.status(400).json({ error: `tipo_servicio debe ser uno de: ${TIPOS_SERVICIO.join(', ')}` });
     }
@@ -617,6 +637,10 @@ router.put('/:id/checklist', verifyToken, requireRole('mecanico'), async (req, r
     if (!Array.isArray(servicio_ids)) {
         return res.status(400).json({ error: 'servicio_ids debe ser una lista' });
     }
+    // sin tope, un arreglo enorme hacia un INSERT por elemento dentro de la transaccion
+    if (servicio_ids.length > MAX_ELEMENTOS_CHECKLIST || !servicio_ids.every((s) => Number.isInteger(s) && s > 0 && s <= 2147483647)) {
+        return res.status(400).json({ error: `servicio_ids debe ser una lista de hasta ${MAX_ELEMENTOS_CHECKLIST} ids válidos` });
+    }
     let client = null;
     try {
         client = await pool.connect();
@@ -651,6 +675,9 @@ router.post('/:id/tramos', verifyToken, requireRole('mecanico'), async (req, res
     const { inicio, termino } = req.body;
     if (!inicio) {
         return res.status(400).json({ error: 'inicio es requerido' });
+    }
+    if (fechaHoraInvalida(inicio) || (termino && fechaHoraInvalida(termino))) {
+        return res.status(400).json({ error: 'inicio y termino deben ser fechas válidas' });
     }
     if (termino && new Date(termino) < new Date(inicio)) {
         return res.status(400).json({ error: 'El termino no puede ser anterior al inicio' });
@@ -714,6 +741,8 @@ router.post('/:id/tramos', verifyToken, requireRole('mecanico'), async (req, res
 // campo de la orden lo deriva insumos.js al cambiar una linea (ver utils/facturableOt.js).
 router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req, res) => {
     const { persona_recibe, sin_persona, firma_path, ocurrio_en } = req.body;
+    const errCuerpo = validarCuerpo(req.body, { textos: { persona_recibe: 150, firma_path: 300 } });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     // como queda el equipo al cerrar: 'operativa' o 'fuera_de_servicio'. Ausente = APK anterior.
     const equipoPedido = validarEstadoEquipoCierre(req.body.estado_equipo);
     if (!equipoPedido.valido) {
@@ -738,7 +767,7 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
         if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
 
         await client.query('BEGIN');
-        const actual = await client.query('SELECT * FROM ordenes_trabajo WHERE id = $1 FOR UPDATE', [req.params.id]);
+        const actual = await client.query('SELECT * FROM ordenes_trabajo WHERE id = $1 FOR NO KEY UPDATE', [req.params.id]);
         const cierre = evaluarCierre(actual.rows[0].estado);
         if (cierre.yaFinalizada) {
             // reintento de la cola offline: la OT ya se cerro, con su firma y su aviso al
@@ -834,7 +863,7 @@ router.patch('/:id/valorizacion', verifyToken, requireRole('gerente'), async (re
         // monto anterior que queda en el historial sea el que de verdad se reemplazo
         await client.query('BEGIN');
         const actual = await client.query(
-            'SELECT estado, valorizacion FROM ordenes_trabajo WHERE id = $1 FOR UPDATE',
+            'SELECT estado, valorizacion FROM ordenes_trabajo WHERE id = $1 FOR NO KEY UPDATE',
             [req.params.id]
         );
         if (actual.rows.length === 0) {

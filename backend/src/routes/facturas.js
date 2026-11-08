@@ -1,24 +1,28 @@
 const express = require('express');
+require('../utils/asyncErrores');
+const { validarIdsEnRuta, esDiaValido } = require('../utils/validacion');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { dejarEvento } = require('../utils/eventosOt');
-const { validarMotivo, detalleFacturaAnulada, esIdPositivo } = require('../utils/auditoriaLinea');
+const { validarMotivo, detalleFacturaAnulada, esIdPositivo, montoEnteroONulo } = require('../utils/auditoriaLinea');
 const { cancelarCorreosFactura, encolarCorreoFactura, validarFolio } = require('../utils/correoFactura');
 
 const { avisarFacturaAnulada } = require('../utils/avisos');
 
 const router = express.Router();
+validarIdsEnRuta(router, ['id', 'facturaId']);
 
 // un monto 0 es un monto valido: `monto || null` lo convertia en nulo
-const montoONulo = (v) => (v === undefined || v === null || v === '' ? null : v);
+const montoVacio = (v) => v === undefined || v === null || v === '';
+const montoONulo = (v) => (montoVacio(v) ? null : montoEnteroONulo(v));
 const URL_EXPIRACION_SEGUNDOS = 3600;
 
 // POST /api/ordenes-trabajo/:id/factura - subir PDF de factura ya emitida en el SII (va a Supabase Storage)
 //
-// La fila de la OT se bloquea (FOR UPDATE) en la misma transaccion que inserta la factura: asi un
+// La fila de la OT se bloquea (FOR NO KEY UPDATE) en la misma transaccion que inserta la factura: asi un
 // cambio de linea que corre al mismo tiempo (routes/insumos.js, que tambien bloquea la OT) termina
 // antes o empieza despues, y la factura nunca queda sobre lineas distintas a las que se cobraron.
 // La subida del PDF va antes, fuera de la transaccion: no conviene tener la OT bloqueada mientras
@@ -32,6 +36,14 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPd
     }
     const folioValido = validarFolio(folio);
     if (folioValido.error) return res.status(400).json({ error: folioValido.error });
+    // mismo criterio que la factura de arriendo: pesos enteros y sin signo, que quepan en
+    // NUMERIC(12,2). Se valida ANTES de subir el PDF para no dejar un archivo huerfano.
+    if (!montoVacio(monto) && montoEnteroONulo(monto) === null) {
+        return res.status(400).json({ error: 'El monto debe ser un número entero de pesos, sin puntos ni decimales, de hasta 10 dígitos' });
+    }
+    if (!montoVacio(fecha_emision) && !esDiaValido(fecha_emision)) {
+        return res.status(400).json({ error: 'fecha_emision debe ser una fecha válida (AAAA-MM-DD)' });
+    }
     let rutaStorage = null;
     let client = null;
     const borrarArchivo = async () => {
@@ -48,7 +60,7 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPd
 
         client = await pool.connect();
         await client.query('BEGIN');
-        const orden = await client.query('SELECT id, estado FROM ordenes_trabajo WHERE id = $1 FOR UPDATE', [id]);
+        const orden = await client.query('SELECT id, estado FROM ordenes_trabajo WHERE id = $1 FOR NO KEY UPDATE', [id]);
         if (orden.rows.length === 0) {
             await client.query('ROLLBACK');
             await borrarArchivo();
@@ -69,7 +81,7 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPd
             `INSERT INTO facturas (orden_trabajo_id, folio, archivo_url, monto, fecha_emision)
              VALUES ($1, $2, $3, $4, $5)
              RETURNING *`,
-            [id, folioValido.folio, rutaStorage, montoONulo(monto), fecha_emision || null]
+            [id, folioValido.folio, rutaStorage, montoONulo(monto), montoVacio(fecha_emision) ? null : fecha_emision]
         );
         const factura = result.rows[0];
         await dejarEvento(client, {
@@ -148,7 +160,7 @@ router.post('/:id/factura/:facturaId/anular', verifyToken, requireRole('administ
     try {
         client = await pool.connect();
         await client.query('BEGIN');
-        const orden = await client.query('SELECT id FROM ordenes_trabajo WHERE id = $1 FOR UPDATE', [id]);
+        const orden = await client.query('SELECT id FROM ordenes_trabajo WHERE id = $1 FOR NO KEY UPDATE', [id]);
         if (orden.rows.length === 0) {
             await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
