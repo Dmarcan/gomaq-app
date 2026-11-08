@@ -19,6 +19,7 @@ import 'screens/panel/notificaciones_screen.dart';
 import 'screens/panel/insumos_screen.dart';
 import 'screens/panel/horometro_screen.dart';
 import 'screens/panel/rentabilidad_screen.dart';
+import 'screens/panel/mapa_screen.dart';
 import 'screens/panel/vehiculos_screen.dart';
 import 'utils/pendientes.dart' show destinoConFiltro;
 import 'widgets/estado_vacio.dart';
@@ -40,6 +41,7 @@ typedef ItemMenu = ({String ruta, IconData icono, String etiqueta, String grupo}
 const List<ItemMenu> itemsMenu = [
   (ruta: '/', icono: Icons.dashboard, etiqueta: 'Dashboard', grupo: 'Operación'),
   (ruta: '/flota', icono: Icons.local_shipping, etiqueta: 'Flota', grupo: 'Operación'),
+  (ruta: '/mapa', icono: Icons.map_outlined, etiqueta: 'Mapa', grupo: 'Operación'),
   (ruta: '/ordenes', icono: Icons.assignment, etiqueta: 'Órdenes de Trabajo', grupo: 'Operación'),
   (ruta: '/asistencias', icono: Icons.support_agent, etiqueta: 'Asistencias', grupo: 'Operación'),
   // la mantención se calcula con las lecturas del horómetro; en el menú se llama por lo que se hace con ella
@@ -199,6 +201,7 @@ GoRouter construirRouter(AuthService auth) {
           ),
           // el Horómetro pasó a llamarse Mantención: los enlaces guardados siguen funcionando
           GoRoute(path: '/horometro', redirect: (_, estado) => destinoConFiltro('/mantencion', estado.uri.queryParameters)),
+          GoRoute(path: '/mapa', builder: (_, _) => const MapaScreen()),
           GoRoute(path: '/vehiculos', builder: (_, _) => const VehiculosScreen()),
           GoRoute(path: '/guias', builder: (_, _) => const GuiasScreen()),
           GoRoute(

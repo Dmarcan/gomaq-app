@@ -5839,6 +5839,111 @@ describe('bloque 6 (parte 1): contratos para el dashboard, Ordenes y el portal',
             });
         });
 
+        test('una OT en camino trae la hora estimada de llegada y nunca coordenadas', async (t) => {
+            if (!requiereBase(t)) return;
+            const cliente = await algunCliente();
+            const equipo = await crearEquipo(null);
+            const ot = (await pool.query(
+                `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, mecanico_id, estado, motivo,
+                        destino_lat, destino_lng, destino_origen,
+                        eta_segundos, eta_distancia_m, eta_calculada_at, eta_fuente, eta_origen_lat, eta_origen_lng, eta_consultas)
+                 VALUES ($1, $2, $3, 'en_camino', 'OT con ETA', -38.7359, -72.5904, 'cliente',
+                         600, 5000, '2026-03-02T10:00:00Z', 'aproximada', -38.70, -72.50, 3) RETURNING id`,
+                [equipo.id, cliente, datos.mecanicoId])).rows[0].id;
+            datos.ordenes.push(ot);
+
+            const r = await pedirConToken('/api/ordenes-trabajo/mias', tokenCliente(cliente));
+            assert.equal(r.status, 200);
+            const o = r.body.find((x) => x.id === ot);
+            assert.ok(o, 'la OT esta en el historial');
+            assert.equal(new Date(o.eta_llegada_at).toISOString(), '2026-03-02T10:10:00.000Z', 'calculada_at + segundos');
+            assert.equal(new Date(o.eta_calculada_at).toISOString(), '2026-03-02T10:00:00.000Z');
+            assert.equal(o.eta_aproximada, true);
+            for (const prohibida of ['destino_lat', 'destino_lng', 'destino_origen', 'eta_segundos', 'eta_distancia_m',
+                'eta_origen_lat', 'eta_origen_lng', 'eta_consultas', 'eta_fuente', 'latitud', 'longitud']) {
+                assert.ok(!(prohibida in o), `no debe exponer ${prohibida}`);
+            }
+
+            // al llegar, la hora estimada deja de mostrarse al cliente
+            await pool.query(`UPDATE ordenes_trabajo SET estado = 'en_terreno' WHERE id = $1`, [ot]);
+            const despues = (await pedirConToken('/api/ordenes-trabajo/mias', tokenCliente(cliente))).body.find((x) => x.id === ot);
+            assert.equal(despues.eta_llegada_at, null);
+            assert.equal(despues.eta_aproximada, null);
+        });
+
+        test('ETA por rutas: el cupo diario se respeta aunque lleguen reservas simultaneas', async (t) => {
+            if (!requiereBase(t)) return;
+            const { reservarConsulta } = require('../src/services/rutasEta');
+            const cliente = await algunCliente();
+            const equipo = await crearEquipo(null);
+            await pool.query('DELETE FROM uso_ors');
+            const ids = [];
+            for (let i = 0; i < 8; i++) {
+                const ot = (await pool.query(
+                    `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, mecanico_id, estado, motivo)
+                     VALUES ($1, $2, $3, 'en_camino', 'cupo ors') RETURNING id`, [equipo.id, cliente, datos.mecanicoId])).rows[0].id;
+                datos.ordenes.push(ot);
+                ids.push(ot);
+            }
+            const r = await Promise.all(ids.map((id) => reservarConsulta(pool, id, { maxPorOt: 15, cupoDiario: 3 })));
+            assert.equal(r.filter((x) => x.ok).length, 3, 'solo pasan las que caben en el cupo');
+            assert.ok(r.filter((x) => !x.ok).every((x) => x.motivo === 'cupo_diario'));
+            assert.equal((await pool.query('SELECT consultas FROM uso_ors')).rows[0].consultas, 3);
+            // las rechazadas devuelven su reserva: no queda gastada una consulta que no se hizo
+            const gastadas = (await pool.query('SELECT count(*)::int AS c FROM ordenes_trabajo WHERE id = ANY($1) AND eta_consultas > 0', [ids])).rows[0].c;
+            assert.equal(gastadas, 3);
+            await pool.query('DELETE FROM uso_ors');
+        });
+
+        test('ETA por rutas: guarda la ruta, no la pisa con la aproximada y si el servicio falla conserva la aproximada', async (t) => {
+            if (!requiereBase(t)) return;
+            const { mejorarEtaConRutas } = require('../src/services/rutasEta');
+            const { guardarPosicion } = require('../src/utils/posicionMecanico');
+            const { ErrorOrs } = require('../src/services/ors');
+            const cliente = await algunCliente();
+            const equipo = await crearEquipo(null);
+            await pool.query('DELETE FROM uso_ors');
+            const nuevaOt = async () => {
+                const ot = (await pool.query(
+                    `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, mecanico_id, estado, motivo, destino_lat, destino_lng, destino_origen)
+                     VALUES ($1, $2, $3, 'en_camino', 'ruta', -38.7359, -72.5904, 'cliente') RETURNING id`,
+                    [equipo.id, cliente, datos.mecanicoId])).rows[0].id;
+                datos.ordenes.push(ot);
+                return ot;
+            };
+            const leer = async (id) => (await pool.query('SELECT eta_fuente, eta_segundos, eta_consultas FROM ordenes_trabajo WHERE id = $1', [id])).rows[0];
+            const origen = { latitud: -38.70, longitud: -72.50 };
+            const silencio = { warn() {}, error() {} };
+            const opciones = (llamar) => ({ llamar, hayLlave: () => true, log: silencio });
+
+            // con ruta: queda la ETA del servicio, y una posicion nueva no la reemplaza por la aproximada
+            const conRuta = await nuevaOt();
+            const r = await mejorarEtaConRutas(pool, { ordenId: conRuta, usuarioId: datos.mecanicoId, origen },
+                opciones(async () => ({ distancia_m: 5000, segundos: 600 })));
+            assert.equal(r.guardada, true);
+            assert.deepEqual(await leer(conRuta), { eta_fuente: 'ors', eta_segundos: 600, eta_consultas: 1 });
+            await guardarPosicion(pool, { ordenId: conRuta, usuarioId: datos.mecanicoId, posicion: { ...origen, capturada_en: new Date().toISOString() } });
+            assert.equal((await leer(conRuta)).eta_fuente, 'ors', 'la aproximada no pisa a la ruta real');
+
+            // el servicio falla: no lanza, conserva la aproximada y la consulta cuenta
+            const conFallo = await nuevaOt();
+            await guardarPosicion(pool, { ordenId: conFallo, usuarioId: datos.mecanicoId, posicion: { ...origen, capturada_en: new Date().toISOString() } });
+            const aprox = await leer(conFallo);
+            assert.equal(aprox.eta_fuente, 'aproximada');
+            const f = await mejorarEtaConRutas(pool, { ordenId: conFallo, usuarioId: datos.mecanicoId, origen },
+                opciones(async () => { throw new ErrorOrs('timeout', 'sin respuesta'); }));
+            assert.equal(f.motivo, 'ors_fallo');
+            assert.deepEqual(await leer(conFallo), { ...aprox, eta_consultas: 1 });
+
+            // sin llave no se llama a nadie ni se gasta cupo
+            const sinLlave = await nuevaOt();
+            const s = await mejorarEtaConRutas(pool, { ordenId: sinLlave, usuarioId: datos.mecanicoId, origen },
+                { llamar: async () => assert.fail('no debia llamar'), hayLlave: () => false, log: silencio });
+            assert.equal(s.motivo, 'sin_llave');
+            assert.equal((await leer(sinLlave)).eta_consultas, 0);
+            await pool.query('DELETE FROM uso_ors');
+        });
+
         test('una OT finalizada no trae el vehiculo de hoy y dice si habra cobro', async (t) => {
             if (!requiereBase(t)) return;
             const cliente = await algunCliente();

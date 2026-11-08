@@ -3,10 +3,13 @@ import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
+import '../../theme/gomaq_theme.dart';
 import 'usuarios_screen.dart';
 import '../../widgets/estado_vacio.dart';
 import '../../widgets/dialogos.dart';
 import '../../utils/rut.dart';
+import '../../utils/ubicacion.dart';
+import '../../widgets/buscador_direccion.dart';
 
 class ClientesScreen extends StatefulWidget {
   /// Pestaña con la que se abre: 'cuentas' (Cuentas por aprobar) llega desde el menú y el dashboard.
@@ -89,6 +92,39 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
       setState(() => _error = e.message);
     } finally {
       if (mounted) setState(() => _cargando = false);
+    }
+  }
+
+  /// Ubicación del cliente en el mapa: se escribe su dirección y se elige una sugerencia. Sirve al
+  /// técnico para llegar y a la oficina para ver el equipo en el mapa. Solo cambia la ficha del
+  /// cliente: las OT ya creadas conservan el destino con que se crearon.
+  Future<void> _ubicarCliente(Map<String, dynamic> cliente) async {
+    final lat = double.tryParse('${cliente['latitud']}');
+    final lng = double.tryParse('${cliente['longitud']}');
+    Coordenada? valor = (lat != null && lng != null) ? Coordenada(lat, lng) : null;
+    final direccion = cliente['direccion']?.toString();
+    final guardado = await mostrarFormulario(
+      context,
+      icono: Icons.place_outlined,
+      titulo: 'Ubicación de ${cliente['nombre']}',
+      subtitulo: 'Escribe la dirección y elige una sugerencia',
+      textoAccion: 'Guardar ubicación',
+      ancho: 520,
+      contenido: (context, redibujar) => BuscadorDireccion(
+        valor: valor,
+        textoInicial: direccion,
+        onChanged: (c) => redibujar(() => valor = c),
+      ),
+      alGuardar: () async {
+        await ApiClient.instance.patch('/api/clientes/${cliente['id']}/ubicacion', {
+          'latitud': valor?.latitud,
+          'longitud': valor?.longitud,
+        });
+      },
+    );
+    if (guardado && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Ubicación guardada')));
+      await _cargar();
     }
   }
 
@@ -214,14 +250,52 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
                             'solicitan desde el portal en la pestaña «Cuentas por aprobar».',
                       )
                     : ListView.builder(
-                    padding: const EdgeInsets.all(16),
+                    // abajo queda espacio para que el botón flotante no tape la última tarjeta
+                    padding: const EdgeInsets.fromLTRB(16, 16, 16, 88),
                     itemCount: _clientes.length,
                     itemBuilder: (context, i) {
                       final c = _clientes[i];
+                      final ubicado = c['latitud'] != null;
+                      // los datos del cliente ocupan todo el ancho y la acción va debajo: a un lado,
+                      // en un teléfono el botón se comía la mitad y partía el nombre y el correo
                       return Card(
-                        child: ListTile(
-                          title: Text(c['nombre']),
-                          subtitle: Text('${c['email'] ?? 'sin correo'} | ${c['telefono'] ?? 'sin teléfono'}'),
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(c['nombre'].toString(), style: Theme.of(context).textTheme.titleMedium),
+                              const SizedBox(height: 2),
+                              Text(
+                                '${c['email'] ?? 'sin correo'} | ${c['telefono'] ?? 'sin teléfono'}',
+                                style: TextStyle(color: Colors.grey.shade700),
+                              ),
+                              const SizedBox(height: 4),
+                              Wrap(
+                                alignment: WrapAlignment.spaceBetween,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        ubicado ? Icons.check_circle : Icons.location_off_outlined,
+                                        size: 18,
+                                        color: ubicado ? GomaqColors.estadoPositivo : GomaqColors.advertenciaFuerte,
+                                      ),
+                                      const SizedBox(width: 6),
+                                      Text(ubicado ? 'Ubicación marcada' : 'Sin ubicación en el mapa'),
+                                    ],
+                                  ),
+                                  TextButton.icon(
+                                    onPressed: () => _ubicarCliente(Map<String, dynamic>.from(c as Map)),
+                                    icon: const Icon(Icons.place_outlined),
+                                    label: Text(ubicado ? 'Cambiar ubicación' : 'Ubicar'),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                       );
                     },

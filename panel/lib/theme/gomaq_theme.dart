@@ -20,10 +20,19 @@ class GomaqColors {
   static const estadoNegativo = Color(0xFFB23A2E); // fuera de servicio / error
   static const estadoNeutro = Color(0xFF6B7075); // pendiente / asignada
 
+  /// Ámbar oscuro para TEXTO e ICONOS de advertencia sobre fondo claro (5,93:1 sobre blanco y 5,3:1
+  /// sobre las tarjetas). El ámbar `estadoAdvertencia` solo sirve para puntos y bordes: como icono
+  /// daba 2,85:1 sobre las tarjetas y WCAG pide 3:1.
+  static const advertenciaFuerte = Color(0xFF8A5A00);
+
+  /// Gris para algo que perdió vigencia (por ejemplo la posición de un furgón de hace más de 15
+  /// minutos). El gris 500 de Material daba 2,68:1 con blanco; este da 4,6:1.
+  static const grisApagado = Color(0xFF757575);
+
   // Texto sobre el fondo tenue de cada estado. Los colores de arriba sirven para puntos, bordes
   // e iconos, pero como texto no llegaban al contraste mínimo (el ámbar daba 2,69:1).
   static const _textoPositivo = Color(0xFF1F6B38); // 5,44:1
-  static const _textoAdvertencia = Color(0xFF8A5A00); // 5,07:1
+  static const _textoAdvertencia = advertenciaFuerte; // 5,07:1
   static const _textoNegativo = Color(0xFFB23A2E); // 4,71:1
   static const _textoNeutro = Color(0xFF4A4F54);
 

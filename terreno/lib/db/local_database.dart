@@ -17,7 +17,7 @@ class LocalDatabase {
     final path = join(dbPath, 'gomaq_mecanico.db');
     return openDatabase(
       path,
-      version: 9,
+      version: 10,
       onCreate: (db, version) async {
         await db.execute('''
           CREATE TABLE ordenes_locales (
@@ -66,6 +66,7 @@ class LocalDatabase {
         await _migrarV7(db);
         await _migrarV8(db);
         await _migrarV9(db);
+        await _migrarV10(db);
       },
       onUpgrade: (db, oldVersion, newVersion) async {
         if (oldVersion < 2) {
@@ -115,8 +116,20 @@ class LocalDatabase {
         if (oldVersion < 9) {
           await _migrarV9(db);
         }
+        if (oldVersion < 10) {
+          await _migrarV10(db);
+        }
       },
     );
+  }
+
+  /// v10: destino de la OT (la ubicacion del cliente) para el boton "Como llegar". Solo agrega dos
+  /// columnas nulas: nunca se recrea la tabla, porque esa base guarda la cola de sincronizacion
+  /// y el trabajo del mecanico aun no enviado. Las OT que ya estan en el telefono quedan sin destino
+  /// hasta la proxima sincronizacion, y mientras tanto la app simplemente no muestra el boton.
+  Future<void> _migrarV10(Database db) async {
+    await db.execute('ALTER TABLE ordenes_locales ADD COLUMN destino_lat REAL');
+    await db.execute('ALTER TABLE ordenes_locales ADD COLUMN destino_lng REAL');
   }
 
   /// v9: costo de cada repuesto del catalogo. Precarga el precio de una linea de repuesto (por ahora

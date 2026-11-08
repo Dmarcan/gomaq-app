@@ -47,7 +47,7 @@ router.get('/solicitudes', verifyToken, requireRole('administrativo', 'gerente')
     try {
         const result = await pool.query(
             `SELECT id, nombre_contacto, nombre_empresa, email, rut_empresa, telefono_whatsapp, horario_trabajo,
-                    horario_colacion, direccion, estado, created_at
+                    horario_colacion, direccion, latitud, longitud, estado, created_at
              FROM solicitudes_cliente WHERE ${SQL_CUENTAS_POR_APROBAR} ORDER BY created_at ASC`
         );
         res.json(result.rows);
@@ -85,11 +85,18 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
             // el cliente es la empresa: antes se creaba con el nombre de la persona de contacto
             // porque el formulario no pedia el de la empresa (las solicitudes antiguas no lo traen)
             const nuevoCliente = await client.query(
-                `INSERT INTO clientes (nombre, rut, email, telefono, horario_trabajo, horario_colacion, direccion)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id`,
-                [s.nombre_empresa || s.nombre_contacto, s.rut_empresa, s.email, s.telefono_whatsapp, s.horario_trabajo, s.horario_colacion, s.direccion]
+                `INSERT INTO clientes (nombre, rut, email, telefono, horario_trabajo, horario_colacion, direccion, latitud, longitud)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+                [s.nombre_empresa || s.nombre_contacto, s.rut_empresa, s.email, s.telefono_whatsapp, s.horario_trabajo, s.horario_colacion, s.direccion, s.latitud, s.longitud]
             );
             clienteIdFinal = nuevoCliente.rows[0].id;
+        } else if (s.latitud !== null && s.longitud !== null) {
+            // se vincula a un cliente que ya existe: recibe la ubicacion marcada al registrarse
+            // solo si aun no tiene una, para no pisar la que el administrativo haya cargado
+            await client.query(
+                'UPDATE clientes SET latitud = $1, longitud = $2 WHERE id = $3 AND latitud IS NULL',
+                [s.latitud, s.longitud, clienteIdFinal]
+            );
         }
 
         const nuevoUsuario = await client.query(

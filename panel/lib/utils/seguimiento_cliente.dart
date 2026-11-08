@@ -92,6 +92,47 @@ String resumenPaso(Map<String, dynamic> orden, {DateTime? ahora}) {
   return 'Paso ${paso + 1} de ${pasosParaCliente.length}: ${pasosParaCliente[paso]}$desde';
 }
 
+/// "11 min", "1 h 20 min" o "2 h". Redondea hacia arriba: nunca promete menos tiempo del real.
+String duracionCorta(Duration d) {
+  final minutos = (d.inSeconds / 60).ceil();
+  if (minutos < 60) return '$minutos min';
+  final h = minutos ~/ 60;
+  final m = minutos % 60;
+  return m == 0 ? '$h h' : '$h h $m min';
+}
+
+/// Hora de llegada estimada del técnico, o null si no corresponde mostrarla: la orden no va en
+/// camino o el servidor no mandó la hora. Ejemplos:
+///   "Llega en ~11 min (hora estimada 10:23, aproximada)"
+///   "Debería llegar en cualquier momento"   (la hora estimada ya pasó)
+/// El servidor entrega la hora de llegada absoluta; así el texto sigue siendo correcto aunque
+/// la pantalla lleve rato abierta. [ahora] se puede inyectar para probar.
+String? textoLlegada(Map<String, dynamic> orden, {DateTime? ahora}) {
+  if (orden['estado'] != 'en_camino') return null;
+  final valor = orden['eta_llegada_at'];
+  if (valor is! String) return null;
+  final llegada = DateTime.tryParse(valor)?.toLocal();
+  if (llegada == null) return null;
+  final restante = llegada.difference(ahora ?? DateTime.now());
+  if (restante.inSeconds <= 0) return 'Debería llegar en cualquier momento';
+  final hora = horaCorta(llegada);
+  final aproximada = orden['eta_aproximada'] == true ? ', aproximada' : '';
+  return 'Llega en ~${duracionCorta(restante)} (hora estimada $hora$aproximada)';
+}
+
+/// "Actualizada hace 3 min" según cuándo se calculó la hora de llegada, para que el cliente
+/// pueda juzgar qué tan fresca es. Null si no hay dato.
+String? textoActualizacionLlegada(Map<String, dynamic> orden, {DateTime? ahora}) {
+  if (orden['estado'] != 'en_camino') return null;
+  final valor = orden['eta_calculada_at'];
+  if (valor is! String) return null;
+  final calculada = DateTime.tryParse(valor)?.toLocal();
+  if (calculada == null) return null;
+  final minutos = (ahora ?? DateTime.now()).difference(calculada).inMinutes;
+  if (minutos < 1) return 'Actualizada recién';
+  return 'Actualizada hace ${duracionCorta(Duration(minutes: minutos))}';
+}
+
 /// "Ford Transit · ABCD12", o solo lo que haya. Nulo si no hay datos del vehículo.
 String? descripcionVehiculo(Map<String, dynamic> orden) {
   final marcaModelo = [orden['vehiculo_marca'], orden['vehiculo_modelo']]

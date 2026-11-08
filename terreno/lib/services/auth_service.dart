@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import '../db/local_database.dart';
 import 'api_client.dart';
+import 'posicion_service.dart';
 
 class AuthService extends ChangeNotifier {
   bool _autenticado = false;
@@ -76,6 +77,7 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    await PosicionService.detenerSeguimiento();
     await ApiClient.instance.borrarToken();
     _autenticado = false;
     _rol = null;

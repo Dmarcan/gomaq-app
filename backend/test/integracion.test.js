@@ -280,6 +280,17 @@ describe('superficie expuesta', () => {
         assert.ok(r.headers.get('content-security-policy'), 'falta la cabecera de politica de contenido');
     });
 
+    test('no borra el Referer: el mapa de OpenStreetMap lo exige y bloquea sin el', async (t) => {
+        if (!requiereServidor(t)) return;
+        const r = await pedir('/api/health');
+        const politica = r.headers.get('referrer-policy');
+        assert.ok(politica, 'falta la cabecera Referrer-Policy');
+        assert.notEqual(politica, 'no-referrer', 'no-referrer quita el Referer y OSM responde 403 a las imagenes del mapa');
+        assert.ok(!politica.includes('no-referrer'), politica);
+        // a otros sitios debe viajar como maximo el origen, nunca la ruta con datos
+        assert.ok(['strict-origin-when-cross-origin', 'strict-origin', 'origin-when-cross-origin', 'origin'].includes(politica), politica);
+    });
+
     test('no expone archivos del servidor sin autenticacion', async (t) => {
         if (!requiereServidor(t)) return;
         // el directorio publico de subidas se elimino: la ruta debe caer en el panel web,

@@ -22,6 +22,9 @@ const {
     validarEstadoEquipoCierre, aplicarEntradaEquipo, aplicarCierreEquipo, origenDeCliente,
 } = require('../utils/estadoEquipo');
 const { EN_CURSO } = require('../utils/estadosOt');
+const { fijarDestinoOt } = require('../utils/fijarDestinoOt');
+const { guardarPosicion, limpiarViaje } = require('../utils/posicionMecanico');
+const { mejorarEtaConRutas } = require('../services/rutasEta');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
@@ -66,6 +69,8 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
             [maquinaria_id, clienteOrden, await origenDeCliente(client, clienteOrden), motivo || null]
         );
         const orden = result.rows[0];
+        // destino de la visita (ubicacion del cliente o de la guia vigente); sin coordenadas queda en null
+        await fijarDestinoOt(client, orden.id);
         await dejarEvento(client, {
             ordenId: orden.id, tipo: 'creacion', origen: 'panel', estadoNuevo: orden.estado,
             usuario: req.user,
@@ -272,7 +277,15 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
                     f.id AS factura_id, f.folio AS factura_folio, f.archivo_url AS factura_url,
                     u.nombre AS mecanico_nombre,
                     -- el vehiculo de hoy del tecnico: solo de una orden abierta (en una terminada podria ser otro)
-                    v.patente AS vehiculo_patente, v.marca AS vehiculo_marca, v.modelo AS vehiculo_modelo
+                    v.patente AS vehiculo_patente, v.marca AS vehiculo_marca, v.modelo AS vehiculo_modelo,
+                    -- hora estimada de llegada: solo mientras el tecnico va en camino, como hora absoluta. Al
+                    -- cliente NUNCA le llegan coordenadas (ni la posicion del tecnico ni el destino de la OT)
+                    CASE WHEN ot.estado = 'en_camino' AND ot.eta_segundos IS NOT NULL
+                         THEN ot.eta_calculada_at + make_interval(secs => ot.eta_segundos) END AS eta_llegada_at,
+                    CASE WHEN ot.estado = 'en_camino' AND ot.eta_segundos IS NOT NULL
+                         THEN ot.eta_calculada_at END AS eta_calculada_at,
+                    CASE WHEN ot.estado = 'en_camino' AND ot.eta_segundos IS NOT NULL
+                         THEN ot.eta_fuente IS DISTINCT FROM 'ors' END AS eta_aproximada
              FROM ordenes_trabajo ot
              JOIN maquinarias m ON m.id = ot.maquinaria_id
              LEFT JOIN facturas f ON f.orden_trabajo_id = ot.id
@@ -395,6 +408,7 @@ router.patch('/:id/tomar', verifyToken, requireRole('mecanico'), async (req, res
             return res.status(409).json({ error: 'Otro técnico ya tomó esta orden o ya no está disponible' });
         }
         const mecanico = await client.query('SELECT id, nombre, rut FROM usuarios WHERE id = $1', [req.user.id]);
+        await fijarDestinoOt(client, tomada.rows[0].id);
         await encolarAvisoAsignacion(client, tomada.rows[0], mecanico.rows[0]);
         await dejarEvento(client, {
             ordenId: tomada.rows[0].id, tipo: 'toma', origen: 'terreno',
@@ -483,6 +497,10 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
             return res.json(orden);
         }
 
+        // cambio de tecnico: el viaje anterior ya no vale (se borran su posicion y su ETA, que son de
+        // otra persona) y el destino se vuelve a fijar con los datos de hoy
+        await limpiarViaje(client, orden.id);
+        await fijarDestinoOt(client, orden.id);
         await encolarAvisoAsignacion(client, orden, mecanico.rows[0]);
         // aviso interno al mecanico nuevo y, si habia otro, al anterior ("ya no vayas"). Solo llega aca
         // si el tecnico cambio: el doble clic salio arriba sin encolar nada
@@ -579,12 +597,93 @@ router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (re
                 nacioPorSincronizacion: check.nacioPorSincronizacion, aplicado: decision.aplicado,
             });
         }
+
+        // Posicion del mecanico (ubicacion + ETA). Solo con un cambio a 'en_camino' que SI se aplico:
+        // un en_camino atrasado que llega por la cola offline (la OT ya avanzo) no debe guardar una
+        // posicion vieja. Y nunca puede hacer fallar el cambio de estado: si la posicion es invalida
+        // se descarta (un error aqui haria que la cola reintentara el cambio para siempre).
+        let origenParaRuta = null;
+        if (cambio === 'cambiar' && estado === 'en_camino' && req.body.posicion && typeof req.body.posicion === 'object') {
+            await client.query('SAVEPOINT posicion');
+            try {
+                const guardada = await guardarPosicion(client, {
+                    ordenId: Number(req.params.id), usuarioId: req.user.id,
+                    posicion: { ...req.body.posicion, capturada_en: req.body.posicion.capturada_en ?? momento ?? new Date().toISOString() },
+                });
+                if (guardada.guardada) origenParaRuta = guardada.origen;
+                await client.query('RELEASE SAVEPOINT posicion');
+            } catch (errPos) {
+                console.error('Posicion descartada:', errPos.message);
+                await client.query('ROLLBACK TO SAVEPOINT posicion');
+            }
+        } else if (cambio === 'cambiar' && (estado === 'en_terreno' || estado === 'en_reparacion')) {
+            // llego: la posicion y la ETA del viaje dejan de existir (privacidad del mecanico)
+            await limpiarViaje(client, Number(req.params.id));
+        }
         await client.query('COMMIT');
         res.json(result.rows[0]);
+        // primera posicion del viaje: se pide una ruta real fuera de la respuesta (ver /posicion)
+        if (origenParaRuta) {
+            mejorarEtaConRutas(pool, { ordenId: Number(req.params.id), usuarioId: req.user.id, origen: origenParaRuta });
+        }
     } catch (err) {
         if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al actualizar diagnóstico' });
+    } finally {
+        if (client) client.release();
+    }
+});
+
+// POST /api/ordenes-trabajo/:id/posicion - el mecanico envia su posicion mientras va en camino.
+//
+// Fuera de la cola offline a proposito: una posicion vieja no sirve, asi que no se reintenta ni
+// lleva uuid_cliente. La idempotencia es por hora de captura (solo gana la mas nueva). Solo el
+// mecanico dueno de la OT, y solo mientras esta en camino; en cualquier otro estado responde 200
+// sin guardar para que la app deje de enviar sin tratarlo como error. La fila de la OT se
+// bloquea con FOR UPDATE: asi una reasignacion o un cambio a en_terreno concurrente no deja una
+// posicion colgada.
+router.post('/:id/posicion', verifyToken, requireRole('mecanico'), async (req, res) => {
+    if (!Number.isInteger(Number(req.params.id))) return res.status(400).json({ error: 'Id de orden inválido' });
+    let client = null;
+    try {
+        client = await pool.connect();
+        await client.query('BEGIN');
+        const check = await verificarDuenoOrden(req.params.id, req.user.id, { db: client, bloquear: true });
+        if (!check.existe) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+        }
+        if (!check.esDueno) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
+        }
+        if (check.estado !== 'en_camino') {
+            await client.query('ROLLBACK');
+            return res.json({ guardada: false, motivo: 'fuera_de_camino' });
+        }
+        const resultado = await guardarPosicion(client, {
+            ordenId: Number(req.params.id), usuarioId: req.user.id, posicion: req.body,
+        });
+        if (!resultado.guardada && ['coordenadas_invalidas', 'hora_invalida', 'hora_futura'].includes(resultado.motivo)) {
+            await client.query('ROLLBACK');
+            const mensajes = {
+                hora_invalida: 'capturada_en debe ser una fecha valida',
+                hora_futura: 'capturada_en esta en el futuro: revise la hora del telefono',
+            };
+            return res.status(400).json({ error: resultado.error || mensajes[resultado.motivo] });
+        }
+        await client.query('COMMIT');
+        res.json({ guardada: resultado.guardada, motivo: resultado.motivo || null, eta: resultado.eta || null });
+        // ya respondido: una ruta real mejora la ETA aproximada. Sin await y sin lanzar nunca; si no hay
+        // llave, cupo o servicio, la OT conserva la aproximada
+        if (resultado.guardada) {
+            mejorarEtaConRutas(pool, { ordenId: Number(req.params.id), usuarioId: req.user.id, origen: resultado.origen });
+        }
+    } catch (err) {
+        if (client) await client.query('ROLLBACK').catch(() => {});
+        console.error(err);
+        res.status(500).json({ error: 'Error al guardar la posición' });
     } finally {
         if (client) client.release();
     }
@@ -838,6 +937,8 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
                 estado_equipo_nuevo: equipo.nuevo,
             },
         });
+        // la OT se cerro: no puede quedar ni la posicion del mecanico ni su ETA
+        await limpiarViaje(client, orden.id);
 
         await client.query('COMMIT');
         res.json(result.rows[0]);

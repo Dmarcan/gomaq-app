@@ -7,6 +7,8 @@ const { subidaImagen } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { rutaAdjuntoSolicitud } = require('../utils/rutaArchivo');
 const { dejarEvento } = require('../utils/eventosOt');
+const { validarCoordenadasFormulario } = require('../utils/geo');
+const { fijarDestinoOt } = require('../utils/fijarDestinoOt');
 
 const { origenDeCliente } = require('../utils/estadoEquipo');
 
@@ -36,6 +38,10 @@ router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archi
         return res.status(400).json({ error: 'maquinaria_id y descripcion son requeridos' });
     }
     const tipoFinal = tipo && TIPOS_VALIDOS.includes(tipo) ? tipo : 'falla';
+    // ubicacion de OTRA obra (opcional): sin ella se usa la de la empresa, registrada en clientes.
+    // Llega en un multipart, por eso viene como texto.
+    const coords = validarCoordenadasFormulario(req.body.latitud, req.body.longitud);
+    if (!coords.ok) return res.status(400).json({ error: coords.error });
     if (!req.user.cliente_id) {
         return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
     }
@@ -59,9 +65,9 @@ router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archi
 
         try {
             const result = await pool.query(
-                `INSERT INTO solicitudes (cliente_id, maquinaria_id, descripcion, tipo, evidencia_url)
-                 VALUES ($1, $2, $3, $4::tipo_solicitud, $5) RETURNING *`,
-                [req.user.cliente_id, maquinaria_id, descripcion, tipoFinal, evidenciaUrl]
+                `INSERT INTO solicitudes (cliente_id, maquinaria_id, descripcion, tipo, evidencia_url, latitud, longitud)
+                 VALUES ($1, $2, $3, $4::tipo_solicitud, $5, $6, $7) RETURNING *`,
+                [req.user.cliente_id, maquinaria_id, descripcion, tipoFinal, evidenciaUrl, coords.latitud, coords.longitud]
             );
             res.status(201).json(result.rows[0]);
         } catch (errorBd) {
@@ -160,6 +166,8 @@ router.patch('/:id/convertir', verifyToken, requireRole('administrativo', 'geren
             `UPDATE solicitudes SET estado = 'convertida', orden_trabajo_id = $1 WHERE id = $2`,
             [orden.id, solicitud.id]
         );
+        // despues de vincular la solicitud: si el cliente indico otra obra, ese es el destino
+        await fijarDestinoOt(client, orden.id);
 
         await client.query('COMMIT');
         res.json({ solicitud_id: solicitud.id, orden_trabajo: orden });

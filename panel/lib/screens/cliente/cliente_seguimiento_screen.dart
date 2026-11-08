@@ -127,8 +127,11 @@ class _ClienteSeguimientoScreenState extends State<ClienteSeguimientoScreen> {
     final tecnico = item['mecanico_nombre'] as String?;
     final vehiculo = descripcionVehiculo(item);
     final detalle = item['detalle'] as String?;
+    final llegada = textoLlegada(item);
     return [
       resumenPaso(item),
+      // lo que más le importa al cliente mientras espera: cuándo llega el técnico
+      ?llegada,
       if (proximo != null) 'Siguiente: $proximo',
       if (tecnico != null && tecnico.isNotEmpty) (vehiculo == null ? 'Técnico: $tecnico' : 'Técnico: $tecnico · $vehiculo'),
       if (detalle != null && detalle.isNotEmpty) detalle,
@@ -152,6 +155,8 @@ class _SeguimientoDialog extends StatelessWidget {
   Widget build(BuildContext context) {
     final paso = _pasoActual();
     final mecanico = item['mecanico_nombre'] as String?;
+    final llegada = textoLlegada(item);
+    final actualizacion = textoActualizacionLlegada(item);
 
     return CuadroDialogo(
       icono: Icons.timeline,
@@ -162,6 +167,28 @@ class _SeguimientoDialog extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisSize: MainAxisSize.min,
             children: [
+              if (llegada != null) ...[
+                Semantics(
+                  liveRegion: true,
+                  child: Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(12),
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: GomaqColors.primario.withValues(alpha: 0.08),
+                      borderRadius: BorderRadius.circular(8),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(llegada, style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                        if (actualizacion != null)
+                          Text(actualizacion, style: Theme.of(context).textTheme.bodySmall),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
               for (var i = 0; i < pasosParaCliente.length; i++) _pasoTimeline(i, paso != null && i <= paso, i == paso, horaConDia(horaDePaso(item, i))),
               if (mecanico != null && mecanico.isNotEmpty) ...[
                 const SizedBox(height: 12),

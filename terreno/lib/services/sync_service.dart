@@ -61,7 +61,10 @@ class SyncService extends ChangeNotifier {
 
   // ---------- Encolar acciones del mecanico (siempre escriben local primero) ----------
 
-  Future<void> encolarDiagnostico(int ordenId, {String? diagnostico, String? estado}) async {
+  /// [posicion] solo se manda al pasar a en camino (ver cuerpoPosicion): viaja dentro de la misma tarea
+  /// para que el servidor la guarde unicamente si ese cambio de estado se aplico. Si la tarea llega
+  /// tarde, el servidor descarta una posicion vieja sin hacer fallar el cambio de estado.
+  Future<void> encolarDiagnostico(int ordenId, {String? diagnostico, String? estado, Map<String, dynamic>? posicion}) async {
     ordenId = resolverIdOrden(ordenId);
     final db = await _db;
     await db.update(
@@ -80,6 +83,7 @@ class SyncService extends ChangeNotifier {
       // hora real del toque: la cola puede enviarlo mucho despues, y el servidor registra cuando
       // se acepto, salio o llego (no cuando por fin hubo senal)
       if (estado != null) 'ocurrio_en': DateTime.now().toUtc().toIso8601String(),
+      'posicion': ?posicion,
     });
     notifyListeners();
   }

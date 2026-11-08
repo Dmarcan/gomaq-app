@@ -1,17 +1,21 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:provider/provider.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../config/reglas_negocio.dart';
 import '../db/local_database.dart';
 import '../models/orden_trabajo.dart';
 import '../services/connectivity_service.dart';
+import '../services/posicion_service.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../widgets/estado_chip.dart';
 import '../widgets/foto_thumbnail.dart';
 import '../utils/formato.dart';
+import '../utils/navegacion.dart';
 import '../widgets/dialogo_horometro.dart';
 import '../widgets/dialogo_texto.dart';
 import '../widgets/errores_sync.dart';
@@ -28,7 +32,12 @@ class OrdenDetailScreen extends StatefulWidget {
   State<OrdenDetailScreen> createState() => _OrdenDetailScreenState();
 }
 
-class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
+class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindingObserver {
+  // evita pedir la posicion y encolar el cambio dos veces si se toca "Salir" dos veces seguidas
+  bool _saliendo = false;
+  // si el teléfono deja enviar la posición mientras va en camino (se muestra en la tarjeta del viaje)
+  EstadoUbicacion _estadoUbicacion = EstadoUbicacion.ok;
+
   /// Id con el que se opera la OT (el real si una creada en terreno ya se sincronizo).
   late final SyncService _sincronizador;
   int get _id => _sincronizador.resolverIdOrden(widget.ordenId);
@@ -81,6 +90,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   void initState() {
     super.initState();
     _sincronizador = context.read<SyncService>();
+    WidgetsBinding.instance.addObserver(this);
     // la cantidad parte en 1: lo comun es poner una unidad
     _cantidadInsumoCtrl.text = '1';
     _sincronizador.addListener(_alCambiarSync);
@@ -102,8 +112,38 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
     });
   }
 
+  /// Al volver a la app (por ejemplo desde Google Maps o Waze) se envia la posicion de inmediato:
+  /// mientras la app esta en segundo plano Android no entrega ubicacion, asi que es el momento en que
+  /// la hora de llegada se puede refrescar.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState estado) {
+    if (estado == AppLifecycleState.resumed && _orden?.estado == 'en_camino') {
+      PosicionService.enviar(_id);
+      // quizá volvió de Ajustes con el permiso o el GPS ya activados: se reintenta el servicio
+      _sincronizarEnvioPosicion();
+    }
+  }
+
+  /// Mantiene el servicio de posicion solo mientras la OT esta en camino. El servicio sigue vivo al
+  /// salir de esta pantalla o pasar a Maps o Waze: se apaga cuando la OT deja de estar en camino.
+  /// Aqui la app esta a la vista, que es cuando Android deja arrancarlo.
+  void _sincronizarEnvioPosicion() {
+    if (_orden?.estado == 'en_camino') {
+      PosicionService.iniciarSeguimiento(_id).then((_) => _refrescarEstadoUbicacion());
+    } else if (PosicionService.ordenSeguida == _id) {
+      PosicionService.detenerSeguimiento();
+    }
+  }
+
+  /// Lee si el teléfono deja enviar la posición, para decírselo al mecánico en la tarjeta del viaje.
+  Future<void> _refrescarEstadoUbicacion() async {
+    final estado = await PosicionService.estadoUbicacion();
+    if (mounted && estado != _estadoUbicacion) setState(() => _estadoUbicacion = estado);
+  }
+
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _sincronizador.removeListener(_alCambiarSync);
     _diagnosticoCtrl.dispose();
     _observacionFinalCtrl.dispose();
@@ -143,6 +183,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
       _tramosLocales = tramos;
       _precargarPrecio();
     });
+    _sincronizarEnvioPosicion();
   }
 
   /// Guarda la cabecera del talonario: tipo de servicio, observación final y folio del papel.
@@ -244,9 +285,183 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
   /// Sale hacia el destino: desde aqui corre el tiempo de viaje, separado del de trabajo, y el
   /// cliente ve que el tecnico va en camino.
   Future<void> _salirAlDestino() async {
-    await context.read<SyncService>().encolarDiagnostico(_id, estado: 'en_camino');
-    await _cargar();
-    _intentarSincronizarAhora();
+    if (_saliendo) return;
+    _saliendo = true;
+    try {
+      final sync = context.read<SyncService>();
+      // la posicion de salida viaja en la misma tarea del cambio de estado. Si no hay permiso, GPS o
+      // senal en unos segundos se sale igual sin ella: pedirla nunca puede frenar el viaje. Es aqui
+      // donde Android pregunta por el permiso de ubicacion, una sola vez.
+      final posicion = await PosicionService.obtener(pedirPermiso: true);
+      await sync.encolarDiagnostico(_id, estado: 'en_camino', posicion: posicion);
+      await _cargar();
+      _intentarSincronizarAhora();
+    } finally {
+      _saliendo = false;
+    }
+  }
+
+  /// Abre la ruta en la app de mapas elegida. Un enlace https abre la app si esta instalada y si no,
+  /// el navegador, asi que casi nunca falla; si falla se avisa en vez de quedar en silencio.
+  Future<void> _comoLlegar(Uri? enlace) async {
+    if (enlace == null) return;
+    var abierto = false;
+    try {
+      abierto = await launchUrl(enlace, mode: LaunchMode.externalApplication);
+    } catch (_) {
+      abierto = false;
+    }
+    if (!abierto && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('No se pudo abrir la app de mapas. Revisa que haya una instalada.')),
+      );
+    }
+  }
+
+  /// Tarjeta "Como llegar" con la ubicacion que el cliente marco al registrarse. Sin ella no se muestra
+  /// un boton que no lleva a ninguna parte: se avisa que hay que pedir la direccion a la oficina.
+  Widget _tarjetaComoLlegar(OrdenTrabajo orden) {
+    final google = enlaceGoogleMaps(orden.destinoLat, orden.destinoLng);
+    final waze = enlaceWaze(orden.destinoLat, orden.destinoLng);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: const [
+                Icon(Icons.place_outlined, size: 18, color: GomaqColors.textoSecundario),
+                SizedBox(width: 6),
+                Text('Cómo llegar', style: TextStyle(fontWeight: FontWeight.bold)),
+              ],
+            ),
+            const SizedBox(height: 8),
+            if (google == null)
+              const Text(
+                'El cliente no marcó su ubicación. Pide la dirección a la oficina.',
+                style: TextStyle(color: GomaqColors.textoSecundario, fontSize: 13),
+              )
+            else
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                children: [
+                  FilledButton.icon(
+                    onPressed: () => _comoLlegar(google),
+                    icon: const Icon(Icons.map_outlined, size: 18),
+                    label: const Text('Google Maps'),
+                  ),
+                  OutlinedButton.icon(
+                    onPressed: () => _comoLlegar(waze),
+                    icon: const Icon(Icons.navigation_outlined, size: 18),
+                    label: const Text('Waze'),
+                  ),
+                ],
+              ),
+            const SizedBox(height: 12),
+            _avisoUbicacion(orden),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Dice con claridad que se comparte la ubicación, y desde cuándo y hasta cuándo, para que el
+  /// mecánico no se entere por la notificación. Si el teléfono no deja enviarla, explica qué hacer
+  /// en vez de fallar en silencio.
+  Widget _avisoUbicacion(OrdenTrabajo orden) {
+    const estiloNota = TextStyle(color: GomaqColors.textoSecundario, fontSize: 12);
+    if (orden.estado != 'en_camino') {
+      return const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.info_outline, size: 16, color: GomaqColors.textoSecundario),
+          SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Al salir, la app comparte tu ubicación con la oficina solo mientras vas en camino. '
+              'El cliente ve únicamente la hora estimada de llegada.',
+              style: estiloNota,
+            ),
+          ),
+        ],
+      );
+    }
+    final estado = _estadoUbicacion;
+    if (estado == EstadoUbicacion.ok || estado == EstadoUbicacion.desconocido) {
+      return const Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Icons.location_on, size: 16, color: GomaqColors.estadoPositivo),
+          SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              'Compartiendo tu ubicación con la oficina mientras vas en camino. Se apaga sola cuando llegues.',
+              style: estiloNota,
+            ),
+          ),
+        ],
+      );
+    }
+    final (mensaje, boton) = switch (estado) {
+      EstadoUbicacion.servicioApagado => (
+          'La ubicación del teléfono está apagada: la oficina no ve tu posición ni la hora de llegada.',
+          'Activar ubicación',
+        ),
+      EstadoUbicacion.permisoDenegado => (
+          'Sin permiso de ubicación: la oficina no ve tu posición ni la hora de llegada.',
+          'Dar permiso',
+        ),
+      _ => (
+          'El permiso de ubicación está bloqueado: la oficina no ve tu posición ni la hora de llegada.',
+          'Abrir ajustes',
+        ),
+    };
+    // liveRegion: TalkBack anuncia el aviso cuando aparece (por ejemplo al retirar el permiso) y no solo
+    // si la persona llega a recorrer la pantalla hasta esa tarjeta
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      child: Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: GomaqColors.estadoAdvertencia.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(8),
+        // borde con contraste 3:1 sobre la tarjeta (con el 50 % anterior daba 2,81:1)
+        border: Border.all(color: GomaqColors.estadoAdvertencia.withValues(alpha: 0.8)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Icon(Icons.location_off_outlined, size: 16, color: GomaqColors.estadoAdvertencia),
+              const SizedBox(width: 6),
+              Expanded(child: Text(mensaje, style: const TextStyle(fontSize: 13))),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: TextButton(
+              onPressed: () async {
+                if (estado == EstadoUbicacion.permisoDenegado) {
+                  // todavía se puede pedir con el diálogo normal de Android, sin ir a Ajustes
+                  await PosicionService.iniciarSeguimiento(_id);
+                } else {
+                  await PosicionService.abrirAjustes(estado);
+                }
+                await _refrescarEstadoUbicacion();
+              },
+              child: Text(boton),
+            ),
+          ),
+        ],
+      ),
+      ),
+    );
   }
 
   /// INICIAR TRABAJO se pulsa ya en el sitio: pasa la orden a en terreno y arranca el reloj de
@@ -1255,6 +1470,9 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
         padding: const EdgeInsets.all(16),
         children: [
           _cabecera(orden),
+
+          // ya aceptado el trabajo y hasta llegar: la ruta al cliente
+          if (orden.estado == 'aceptada' || orden.estado == 'en_camino') _tarjetaComoLlegar(orden),
 
           // Flujo guiado: antes de iniciar solo se documenta el estado inicial;
           // diagnostico e insumos se desbloquean al pasar a en_terreno.

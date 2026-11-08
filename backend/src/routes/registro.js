@@ -4,6 +4,7 @@ const bcrypt = require('bcryptjs');
 const pool = require('../config/db');
 
 const { limiteRegistro } = require('../middleware/limites');
+const { validarCoordenadas } = require('../utils/geo');
 
 const router = express.Router();
 
@@ -25,6 +26,10 @@ router.post('/', limiteRegistro, async (req, res) => {
         return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
     }
 
+    // ubicacion de la empresa (opcional): un panel o APK anterior no la manda y todo sigue igual
+    const coords = validarCoordenadas(req.body.latitud, req.body.longitud);
+    if (!coords.ok) return res.status(400).json({ error: coords.error });
+
     try {
         const existente = await pool.query('SELECT id FROM usuarios WHERE email = $1', [email]);
         if (existente.rows.length > 0) {
@@ -44,20 +49,21 @@ router.post('/', limiteRegistro, async (req, res) => {
                 `UPDATE solicitudes_cliente SET
                     nombre_contacto = $1, password_hash = $2, rut_empresa = $3, telefono_whatsapp = $4,
                     horario_trabajo = $5, horario_colacion = $6, direccion = $7, nombre_empresa = $8,
+                    latitud = $9, longitud = $10,
                     estado = 'pendiente', created_at = now()
-                 WHERE id = $9
+                 WHERE id = $11
                  RETURNING id, nombre_contacto, nombre_empresa, email, estado, created_at`,
-                [nombre_contacto, passwordHash, rut_empresa || null, telefono_whatsapp || null, horario_trabajo || null, horario_colacion || null, direccion || null, textoONulo(nombre_empresa), rechazada.rows[0].id]
+                [nombre_contacto, passwordHash, rut_empresa || null, telefono_whatsapp || null, horario_trabajo || null, horario_colacion || null, direccion || null, textoONulo(nombre_empresa), coords.latitud, coords.longitud, rechazada.rows[0].id]
             );
             return res.status(201).json(actualizada.rows[0]);
         }
 
         const result = await pool.query(
             `INSERT INTO solicitudes_cliente
-                (nombre_contacto, email, password_hash, rut_empresa, telefono_whatsapp, horario_trabajo, horario_colacion, direccion, nombre_empresa)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+                (nombre_contacto, email, password_hash, rut_empresa, telefono_whatsapp, horario_trabajo, horario_colacion, direccion, nombre_empresa, latitud, longitud)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
              RETURNING id, nombre_contacto, nombre_empresa, email, estado, created_at`,
-            [nombre_contacto, email, passwordHash, rut_empresa || null, telefono_whatsapp || null, horario_trabajo || null, horario_colacion || null, direccion || null, textoONulo(nombre_empresa)]
+            [nombre_contacto, email, passwordHash, rut_empresa || null, telefono_whatsapp || null, horario_trabajo || null, horario_colacion || null, direccion || null, textoONulo(nombre_empresa), coords.latitud, coords.longitud]
         );
         res.status(201).json(result.rows[0]);
     } catch (err) {

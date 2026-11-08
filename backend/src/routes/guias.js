@@ -13,6 +13,7 @@ const { parsearGuia } = require('../utils/parsearDocumento');
 const { calcularEstadoMantencion, requiereAviso } = require('../utils/mantencion');
 const { encolarAvisoMantencion } = require('./horometro');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
+const { validarCoordenadasFormulario } = require('../utils/geo');
 
 const { sqlGuiasSinDocumento } = require('../utils/pendientes');
 
@@ -116,6 +117,11 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
     if (tipo === 'despacho' && !esFallido && !cliente_id) {
         return res.status(400).json({ error: 'Elige el cliente al que se despacha el equipo' });
     }
+    // donde queda el equipo (opcional): solo un despacho la guarda. Sin ella el destino y el mapa usan la
+    // ubicacion del cliente. Llega como texto (multipart), se valida y se redondea igual que en el resto.
+    const coords = validarCoordenadasFormulario(req.body.latitud, req.body.longitud);
+    if (!coords.ok) return res.status(400).json({ error: coords.error });
+    const guardarCoords = tipo === 'despacho' && coords.presente;
 
     // reintentos sin duplicados (migracion 026): el panel manda un uuid_cliente que se conserva
     // mientras se reintenta el mismo envio. Se revisa ANTES de subir el PDF a Supabase.
@@ -213,10 +219,11 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
             : await clienteAlMomento(client, id, fecha_hora, equipo.rows[0].cliente_id);
 
         const result = await client.query(
-            `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, fallido, cliente_id, registrada_por, uuid_cliente)
-             VALUES ($1, $2::tipo_guia, $3, COALESCE($4, now()), COALESCE($5, false), $6, $7, $8)
+            `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, fallido, cliente_id, registrada_por, uuid_cliente, latitud, longitud)
+             VALUES ($1, $2::tipo_guia, $3, COALESCE($4, now()), COALESCE($5, false), $6, $7, $8, $9, $10)
              RETURNING *, archivo_url IS NULL AS falta_documento`,
-            [id, tipo, rutaStorage, fecha_hora || null, esFallido, clienteGuia, req.user.id, uuidCliente]
+            [id, tipo, rutaStorage, fecha_hora || null, esFallido, clienteGuia, req.user.id, uuidCliente,
+             guardarCoords ? coords.latitud : null, guardarCoords ? coords.longitud : null]
         );
 
         // el cliente del equipo sale de la guia MAS RECIENTE por fecha, no de la ultima en llegar:

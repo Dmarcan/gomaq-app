@@ -15,6 +15,16 @@ class OrdenTrabajo {
   final String? tipoServicio;
   final String? observacionFinal;
   final String? folioPapel;
+  // ubicacion del cliente donde hay que llegar; null si no la marco (la app no muestra "Como llegar")
+  final double? destinoLat;
+  final double? destinoLng;
+
+  /// El servidor manda NUMERIC como texto ("-38.735900"): se acepta numero, texto o nulo.
+  static double? aDoubleONulo(dynamic valor) {
+    if (valor == null) return null;
+    if (valor is num) return valor.toDouble();
+    return double.tryParse(valor.toString());
+  }
 
   OrdenTrabajo({
     required this.id,
@@ -29,6 +39,8 @@ class OrdenTrabajo {
     this.tipoServicio,
     this.observacionFinal,
     this.folioPapel,
+    this.destinoLat,
+    this.destinoLng,
   });
 
   factory OrdenTrabajo.fromApiJson(Map<String, dynamic> json) {
@@ -45,6 +57,8 @@ class OrdenTrabajo {
       tipoServicio: json['tipo_servicio'],
       observacionFinal: json['observacion_final'],
       folioPapel: json['folio_papel'],
+      destinoLat: aDoubleONulo(json['destino_lat']),
+      destinoLng: aDoubleONulo(json['destino_lng']),
     );
   }
 
@@ -62,6 +76,8 @@ class OrdenTrabajo {
       tipoServicio: map['tipo_servicio'],
       observacionFinal: map['observacion_final'],
       folioPapel: map['folio_papel'],
+      destinoLat: aDoubleONulo(map['destino_lat']),
+      destinoLng: aDoubleONulo(map['destino_lng']),
     );
   }
 
@@ -79,6 +95,8 @@ class OrdenTrabajo {
       'tipo_servicio': tipoServicio,
       'observacion_final': observacionFinal,
       'folio_papel': folioPapel,
+      'destino_lat': destinoLat,
+      'destino_lng': destinoLng,
       'actualizado_en': DateTime.now().toIso8601String(),
     };
   }

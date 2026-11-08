@@ -33,6 +33,8 @@ const notificacionesRouter = require('./src/routes/notificaciones');
 const usuariosRouter = require('./src/routes/usuarios');
 const solicitudesRouter = require('./src/routes/solicitudes');
 const dashboardRouter = require('./src/routes/dashboard');
+const mapaRouter = require('./src/routes/mapa');
+const geocodificarRouter = require('./src/routes/geocodificar');
 const insumosRouter = require('./src/routes/insumos');
 const ejecutivosRouter = require('./src/routes/ejecutivos');
 const facturacionRouter = require('./src/routes/facturacion');
@@ -71,6 +73,11 @@ const detrasDeHttps = Boolean(process.env.RAILWAY_ENVIRONMENT_NAME) || process.e
 app.use(helmet({
     // el panel muestra imagenes firmadas de Supabase, que es otro origen
     crossOriginResourcePolicy: { policy: 'cross-origin' },
+    // El valor por defecto de helmet es `no-referrer`, que borra el Referer de TODO lo que pide el
+    // navegador. OpenStreetMap exige un Referer real en las imagenes del mapa y bloquea (403 "Access
+    // blocked") a quien lo quita. Con `strict-origin-when-cross-origin` (el valor por defecto de los
+    // navegadores) a otros sitios solo viaja el origen, nunca la ruta ni los parametros.
+    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
     contentSecurityPolicy: {
         directives: {
             defaultSrc: ["'self'"],
@@ -78,8 +85,9 @@ app.use(helmet({
             scriptSrc: ["'self'", "'wasm-unsafe-eval'", 'https://www.gstatic.com'],
             styleSrc: ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'],
             fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
-            imgSrc: ["'self'", 'data:', 'blob:', 'https://*.supabase.co'],
-            connectSrc: ["'self'", 'https://*.supabase.co', 'https://fonts.gstatic.com', 'https://www.gstatic.com'],
+            // tile.openstreetmap.org: mapa operativo del panel (flutter_map pide cada tile como imagen o con fetch)
+            imgSrc: ["'self'", 'data:', 'blob:', 'https://*.supabase.co', 'https://tile.openstreetmap.org'],
+            connectSrc: ["'self'", 'https://*.supabase.co', 'https://fonts.gstatic.com', 'https://www.gstatic.com', 'https://tile.openstreetmap.org'],
             workerSrc: ["'self'", 'blob:'],
             objectSrc: ["'none'"],
             frameAncestors: ["'none'"],
@@ -133,6 +141,8 @@ app.use('/api/notificaciones', notificacionesRouter);
 app.use('/api/usuarios', usuariosRouter);
 app.use('/api/solicitudes', solicitudesRouter);
 app.use('/api/dashboard', dashboardRouter);
+app.use('/api/mapa', mapaRouter);
+app.use('/api/geocodificar', geocodificarRouter);
 app.use('/api/insumos', insumosRouter);
 app.use('/api/ejecutivos', ejecutivosRouter);
 app.use('/api/facturacion', facturacionRouter);

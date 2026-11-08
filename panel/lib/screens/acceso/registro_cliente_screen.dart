@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/api_client.dart';
 import '../../theme/gomaq_theme.dart';
+import '../../utils/ubicacion.dart';
 import '../../utils/validadores_acceso.dart';
+import '../../widgets/campo_ubicacion.dart';
 
 class RegistroClienteScreen extends StatefulWidget {
   const RegistroClienteScreen({super.key});
@@ -38,6 +40,8 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
   bool _verPassword = false;
   String? _error;
   bool _enviado = false;
+  // ubicación de la empresa marcada con "Usar mi ubicación actual"; opcional
+  Coordenada? _ubicacion;
 
   /// Lleva la vista al primer campo con error: en un teléfono el formulario no cabe y el error
   /// podía quedar fuera de pantalla sin que se viera por qué no se envió.
@@ -78,6 +82,8 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
         'horario_trabajo': _horarioTrabajoCtrl.text.trim().isEmpty ? null : _horarioTrabajoCtrl.text.trim(),
         'horario_colacion': _horarioColacionCtrl.text.trim().isEmpty ? null : _horarioColacionCtrl.text.trim(),
         'direccion': _direccionCtrl.text.trim().isEmpty ? null : _direccionCtrl.text.trim(),
+        'latitud': _ubicacion?.latitud,
+        'longitud': _ubicacion?.longitud,
       });
       if (mounted) setState(() => _enviado = true);
     } on ApiException catch (e) {
@@ -271,6 +277,8 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
         ),
         const SizedBox(height: 12),
         TextField(controller: _direccionCtrl, decoration: const InputDecoration(labelText: 'Dirección'), maxLines: 2),
+        const SizedBox(height: 8),
+        CampoUbicacion(valor: _ubicacion, onChanged: (c) => setState(() => _ubicacion = c)),
         const SizedBox(height: 24),
         if (_error != null)
           Padding(

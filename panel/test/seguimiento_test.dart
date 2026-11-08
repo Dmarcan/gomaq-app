@@ -141,6 +141,63 @@ void main() {
     });
   });
 
+  group('hora de llegada del técnico', () {
+    final ahora = DateTime.utc(2026, 11, 8, 13, 0);
+    Map<String, dynamic> enCamino({int minutos = 11, bool aproximada = false, String estado = 'en_camino'}) => {
+          'estado': estado,
+          'eta_llegada_at': ahora.add(Duration(minutes: minutos)).toIso8601String(),
+          'eta_calculada_at': ahora.subtract(const Duration(minutes: 2)).toIso8601String(),
+          'eta_aproximada': aproximada,
+        };
+
+    test('duracionCorta redondea hacia arriba y pasa a horas', () {
+      expect(duracionCorta(const Duration(seconds: 30)), '1 min');
+      expect(duracionCorta(const Duration(minutes: 11)), '11 min');
+      expect(duracionCorta(const Duration(minutes: 10, seconds: 1)), '11 min', reason: 'nunca promete menos tiempo del real');
+      expect(duracionCorta(const Duration(minutes: 59)), '59 min');
+      expect(duracionCorta(const Duration(minutes: 60)), '1 h');
+      expect(duracionCorta(const Duration(minutes: 80)), '1 h 20 min');
+    });
+
+    test('en camino dice cuánto falta y a qué hora', () {
+      final hora = horaCorta(ahora.add(const Duration(minutes: 11)).toLocal());
+      expect(textoLlegada(enCamino(), ahora: ahora), 'Llega en ~11 min (hora estimada $hora)');
+    });
+
+    test('una hora aproximada lo dice', () {
+      expect(textoLlegada(enCamino(aproximada: true), ahora: ahora), contains(', aproximada)'));
+      expect(textoLlegada(enCamino(), ahora: ahora), isNot(contains('aproximada')));
+    });
+
+    test('si la hora estimada ya pasó no se muestran minutos negativos', () {
+      expect(textoLlegada(enCamino(minutos: -5), ahora: ahora), 'Debería llegar en cualquier momento');
+      expect(textoLlegada(enCamino(minutos: 0), ahora: ahora), 'Debería llegar en cualquier momento');
+    });
+
+    test('solo se muestra mientras va en camino', () {
+      for (final estado in ['pendiente', 'asignada', 'aceptada', 'en_terreno', 'en_reparacion', 'finalizada']) {
+        expect(textoLlegada(enCamino(estado: estado), ahora: ahora), isNull, reason: estado);
+        expect(textoActualizacionLlegada(enCamino(estado: estado), ahora: ahora), isNull, reason: estado);
+      }
+    });
+
+    test('sin hora del servidor (APK o servidor anterior) o con basura no muestra nada ni falla', () {
+      expect(textoLlegada({'estado': 'en_camino'}, ahora: ahora), isNull);
+      expect(textoLlegada({'estado': 'en_camino', 'eta_llegada_at': null}, ahora: ahora), isNull);
+      expect(textoLlegada({'estado': 'en_camino', 'eta_llegada_at': 'no es fecha'}, ahora: ahora), isNull);
+      expect(textoLlegada({'estado': 'en_camino', 'eta_llegada_at': 123}, ahora: ahora), isNull);
+    });
+
+    test('textoActualizacionLlegada dice qué tan fresca es', () {
+      expect(textoActualizacionLlegada(enCamino(), ahora: ahora), 'Actualizada hace 2 min');
+      final recien = {...enCamino(), 'eta_calculada_at': ahora.subtract(const Duration(seconds: 20)).toIso8601String()};
+      expect(textoActualizacionLlegada(recien, ahora: ahora), 'Actualizada recién');
+      final vieja = {...enCamino(), 'eta_calculada_at': ahora.subtract(const Duration(minutes: 75)).toIso8601String()};
+      expect(textoActualizacionLlegada(vieja, ahora: ahora), 'Actualizada hace 1 h 15 min');
+      expect(textoActualizacionLlegada({'estado': 'en_camino'}, ahora: ahora), isNull);
+    });
+  });
+
   group('contraste de los pasos del seguimiento sobre blanco', () {
     double contraste(Color a, Color b) {
       final la = a.computeLuminance(), lb = b.computeLuminance();
