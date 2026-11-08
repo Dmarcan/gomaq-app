@@ -14,6 +14,7 @@ import '../widgets/foto_thumbnail.dart';
 import '../utils/formato.dart';
 import '../widgets/dialogo_horometro.dart';
 import '../widgets/dialogo_texto.dart';
+import '../widgets/errores_sync.dart';
 import '../widgets/seccion_bloqueada.dart';
 import '../widgets/selector_equipo.dart';
 import 'cerrar_orden_screen.dart';
@@ -1218,7 +1219,13 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> {
       tooltip: texto,
       icon: Icon(icono, color: color),
       onPressed: () {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(texto)));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(texto),
+          // con cambios en error, el aviso lleva al cuadro para reintentar o descartar
+          action: _enError > 0
+              ? SnackBarAction(label: 'Ver', onPressed: () => mostrarErroresDeSync(context, alCambiar: _cargar))
+              : null,
+        ));
         if (_pendientes > 0 || _enError > 0) _intentarSincronizarAhora();
       },
     );

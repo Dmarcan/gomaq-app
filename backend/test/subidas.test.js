@@ -62,6 +62,11 @@ describe('detectarTipoArchivo', () => {
         assert.equal(detectarTipoArchivo(mif1), 'heic');
     });
 
+    test('una imagen con %PDF- en sus metadatos sigue siendo imagen', () => {
+        assert.equal(detectarTipoArchivo(Buffer.concat([JPEG, Buffer.from('%PDF-1.4'), Buffer.alloc(32)])), 'jpeg');
+        assert.equal(detectarTipoArchivo(Buffer.concat([PNG, Buffer.from('%PDF-1.4'), Buffer.alloc(32)])), 'png');
+    });
+
     test('rechaza SVG, HTML, texto, vacio y cabeceras truncadas', () => {
         for (const malo of [SVG, HTML, Buffer.from('no soy pdf, soy un texto cualquiera'), Buffer.alloc(0), Buffer.from('%PDF'), Buffer.from([0xff, 0xd8]), 'texto', null]) {
             assert.equal(detectarTipoArchivo(malo), null);

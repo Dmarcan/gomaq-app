@@ -31,13 +31,13 @@ const ascii = (texto) => Array.from(texto).map((c) => c.charCodeAt(0));
  */
 function detectarTipoArchivo(buffer) {
     if (!Buffer.isBuffer(buffer) || buffer.length < 12) return null;
-    // el encabezado %PDF- puede ir precedido de basura, pero dentro de los primeros 1024 bytes (ISO 32000)
-    const inicio = buffer.subarray(0, 1024);
-    if (inicio.includes(Buffer.from('%PDF-'))) return 'pdf';
     if (empiezaCon(buffer, [0xff, 0xd8, 0xff])) return 'jpeg';
     if (empiezaCon(buffer, [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])) return 'png';
     if (empiezaCon(buffer, ascii('RIFF')) && empiezaCon(buffer, ascii('WEBP'), 8)) return 'webp';
     if (empiezaCon(buffer, ascii('ftyp'), 4) && MARCAS_HEIC.has(buffer.subarray(8, 12).toString('latin1'))) return 'heic';
+    // el PDF va al final: tolera basura antes de %PDF- (dentro de los primeros 1024 bytes, ISO 32000),
+    // asi que una foto que lleve ese texto en sus metadatos ya se reconocio arriba como imagen
+    if (buffer.subarray(0, 1024).includes(Buffer.from('%PDF-'))) return 'pdf';
     return null;
 }
 

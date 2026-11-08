@@ -741,7 +741,7 @@ router.post('/:id/tramos', verifyToken, requireRole('mecanico'), async (req, res
 // campo de la orden lo deriva insumos.js al cambiar una linea (ver utils/facturableOt.js).
 router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req, res) => {
     const { persona_recibe, sin_persona, firma_path, ocurrio_en } = req.body;
-    const errCuerpo = validarCuerpo(req.body, { textos: { persona_recibe: 150, firma_path: 300 } });
+    const errCuerpo = validarCuerpo(req.body, { textos: { persona_recibe: 1000, firma_path: 300 } });
     if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     // como queda el equipo al cerrar: 'operativa' o 'fuera_de_servicio'. Ausente = APK anterior.
     const equipoPedido = validarEstadoEquipoCierre(req.body.estado_equipo);

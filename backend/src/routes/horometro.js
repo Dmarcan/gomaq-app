@@ -75,12 +75,6 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
     const { id } = req.params;
     const { valor, orden_trabajo_id, observacion, reiniciar_contador } = req.body;
 
-    const lectura = typeof valor === 'number' || typeof valor === 'string' ? Number(valor) : NaN;
-    if (valor === undefined || valor === null || valor === '' || !Number.isFinite(lectura) || lectura < 0 || lectura > MAX_HORAS) {
-        return res.status(400).json({ error: 'El horómetro debe ser un número de horas mayor o igual a 0' });
-    }
-    const errCuerpo = validarCuerpo(req.body, { textos: { observacion: 5000 }, ids: ['orden_trabajo_id'] });
-    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     const { valido: uuidValido, uuid } = leerUuidCliente(req.body);
     if (!uuidValido) {
         return res.status(400).json({ error: 'uuid_cliente no es un UUID valido' });
@@ -97,6 +91,13 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
     });
     const yaRegistrada = await buscarPorUuid(pool, 'lecturas_horometro', uuid);
     if (yaRegistrada) return responderExistente(yaRegistrada);
+
+    const lectura = typeof valor === 'number' || typeof valor === 'string' ? Number(valor) : NaN;
+    if (valor === undefined || valor === null || valor === '' || !Number.isFinite(lectura) || lectura < 0 || lectura > MAX_HORAS) {
+        return res.status(400).json({ error: 'El horómetro debe ser un número de horas mayor o igual a 0' });
+    }
+    const errCuerpo = validarCuerpo(req.body, { textos: { observacion: 5000 }, ids: ['orden_trabajo_id'] });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
 
     let client;
     try {

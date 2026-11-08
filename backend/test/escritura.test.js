@@ -18,6 +18,7 @@ const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const jwt = require('jsonwebtoken');
+const { diasEntre } = require('../src/utils/diasArriendo');
 
 const HABILITADO = process.env.GOMAQ_TEST_ESCRITURA === '1' && Boolean(process.env.DATABASE_URL);
 
@@ -6039,7 +6040,9 @@ describe('cambio de cliente y recepcion: el dia se cobra segun la hora de corte'
         assert.equal(pA.body.falta_recepcion, true);
         assert.equal(pA.body.desde, '2026-03-01');
         assert.equal(pA.body.fin, '2026-03-09');
-        assert.equal(pA.body.dias, 9);
+        // `dias` llega hasta el primer fin de periodo (dia 5 de facturacion), no hasta el fin del arriendo
+        assert.equal(pA.body.opciones_hasta.at(-1), '2026-03-09');
+        assert.equal(diasEntre(pA.body.desde, pA.body.fin), 9);
         const pendA = await pendiente(equipo.id);
         assert.equal(pendA.cliente_id, acsa);
         assert.equal(pendA.dias, 9);
@@ -6062,7 +6065,7 @@ describe('cambio de cliente y recepcion: el dia se cobra segun la hora de corte'
         await guiaSql(equipo.id, 'despacho', '2026-03-10T15:00:00-03:00', prize);
         const pA = await propuesta(dA);
         assert.equal(pA.body.fin, '2026-03-10');
-        assert.equal(pA.body.dias, 10);
+        assert.equal(diasEntre(pA.body.desde, pA.body.fin), 10);
         const curso = await enCurso(equipo.id);
         assert.equal(curso.cliente_id, prize);
         assert.equal(curso.inicio_cobro, '2026-03-11');

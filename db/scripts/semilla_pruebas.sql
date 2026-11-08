@@ -14,6 +14,11 @@ INSERT INTO clientes (nombre, rut, email, telefono)
 SELECT 'Acsa International', '76.123.456-7', 'contacto@acsa.test', '+56911111111'
 WHERE NOT EXISTS (SELECT 1 FROM clientes WHERE nombre = 'Acsa International');
 
+-- segundo cliente: las pruebas del cambio de cliente (ACSA a Prize) se omiten si hay menos de dos
+INSERT INTO clientes (nombre, email)
+SELECT 'Prize Test', 'prize@prize.test'
+WHERE NOT EXISTS (SELECT 1 FROM clientes WHERE nombre = 'Prize Test');
+
 INSERT INTO usuarios (nombre, email, password_hash, rol, estado_cuenta, cliente_id) VALUES
   ('Admin Prueba',          'admin@gomaq.test',          '$2a$10$VXEk0pRcT/GPNFOujJkWF.mXJS/bPTml1pki3T0EhFAGogj0Hf1g2', 'gerente',        'activo', NULL),
   ('Administrativo Prueba', 'administrativo@gomaq.test', '$2a$10$VXEk0pRcT/GPNFOujJkWF.mXJS/bPTml1pki3T0EhFAGogj0Hf1g2', 'administrativo', 'activo', NULL),
