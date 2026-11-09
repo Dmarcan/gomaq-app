@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_map/flutter_map.dart';
+import 'package:go_router/go_router.dart';
 import 'package:latlong2/latlong.dart';
 
 import '../../services/api_client.dart';
@@ -42,7 +43,12 @@ class MapaScreen extends StatefulWidget {
 
   /// Capa de imágenes del mapa. Se reemplaza en las pruebas que sí arman el mapa, para no usar la red.
   final Widget Function() capaImagenes;
+
+  /// Cada cuánto se refresca cuando no hay furgones en camino.
   final Duration refresco;
+
+  /// Cada cuánto se refresca cuando hay furgones en camino (su posición cambia más seguido).
+  final Duration refrescoActivo;
 
   const MapaScreen({
     super.key,
@@ -53,10 +59,25 @@ class MapaScreen extends StatefulWidget {
     this.conMapa = true,
     this.capaImagenes = capaTilesMapa,
     this.refresco = const Duration(seconds: 60),
+    this.refrescoActivo = const Duration(seconds: 20),
   });
 
   @override
   State<MapaScreen> createState() => _MapaScreenState();
+}
+
+/// Lo que la persona tocó en el mapa o en las listas. Se guarda con claves estables (id de la OT,
+/// ids de los equipos) y no con una copia de los datos: la ficha se vuelve a armar desde la carga
+/// más reciente, así "Última posición" y la llegada estimada no quedan viejas mientras está abierta.
+class _Seleccion {
+  final String tipo; // 'furgon', 'equipos' o 'bodega'
+  final int? ordenId;
+  final Set<int> equipoIds;
+  final String titulo;
+
+  const _Seleccion.furgon(this.ordenId, this.titulo) : tipo = 'furgon', equipoIds = const {};
+  const _Seleccion.equipos(this.titulo, this.equipoIds) : tipo = 'equipos', ordenId = null;
+  const _Seleccion.bodega(this.titulo) : tipo = 'bodega', ordenId = null, equipoIds = const {};
 }
 
 class _MapaScreenState extends State<MapaScreen> {
@@ -64,6 +85,11 @@ class _MapaScreenState extends State<MapaScreen> {
   bool _cargando = true;
   String? _error;
   Timer? _timer;
+  _Seleccion? _seleccion;
+  final _focoTitulo = FocusNode(debugLabel: 'titulo de la ficha');
+  late final AppLifecycleListener _ciclo;
+  // pestaña oculta o app en segundo plano: no se refresca (no tiene sentido gastar red ni batería)
+  bool _enSegundoPlano = false;
   bool _mostrarArrendados = true;
   bool _mostrarBodega = true;
   bool _mostrarFurgones = true;
@@ -76,13 +102,36 @@ class _MapaScreenState extends State<MapaScreen> {
   @override
   void initState() {
     super.initState();
+    _ciclo = AppLifecycleListener(onStateChange: _alCambiarCiclo);
     _cargar();
-    _timer = Timer.periodic(widget.refresco, (_) => _cargar(silencioso: true));
+  }
+
+  void _alCambiarCiclo(AppLifecycleState estado) {
+    final oculto = estado == AppLifecycleState.hidden || estado == AppLifecycleState.paused;
+    if (oculto == _enSegundoPlano) return;
+    _enSegundoPlano = oculto;
+    if (oculto) {
+      _timer?.cancel();
+    } else {
+      // al volver se pone al día de inmediato y se retoma el ritmo normal
+      _cargar(silencioso: true);
+    }
+  }
+
+  /// Un solo temporizador a la vez: 20 s si hay furgones en camino, 60 s si no.
+  void _programarRefresco() {
+    _timer?.cancel();
+    if (!mounted || _enSegundoPlano) return;
+    final hayFurgones = _datos?.furgones.isNotEmpty ?? false;
+    final espera = hayFurgones ? widget.refrescoActivo : widget.refresco;
+    _timer = Timer(espera, () => _cargar(silencioso: true));
   }
 
   @override
   void dispose() {
     _timer?.cancel();
+    _ciclo.dispose();
+    _focoTitulo.dispose();
     _busqueda.dispose();
     _mapaCtrl.dispose();
     super.dispose();
@@ -129,12 +178,44 @@ class _MapaScreenState extends State<MapaScreen> {
       if (mounted && !silencioso) setState(() => _error = 'No se pudo cargar el mapa. Revisa tu conexión.');
     } finally {
       if (mounted) setState(() => _cargando = false);
+      _programarRefresco();
     }
+  }
+
+  void _abrir(_Seleccion s) {
+    setState(() => _seleccion = s);
+    // el foco va al título de la ficha: quien usa teclado o lector de pantalla llega directo a ella
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _seleccion == s) _focoTitulo.requestFocus();
+    });
+  }
+
+  void _cerrar() => setState(() => _seleccion = null);
+
+  void _seleccionarEquipos(String titulo, List<EquipoMapa> equipos) =>
+      _abrir(_Seleccion.equipos(titulo, {for (final e in equipos) e.id}));
+
+  void _seleccionarFurgon(FurgonMapa f) =>
+      _abrir(_Seleccion.furgon(f.ordenTrabajoId, 'Furgón de ${f.mecanicoNombre ?? 'técnico'}'));
+
+  bool _furgonSeleccionado(FurgonMapa f) => _seleccion?.tipo == 'furgon' && _seleccion?.ordenId == f.ordenTrabajoId;
+
+  bool _equipoSeleccionado(Iterable<EquipoMapa> equipos) {
+    final s = _seleccion;
+    return s != null && s.tipo == 'equipos' && equipos.any((e) => s.equipoIds.contains(e.id));
   }
 
   @override
   Widget build(BuildContext context) {
     final datos = _datos;
+    // Esc cierra la ficha (solo mientras hay una abierta)
+    return CallbackShortcuts(
+      bindings: {if (_seleccion != null) const SingleActivator(LogicalKeyboardKey.escape): _cerrar},
+      child: _contenido(datos),
+    );
+  }
+
+  Widget _contenido(DatosMapa? datos) {
     return Padding(
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -272,13 +353,25 @@ class _MapaScreenState extends State<MapaScreen> {
       builder: (context, c) {
         // el mapa nunca va dentro de un scroll: se come los gestos. Arriba con altura fija y las
         // listas en su propio scroll debajo; desde 600 px, el mapa a la izquierda y las listas al lado
+        // la ficha no oscurece ni tapa el mapa: va arriba de la columna lateral (ancho) o entre el
+        // mapa y las listas (angosto)
+        final ficha = _ficha();
         if (c.maxWidth >= 600) {
           return Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Expanded(child: _mapa(d)),
               const SizedBox(width: 12),
-              SizedBox(width: 320, child: _listas(d)),
+              SizedBox(
+                width: 320,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    if (ficha != null) ConstrainedBox(constraints: BoxConstraints(maxHeight: c.maxHeight * 0.6), child: ficha),
+                    Expanded(child: _listas(d)),
+                  ],
+                ),
+              ),
             ],
           );
         }
@@ -290,6 +383,7 @@ class _MapaScreenState extends State<MapaScreen> {
           children: [
             SizedBox(height: alto, child: _mapa(d)),
             const SizedBox(height: 8),
+            if (ficha != null) ConstrainedBox(constraints: BoxConstraints(maxHeight: c.maxHeight * 0.38), child: ficha),
             Expanded(child: _listas(d)),
           ],
         );
@@ -347,7 +441,9 @@ class _MapaScreenState extends State<MapaScreen> {
             Icons.construction,
             grupo.length,
             'Arrendado: ${grupo.first.clienteNombre ?? grupo.first.codigo}',
-            () => _fichaEquipos(grupo.first.clienteNombre ?? 'Equipos arrendados', grupo),
+            () => _seleccionarEquipos(grupo.first.clienteNombre ?? 'Equipos arrendados', grupo),
+            clave: 'equipos:${grupo.map((e) => e.id).join(',')}',
+            seleccionado: _equipoSeleccionado(grupo),
           ),
         );
       }
@@ -367,7 +463,9 @@ class _MapaScreenState extends State<MapaScreen> {
           Icons.warehouse,
           dentro.length,
           bodega.nombre,
-          () => _fichaEquipos(bodega.nombre, dentro),
+          () => _abrir(_Seleccion.bodega(bodega.nombre)),
+          clave: 'bodega',
+          seleccionado: _seleccion?.tipo == 'bodega',
         ),
       );
     }
@@ -382,7 +480,9 @@ class _MapaScreenState extends State<MapaScreen> {
             Icons.local_shipping,
             0,
             'Furgón de ${f.mecanicoNombre ?? 'técnico'}${vieja ? ', posición de hace más de 15 minutos' : ''}',
-            () => _fichaFurgon(f),
+            () => _seleccionarFurgon(f),
+            clave: 'furgon:${f.ordenTrabajoId}',
+            seleccionado: _furgonSeleccionado(f),
           ),
         );
       }
@@ -390,39 +490,140 @@ class _MapaScreenState extends State<MapaScreen> {
     return marcas;
   }
 
-  Marker _marcador(LatLng punto, Color color, IconData icono, int cuenta, String etiqueta, VoidCallback alTocar) {
+  Marker _marcador(
+    LatLng punto,
+    Color color,
+    IconData icono,
+    int cuenta,
+    String etiqueta,
+    VoidCallback alTocar, {
+    required String clave,
+    bool seleccionado = false,
+  }) {
     return Marker(
       point: punto,
-      width: 48,
-      height: 48,
-      child: _MarcadorMapa(color: color, icono: icono, cuenta: cuenta, etiqueta: etiqueta, alTocar: alTocar),
+      width: seleccionado ? 58 : 48,
+      height: seleccionado ? 58 : 48,
+      // la clave estable evita que el marcador pierda el foco del teclado cuando el mapa se refresca
+      key: ValueKey(clave),
+      child: _MarcadorMapa(
+        color: color,
+        icono: icono,
+        cuenta: cuenta,
+        etiqueta: etiqueta,
+        alTocar: alTocar,
+        seleccionado: seleccionado,
+      ),
     );
   }
 
   // ---------------------------------------------------------------------------------- fichas
 
-  void _fichaEquipos(String titulo, List<EquipoMapa> equipos) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.7),
-          child: ListView(
-            shrinkWrap: true,
-            padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-            children: [
-              Text(titulo, style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 4),
-              Text(
-                equipos.length == 1 ? '1 equipo' : '${equipos.length} equipos',
-                style: TextStyle(color: Colors.grey.shade700),
+  /// Ficha de lo seleccionado, armada con la carga más reciente (no una copia). Si lo seleccionado
+  /// ya no está (el furgón llegó, el equipo cambió de lugar) lo dice y no se cierra sola.
+  Widget? _ficha() {
+    final s = _seleccion;
+    final d = _datos;
+    if (s == null || d == null) return null;
+    final ahora = DateTime.now();
+    final tema = Theme.of(context).textTheme;
+    var titulo = s.titulo;
+    final cuerpo = <Widget>[];
+    switch (s.tipo) {
+      case 'furgon':
+        final f = d.furgones.where((f) => f.ordenTrabajoId == s.ordenId).firstOrNull;
+        if (f == null) {
+          cuerpo.add(Semantics(liveRegion: true, child: const Text('Ya no está en camino.')));
+        } else {
+          titulo = 'Furgón de ${f.mecanicoNombre ?? 'técnico'}';
+          if (f.patente != null) {
+            cuerpo.add(Text('Vehículo: ${f.patente}${f.vehiculo != null && f.vehiculo!.isNotEmpty ? ' · ${f.vehiculo}' : ''}'));
+          }
+          cuerpo.add(Text('Va a: ${f.clienteNombre ?? 'cliente sin nombre'} (equipo ${f.maquinariaCodigo})'));
+          if (f.etaLlegadaAt != null) {
+            cuerpo.add(Text('Llegada estimada: ${_hora(f.etaLlegadaAt!)}${f.etaAproximada ? ' (aproximada)' : ''}'));
+          }
+          if (f.posicionAt != null) cuerpo.add(Text('Última posición: ${haceCuanto(f.posicionAt!, ahora)}'));
+          cuerpo.add(
+            Align(
+              alignment: Alignment.centerLeft,
+              child: TextButton.icon(
+                onPressed: () => context.push('/ordenes/${f.ordenTrabajoId}'),
+                icon: const Icon(Icons.assignment_outlined),
+                label: const Text('Ver OT'),
               ),
-              const Divider(),
-              if (equipos.isEmpty)
-                const Padding(padding: EdgeInsets.symmetric(vertical: 12), child: Text('No hay equipos aquí.')),
-              for (final e in equipos) _filaEquipo(e),
+            ),
+          );
+        }
+      case 'bodega' || 'equipos':
+        final equipos = s.tipo == 'bodega'
+            ? d.equipos.where((e) => !e.arrendado).toList()
+            : d.equipos.where((e) => s.equipoIds.contains(e.id)).toList();
+        if (s.tipo == 'bodega') titulo = d.bodega?.nombre ?? s.titulo;
+        cuerpo.add(
+          Text(
+            equipos.length == 1 ? '1 equipo' : '${equipos.length} equipos',
+            style: TextStyle(color: Colors.grey.shade700),
+          ),
+        );
+        if (equipos.isEmpty) {
+          cuerpo.add(
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 8),
+              child: Semantics(
+                liveRegion: true,
+                child: Text(s.tipo == 'bodega' ? 'No hay equipos aquí.' : 'Ya no hay equipos aquí.'),
+              ),
+            ),
+          );
+        }
+        for (final e in equipos) {
+          cuerpo.add(const Divider(height: 8));
+          cuerpo.add(_filaEquipo(e));
+          cuerpo.add(
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Semantics(
+                label: 'Ver equipo ${e.codigo}',
+                excludeSemantics: true,
+                child: TextButton.icon(
+                  onPressed: () => context.push('/flota/${e.id}'),
+                  icon: const Icon(Icons.open_in_new, size: 18),
+                  label: const Text('Ver equipo'),
+                ),
+              ),
+            ),
+          );
+        }
+    }
+    return Card(
+      margin: const EdgeInsets.only(bottom: 8),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 4, 4, 8),
+        child: SingleChildScrollView(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Focus(
+                      focusNode: _focoTitulo,
+                      child: Semantics(
+                        header: true,
+                        liveRegion: true,
+                        child: Text(titulo, style: tema.titleMedium),
+                      ),
+                    ),
+                  ),
+                  IconButton(tooltip: 'Cerrar ficha (Esc)', icon: const Icon(Icons.close), onPressed: _cerrar),
+                ],
+              ),
+              Padding(
+                padding: const EdgeInsets.only(right: 8),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: cuerpo),
+              ),
             ],
           ),
         ),
@@ -430,7 +631,7 @@ class _MapaScreenState extends State<MapaScreen> {
     );
   }
 
-  Widget _filaEquipo(EquipoMapa e, {bool conCliente = true}) {
+  Widget _filaEquipo(EquipoMapa e, {bool conCliente = true, bool seleccionado = false}) {
     final detalle = [
       if (e.descripcion.isNotEmpty) e.descripcion,
       if (conCliente && e.arrendado && e.clienteNombre != null) 'Cliente: ${e.clienteNombre}',
@@ -438,6 +639,7 @@ class _MapaScreenState extends State<MapaScreen> {
     ].join('\n');
     return ListTile(
       contentPadding: EdgeInsets.zero,
+      selected: seleccionado,
       leading: const Icon(Icons.construction),
       title: Text(e.codigo),
       subtitle: detalle.isEmpty ? null : Text(detalle),
@@ -480,33 +682,6 @@ class _MapaScreenState extends State<MapaScreen> {
     _ => estado,
   };
 
-  void _fichaFurgon(FurgonMapa f) {
-    final ahora = DateTime.now();
-    showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (context) => SafeArea(
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text('Furgón de ${f.mecanicoNombre ?? 'técnico'}', style: Theme.of(context).textTheme.titleLarge),
-              const SizedBox(height: 8),
-              if (f.patente != null)
-                Text('Vehículo: ${f.patente}${f.vehiculo != null && f.vehiculo!.isNotEmpty ? ' · ${f.vehiculo}' : ''}'),
-              Text('Va a: ${f.clienteNombre ?? 'cliente sin nombre'} (equipo ${f.maquinariaCodigo})'),
-              if (f.etaLlegadaAt != null)
-                Text('Llegada estimada: ${_hora(f.etaLlegadaAt!)}${f.etaAproximada ? ' (aproximada)' : ''}'),
-              if (f.posicionAt != null) Text('Última posición: ${haceCuanto(f.posicionAt!, ahora)}'),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
   String _hora(DateTime t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
 
   // ---------------------------------------------------------------------------------- listas
@@ -531,9 +706,9 @@ class _MapaScreenState extends State<MapaScreen> {
             InkWell(
               onTap: () {
                 _irA(e.ubicacion);
-                _fichaEquipos(e.clienteNombre ?? e.codigo, [e]);
+                _seleccionarEquipos(e.clienteNombre ?? e.codigo, [e]);
               },
-              child: _filaEquipo(e),
+              child: _filaEquipo(e, seleccionado: _equipoSeleccionado([e])),
             ),
           const SizedBox(height: 12),
         ],
@@ -552,6 +727,8 @@ class _MapaScreenState extends State<MapaScreen> {
           for (final f in conPosicion)
             ListTile(
               dense: true,
+              selected: _furgonSeleccionado(f),
+              selectedTileColor: GomaqColors.primario.withValues(alpha: 0.12),
               leading: Icon(
                 Icons.local_shipping,
                 color: f.posicionAt != null && posicionAntigua(f.posicionAt!, ahora)
@@ -564,16 +741,18 @@ class _MapaScreenState extends State<MapaScreen> {
               ),
               onTap: () {
                 _irA(f.ubicacion);
-                _fichaFurgon(f);
+                _seleccionarFurgon(f);
               },
             ),
           for (final f in sinPosicion)
             ListTile(
               dense: true,
+              selected: _furgonSeleccionado(f),
+              selectedTileColor: GomaqColors.primario.withValues(alpha: 0.12),
               leading: const Icon(Icons.local_shipping_outlined),
               title: Text(f.mecanicoNombre ?? 'Técnico'),
               subtitle: Text('${f.clienteNombre ?? 'Cliente'} · todavía sin posición'),
-              onTap: () => _fichaFurgon(f),
+              onTap: () => _seleccionarFurgon(f),
             ),
         ],
         if (sinUbicacion.isNotEmpty) ...[
@@ -727,12 +906,16 @@ class _MarcadorMapa extends StatefulWidget {
   final String etiqueta;
   final VoidCallback alTocar;
 
+  /// El icono cuya ficha está abierta: más grande y con aro oscuro (no depende solo del color).
+  final bool seleccionado;
+
   const _MarcadorMapa({
     required this.color,
     required this.icono,
     required this.cuenta,
     required this.etiqueta,
     required this.alTocar,
+    this.seleccionado = false,
   });
 
   @override
@@ -777,12 +960,15 @@ class _MarcadorMapaState extends State<_MarcadorMapa> {
             alignment: Alignment.center,
             children: [
               Container(
-                width: 44,
-                height: 44,
+                width: widget.seleccionado ? 52 : 44,
+                height: widget.seleccionado ? 52 : 44,
                 decoration: BoxDecoration(
                   color: widget.color,
                   shape: BoxShape.circle,
-                  border: Border.all(color: _enfocado ? Colors.black : Colors.white, width: _enfocado ? 4 : 2),
+                  border: Border.all(
+                    color: (_enfocado || widget.seleccionado) ? Colors.black : Colors.white,
+                    width: (_enfocado || widget.seleccionado) ? 4 : 2,
+                  ),
                   boxShadow: const [BoxShadow(blurRadius: 4, color: Colors.black26)],
                 ),
                 child: Icon(widget.icono, color: Colors.white, size: 22),
