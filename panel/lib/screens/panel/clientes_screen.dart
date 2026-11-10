@@ -88,8 +88,8 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
       final data = await ApiClient.instance.get('/api/clientes');
       if (!mounted) return;
       setState(() => _clientes = data);
-    } on ApiException catch (e) {
-      setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -168,7 +168,7 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
               Expanded(
                 child: TextFormField(
                   controller: rutCtrl,
-                  decoration: decoracionCampo('RUT', ayuda: 'Por ejemplo 76.123.456-7.'),
+                  decoration: decoracionCampo('RUT', ayuda: 'Por ejemplo 76.123.456-0.'),
                   validator: (v) => (v == null || v.trim().isEmpty || rutEsValido(v)) ? null : 'El RUT no es válido. Revisa el dígito verificador.',
                 ),
               ),
@@ -241,7 +241,7 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
         child: _cargando
             ? const Center(child: CircularProgressIndicator())
             : _error != null
-                ? Center(child: Text('Error: $_error'))
+                ? EstadoError(titulo: 'No se pudieron cargar los clientes', mensaje: _error!, onReintentar: _cargar)
                 : _clientes.isEmpty
                     ? const EstadoVacio(
                         icono: Icons.people_outline,

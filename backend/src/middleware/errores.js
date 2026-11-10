@@ -21,6 +21,11 @@ function manejarErrores(err, req, res, next) {
     return res.status(500).json({ error: 'Error interno del servidor' });
 }
 
+// Cualquier /api/* que ningun router resolvio: JSON en español en vez del HTML de Express.
+function rutaApiNoEncontrada(req, res) {
+    res.status(404).json({ error: 'Ruta no encontrada' });
+}
+
 /**
  * Red de seguridad del proceso: una promesa rechazada o una excepcion que se escape de una
  * ruta se registra y una promesa rechazada solo se registra; una excepcion no atrapada se registra y reinicia el proceso.
@@ -39,4 +44,4 @@ function registrarRedDeSeguridad(proc = process) {
     });
 }
 
-module.exports = { manejarErrores, registrarRedDeSeguridad };
+module.exports = { manejarErrores, rutaApiNoEncontrada, registrarRedDeSeguridad };

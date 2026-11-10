@@ -32,6 +32,17 @@ double? parsearMonto(String texto) {
   return parsearNumero(t);
 }
 
+/// El monto como lo exige el backend en los campos multipart: solo dígitos ("249900").
+///
+/// Un `double` interpolado da "249900.0" fuera de la web, y el servidor lo rechaza con 400.
+/// Lanza [ArgumentError] si el monto tiene decimales (los pesos son enteros).
+String montoParaCampo(double monto) {
+  if (monto.isNaN || monto.isInfinite || monto != monto.truncateToDouble()) {
+    throw ArgumentError.value(monto, 'monto', 'Los montos son en pesos enteros');
+  }
+  return monto.toInt().toString();
+}
+
 /// Un número de la base ("2500.00", "7.80") como se muestra en un campo al editarlo: sin los
 /// ceros de más. Vacío si no hay dato o no es un número.
 String numeroParaEditar(dynamic valor) {

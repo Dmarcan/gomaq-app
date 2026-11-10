@@ -1,7 +1,7 @@
 const express = require('express');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
-const { validarCoordenadas } = require('../utils/geo');
+const { validarUbicacionBodega } = require('../utils/geo');
 const { cargarAlertasMantencion } = require('../utils/mantencion');
 const { armarRespuestaMapa, armarBodega } = require('../utils/mapaOperativo');
 
@@ -87,9 +87,9 @@ router.get('/bodega', ...soloOficina, async (req, res) => {
 });
 
 // PUT /api/mapa/bodega - fija la ubicacion de la bodega. Latitud y longitud juntas; las dos en
-// null la borran. Administrativo y gerente.
+// null la borran (un cuerpo vacio o con una sola responde 400). Administrativo y gerente.
 router.put('/bodega', ...soloOficina, async (req, res) => {
-    const coords = validarCoordenadas(req.body && req.body.latitud, req.body && req.body.longitud);
+    const coords = validarUbicacionBodega(req.body);
     if (!coords.ok) return res.status(400).json({ error: coords.error });
     try {
         const r = await pool.query(

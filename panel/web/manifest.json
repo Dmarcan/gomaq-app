@@ -1,11 +1,11 @@
 {
-    "name": "gomaq_web",
-    "short_name": "gomaq_web",
+    "name": "GOMAQ",
+    "short_name": "GOMAQ",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#FDF6F1",
+    "theme_color": "#EA5B1F",
+    "description": "Panel de gestión de GOMAQ, arriendo de maquinarias",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [

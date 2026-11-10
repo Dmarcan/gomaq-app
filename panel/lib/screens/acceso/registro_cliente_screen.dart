@@ -247,7 +247,7 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
           key: _llaveRut,
           controller: _rutCtrl,
           maxLength: largoMaximoRut,
-          decoration: const InputDecoration(labelText: 'RUT de la empresa', helperText: 'Por ejemplo 76.123.456-7.', counterText: ''),
+          decoration: const InputDecoration(labelText: 'RUT de la empresa', helperText: 'Por ejemplo 76.123.456-0.', counterText: ''),
           validator: validarRutOpcional,
         ),
         const SizedBox(height: 12),

@@ -58,7 +58,7 @@ const rentabilidadRouter = require('./src/routes/rentabilidad');
 const vehiculosRouter = require('./src/routes/vehiculos');
 const { iniciarWorker } = require('./src/workers/notificaciones');
 const { manejarErroresDeSubida } = require('./src/middleware/upload');
-const { manejarErrores, registrarRedDeSeguridad } = require('./src/middleware/errores');
+const { manejarErrores, rutaApiNoEncontrada, registrarRedDeSeguridad } = require('./src/middleware/errores');
 
 // una promesa rechazada o una excepcion suelta se registra y el servidor sigue en pie
 registrarRedDeSeguridad();
@@ -164,6 +164,9 @@ app.use('/api/horometro', horometroRouter);
 app.use('/api/checklist', checklistRouter);
 app.use('/api/rentabilidad', rentabilidadRouter);
 app.use('/api/vehiculos', vehiculosRouter);
+
+// una ruta /api inexistente responde 404 JSON (antes de servir el panel y su fallback)
+app.use('/api', rutaApiNoEncontrada);
 
 // traduce los rechazos de multer (archivo muy grande, tipo no permitido) a 4xx con
 // mensaje entendible; sin esto terminan como un 500 generico

@@ -109,8 +109,8 @@ class _FlotaScreenState extends State<FlotaScreen> {
         _total = data['total'] ?? 0;
         _hayMas = data['hay_mas'] == true;
       });
-    } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
     }

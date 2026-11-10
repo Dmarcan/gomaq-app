@@ -4,6 +4,7 @@ const { validarCuerpo } = require('../utils/validacion');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { validarCoordenadas } = require('../utils/geo');
+const { rutValido, MENSAJE_RUT_INVALIDO } = require('../utils/rut');
 
 const router = express.Router();
 
@@ -25,6 +26,10 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
     if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     if (!nombre) {
         return res.status(400).json({ error: 'nombre es requerido' });
+    }
+    // un RUT vacio sigue siendo opcional; si viene, debe tener el digito verificador correcto
+    if (typeof rut === 'string' && rut.trim() && !rutValido(rut)) {
+        return res.status(400).json({ error: MENSAJE_RUT_INVALIDO });
     }
     const coords = validarCoordenadas(req.body.latitud, req.body.longitud);
     if (!coords.ok) return res.status(400).json({ error: coords.error });

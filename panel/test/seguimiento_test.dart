@@ -128,7 +128,9 @@ void main() {
     test('etiquetaCobro traduce lo que dice el servidor', () {
       expect(etiquetaCobro('con_cobro'), 'Con cobro');
       expect(etiquetaCobro('sin_cobro'), 'Sin cobro');
-      expect(etiquetaCobro('por_definir'), 'Por confirmar');
+      expect(etiquetaCobro('por_definir'), 'Cobro por confirmar');
+      expect(explicacionCobro('por_definir'), isNotNull);
+      expect(explicacionCobro('con_cobro'), isNull);
       expect(etiquetaCobro(null), isNull);
       expect(etiquetaCobro('otra cosa'), isNull);
     });

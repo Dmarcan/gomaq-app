@@ -39,7 +39,7 @@ typedef ItemMenu = ({String ruta, IconData icono, String etiqueta, String grupo}
 /// El menu eran 13 items planos. Pasado el septimo la gente deja de escanear y empieza a
 /// buscar, asi que se agrupan por area de trabajo.
 const List<ItemMenu> itemsMenu = [
-  (ruta: '/', icono: Icons.dashboard, etiqueta: 'Dashboard', grupo: 'Operación'),
+  (ruta: '/', icono: Icons.dashboard, etiqueta: 'Inicio', grupo: 'Operación'),
   (ruta: '/flota', icono: Icons.local_shipping, etiqueta: 'Flota', grupo: 'Operación'),
   (ruta: '/mapa', icono: Icons.map_outlined, etiqueta: 'Mapa', grupo: 'Operación'),
   (ruta: '/ordenes', icono: Icons.assignment, etiqueta: 'Órdenes de Trabajo', grupo: 'Operación'),
@@ -206,9 +206,10 @@ GoRouter construirRouter(AuthService auth) {
           GoRoute(path: '/guias', builder: (_, _) => const GuiasScreen()),
           GoRoute(
             path: '/facturacion',
-            // la key fuerza abrir la pestaña que pide la URL (el atajo del Dashboard)
+            // la key sigue solo al filtro: cambiar de pestaña actualiza la URL sin reconstruir la
+            // pantalla (la pestaña nueva la toma didUpdateWidget); un filtro nuevo sí la reabre
             builder: (_, estado) => FacturacionScreen(
-              key: ValueKey(estado.uri.query),
+              key: ValueKey('facturacion|${estado.uri.queryParameters['filtro']}'),
               pestanaInicial: estado.uri.queryParameters['pestana'],
               filtroInicial: estado.uri.queryParameters['filtro'],
             ),

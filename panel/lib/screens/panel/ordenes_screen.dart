@@ -61,6 +61,41 @@ String antiguedadOrden(dynamic fecha, {DateTime? ahora}) {
   return dias == 1 ? 'hace 1 día' : 'hace $dias días';
 }
 
+/// Aviso (no bloquea) de un equipo que ya tiene una OT abierta: "Este equipo ya tiene la OT-12
+/// abierta (En camino)." null si el equipo no tiene ninguna o no se eligió.
+String? textoAvisoOtAbierta(Map? equipo) {
+  final ot = equipo?['ot_abierta'];
+  if (ot is! Map || ot['id'] == null) return null;
+  return 'Este equipo ya tiene la OT-${ot['id']} abierta (${GomaqColors.etiquetaEstado('${ot['estado']}')}).';
+}
+
+/// El aviso con el estilo de advertencia accesible: icono y texto en ámbar fuerte (el estado va
+/// dicho en palabras, no solo en color) y se anuncia solo al aparecer.
+class AvisoOtAbierta extends StatelessWidget {
+  final String texto;
+  const AvisoOtAbierta({super.key, required this.texto});
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      liveRegion: true,
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const ExcludeSemantics(child: Icon(Icons.info_outline, size: 18, color: GomaqColors.advertenciaFuerte)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              texto,
+              style: const TextStyle(fontSize: 13, color: GomaqColors.advertenciaFuerte, fontWeight: FontWeight.w600),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class OrdenesScreen extends StatefulWidget {
   /// Abre el formulario de nueva OT al entrar (el botón del Dashboard llega con ?nueva=1).
   final bool abrirNueva;
@@ -256,6 +291,9 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
               expandedInsets: EdgeInsets.zero,
               enableFilter: true,
               requestFocusOnTap: true,
+              // con decenas de equipos la lista tapaba el cuadro; y el error se revalida al elegir
+              menuHeight: 280,
+              autovalidateMode: AutovalidateMode.onUserInteraction,
               label: const Text('Equipo *'),
               hintText: 'Busca por código o tipo',
               dropdownMenuEntries: [
@@ -264,6 +302,10 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
               validator: (v) => v == null ? 'Elige el equipo de la orden.' : null,
               onSelected: (v) => redibujar(() => maquinariaId = v),
             ),
+            if (textoAvisoOtAbierta(equipo) != null) ...[
+              const SizedBox(height: 8),
+              AvisoOtAbierta(texto: textoAvisoOtAbierta(equipo)!),
+            ],
             if (equipo != null) ...[
               const SizedBox(height: 10),
               // el cliente no se pregunta: la base ya sabe quién tiene el equipo, y el servidor

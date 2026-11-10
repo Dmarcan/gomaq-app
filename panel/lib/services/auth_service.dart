@@ -17,6 +17,7 @@ class AuthService extends ChangeNotifier {
 
   bool _autenticado = false;
   bool _verificandoSesion = true;
+  int? _id;
   String? _rol;
   String? _nombre;
   int? _clienteId;
@@ -24,6 +25,8 @@ class AuthService extends ChangeNotifier {
 
   bool get autenticado => _autenticado;
   bool get verificandoSesion => _verificandoSesion;
+  /// Id de la cuenta que inició sesión (se restaura con la sesión guardada).
+  int? get id => _id;
   String? get rol => _rol;
   String? get nombre => _nombre;
   int? get clienteId => _clienteId;
@@ -39,6 +42,7 @@ class AuthService extends ChangeNotifier {
       final usuarioJson = await ApiClient.instance.leerUsuario();
       if (token != null && usuarioJson != null) {
         final usuario = jsonDecode(usuarioJson);
+        _id = usuario['id'] is num ? (usuario['id'] as num).toInt() : null;
         _rol = usuario['rol'];
         _nombre = usuario['nombre'];
         _clienteId = usuario['cliente_id'];
@@ -60,6 +64,7 @@ class AuthService extends ChangeNotifier {
     });
     await ApiClient.instance.guardarToken(data['token']);
     await ApiClient.instance.guardarUsuario(jsonEncode(data['usuario']));
+    _id = data['usuario']['id'] is num ? (data['usuario']['id'] as num).toInt() : null;
     _rol = data['usuario']['rol'];
     _nombre = data['usuario']['nombre'];
     _clienteId = data['usuario']['cliente_id'];
@@ -71,6 +76,7 @@ class AuthService extends ChangeNotifier {
   Future<void> logout() async {
     await ApiClient.instance.borrarToken();
     _autenticado = false;
+    _id = null;
     _rol = null;
     _nombre = null;
     _clienteId = null;

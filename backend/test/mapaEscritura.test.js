@@ -138,7 +138,7 @@ test('bodega: texto, una sola coordenada o fuera de rango se rechazan con 400 y 
     if (!requiereBase(t)) return;
     await pedir('PUT', '/api/mapa/bodega', 'administrativo', { latitud: -33.5, longitud: -70.7 });
     for (const cuerpo of [
-        { latitud: '-33.5', longitud: '-70.7' }, { latitud: -33.5 }, { longitud: -70.7 },
+        {}, { latitud: '-33.5', longitud: '-70.7' }, { latitud: -33.5 }, { longitud: -70.7 },
         { latitud: 91, longitud: 0 }, { latitud: 0, longitud: 181 },
     ]) {
         const r = await pedir('PUT', '/api/mapa/bodega', 'administrativo', cuerpo);

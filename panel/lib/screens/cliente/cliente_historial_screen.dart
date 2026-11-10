@@ -75,13 +75,14 @@ class _ClienteHistorialScreenState extends State<ClienteHistorialScreen> {
           final tieneDiagnostico = (o['diagnostico'] as String?)?.isNotEmpty ?? false;
           return Card(
             child: ListTile(
-              isThreeLine: (tieneMotivo ? 1 : 0) + 1 + (tieneDiagnostico ? 1 : 0) >= 2,
+              isThreeLine: (tieneMotivo ? 1 : 0) + 1 + (tieneDiagnostico ? 1 : 0) + (explicacionCobro(o['cobro'] as String?) != null ? 1 : 0) >= 2,
               title: Text(tituloOrden(o)),
               subtitle: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   if (tieneMotivo) Text(o['motivo']),
                   Text('Terminado el ${Formato.fecha(o['fecha_cierre'] ?? o['fecha_creacion'])}${cobro != null ? ' · $cobro' : ''}'),
+                  if (explicacionCobro(o['cobro'] as String?) case final explicacion?) Text(explicacion),
                   if (tieneDiagnostico)
                     Text('Diagnóstico: ${o['diagnostico']}', maxLines: 3, overflow: TextOverflow.ellipsis),
                 ],

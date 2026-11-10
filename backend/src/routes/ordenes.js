@@ -24,6 +24,7 @@ const {
 const { EN_CURSO } = require('../utils/estadosOt');
 const { fijarDestinoOt } = require('../utils/fijarDestinoOt');
 const { guardarPosicion, limpiarViaje } = require('../utils/posicionMecanico');
+const { SQL_ETA_LLEGADA_AT, conLlegadaEstimada } = require('../utils/etaLlegada');
 const { mejorarEtaConRutas } = require('../services/rutasEta');
 
 // Estado interno de la ETA (origen de la ultima consulta, cupo gastado, ajuste): no sale en el listado
@@ -274,7 +275,7 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
         res.set('Cache-Control', 'no-store');
         const result = await pool.query(
             `SELECT ot.id, ot.estado, ot.motivo, ot.diagnostico, ot.fecha_creacion, ot.fecha_cierre,
-                    ot.aceptada_at, ot.en_camino_at, ot.llegada_at, ot.facturable,
+                    ot.aceptada_at, ot.en_camino_at, ot.llegada_at, ot.facturable, ot.valorizacion,
                     -- cuando se le asigno el tecnico de ahora: la ULTIMA asignacion o toma que de verdad se aplico, y no
                     -- posterior a la aceptacion (si se reasigna, aceptada_at/en_camino_at/llegada_at se borran y la linea
                     -- de tiempo del portal no se desordena)
@@ -291,9 +292,7 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
                     v.patente AS vehiculo_patente, v.marca AS vehiculo_marca, v.modelo AS vehiculo_modelo,
                     -- hora estimada de llegada: solo mientras el tecnico va en camino, como hora absoluta. Al
                     -- cliente NUNCA le llegan coordenadas (ni la posicion del tecnico ni el destino de la OT)
-                    CASE WHEN ot.estado = 'en_camino' AND ot.eta_segundos IS NOT NULL
-                         THEN COALESCE(ot.eta_ajustada_llegada_at,
-                                       ot.eta_calculada_at + make_interval(secs => ot.eta_segundos)) END AS eta_llegada_at,
+                    ${SQL_ETA_LLEGADA_AT} AS eta_llegada_at,
                     -- "Actualizada hace X": la hora de la ultima posicion con que se ajusto la llegada
                     -- (solo una hora, no la posicion) o, si no hubo ajuste, la de la ultima consulta de rutas
                     CASE WHEN ot.estado = 'en_camino' AND ot.eta_segundos IS NOT NULL
@@ -314,9 +313,9 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
 
         // factura_url guarda la ruta dentro del bucket privado, no una URL directa;
         // se reemplaza por una URL firmada temporal (1h) antes de responder
-        const conUrlFirmada = await Promise.all(result.rows.map(async ({ facturable, lineas_pendientes: lineasPendientes, ...resto }) => {
+        const conUrlFirmada = await Promise.all(result.rows.map(async ({ facturable, lineas_pendientes: lineasPendientes, valorizacion, ...resto }) => {
             // al cliente se le dice si hay cobro, nunca montos ni la marca interna de facturable
-            const fila = { ...resto, cobro: cobroParaCliente({ estado: resto.estado, facturable, lineasPendientes }) };
+            const fila = { ...resto, cobro: cobroParaCliente({ estado: resto.estado, facturable, lineasPendientes, valorizacion }) };
             if (!fila.factura_url) return fila;
             const { data, error } = await supabase.storage
                 .from(BUCKET_DOCUMENTOS)
@@ -337,11 +336,13 @@ router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecani
         const result = await pool.query(
             // factura_id y factura_folio: el panel avisa que una orden facturada no admite cambios de
             // lineas (bloque 1b). Hay a lo mas una factura por OT (indice unico de la migracion 016).
-            `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre,
-                    f.id AS factura_id, f.folio AS factura_folio
+            `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre, um.nombre AS mecanico_nombre,
+                    f.id AS factura_id, f.folio AS factura_folio,
+                    ${SQL_ETA_LLEGADA_AT} AS eta_llegada_at
              FROM ordenes_trabajo ot
              JOIN maquinarias m ON m.id = ot.maquinaria_id
              LEFT JOIN clientes c ON c.id = ot.cliente_id
+             LEFT JOIN usuarios um ON um.id = ot.mecanico_id
              LEFT JOIN facturas f ON f.orden_trabajo_id = ot.id
              WHERE ot.id = $1`,
             [req.params.id]
@@ -361,7 +362,8 @@ router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecani
         ]);
 
         res.json({
-            ...sinInternosEta(orden),
+            // eta_llegada_at solo para administrativo y gerente con la OT en camino (utils/etaLlegada.js)
+            ...conLlegadaEstimada(sinInternosEta(orden), req.user.rol),
             servicio_ids: servicios.rows.map((s) => s.servicio_id),
             tramos: tramos.rows,
         });
@@ -453,9 +455,12 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
     let client = null;
     try {
         client = await pool.connect();
-        const mecanico = await client.query('SELECT id, nombre, rut FROM usuarios WHERE id = $1 AND rol = $2', [mecanico_id, 'mecanico']);
+        const mecanico = await client.query('SELECT id, nombre, rut, estado_cuenta FROM usuarios WHERE id = $1 AND rol = $2', [mecanico_id, 'mecanico']);
         if (mecanico.rows.length === 0) {
             return res.status(400).json({ error: 'El usuario elegido no es un mecánico' });
+        }
+        if (mecanico.rows[0].estado_cuenta !== 'activo') {
+            return res.status(400).json({ error: 'El mecánico está desactivado' });
         }
 
         await client.query('BEGIN');

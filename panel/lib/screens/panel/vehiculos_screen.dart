@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../services/api_client.dart';
 import '../../widgets/dialogos.dart';
+import '../../widgets/estado_vacio.dart';
 import '../../utils/numeros.dart';
 
 /// Vehículos del personal. Asignar uno a un mecánico le crea además su ubicación de stock:
@@ -40,8 +41,8 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
         _vehiculos = vehiculos;
         _mecanicos = mecanicos;
       });
-    } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -163,16 +164,7 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
   Widget build(BuildContext context) {
     if (_cargando) return const Center(child: CircularProgressIndicator());
     if (_error != null) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text('Error: $_error'),
-            const SizedBox(height: 12),
-            ElevatedButton(onPressed: _cargar, child: const Text('Reintentar')),
-          ],
-        ),
-      );
+      return EstadoError(titulo: 'No se pudieron cargar los vehículos', mensaje: _error!, onReintentar: _cargar);
     }
 
     return Column(

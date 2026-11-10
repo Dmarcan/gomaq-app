@@ -47,6 +47,27 @@ function validarCoordenadas(latitud, longitud) {
 }
 
 /**
+ * Cuerpo de PUT /api/mapa/bodega. Exige las dos coordenadas validas o un borrado explicito
+ * (latitud y longitud presentes, las dos en null). Un cuerpo vacio o con una sola no es un borrado.
+ * @returns {{ok: true, latitud: number|null, longitud: number|null}|{ok: false, error: string}}
+ */
+function validarUbicacionBodega(cuerpo) {
+    const c = cuerpo && typeof cuerpo === 'object' ? cuerpo : {};
+    const lat = c.latitud;
+    const lng = c.longitud;
+    if (lat === undefined && lng === undefined) {
+        return { ok: false, error: 'Indique latitud y longitud, o las dos en null para quitar la ubicación' };
+    }
+    if (lat === undefined || lng === undefined || (lat === null) !== (lng === null)) {
+        return { ok: false, error: 'Indique latitud y longitud juntas' };
+    }
+    if (lat === null) return { ok: true, latitud: null, longitud: null };
+    const r = validarCoordenadas(lat, lng);
+    if (!r.ok) return { ok: false, error: r.error };
+    return { ok: true, latitud: r.latitud, longitud: r.longitud };
+}
+
+/**
  * Igual que validarCoordenadas pero para formularios multipart, donde todo llega como texto.
  * Un string vacio cuenta como "no vino"; un string numerico se convierte; el resto se rechaza.
  */
@@ -122,6 +143,7 @@ module.exports = {
     ANTIGUEDAD_MAXIMA_MS,
     validarCoordenadas,
     validarCoordenadasFormulario,
+    validarUbicacionBodega,
     coordenadasDeFila,
     distanciaMetros,
     etaAproximada,

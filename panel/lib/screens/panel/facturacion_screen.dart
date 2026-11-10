@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import 'package:file_picker/file_picker.dart';
 import 'package:provider/provider.dart';
 import '../../services/api_client.dart';
@@ -33,19 +34,41 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
   bool _cargando = true;
   String? _error;
 
+  static const _idsPestana = ['por_facturar', 'valorizar', 'en_curso'];
+
+  static int _indiceDe(String? pestana) => switch (pestana) { 'valorizar' => 1, 'en_curso' => 2, _ => 0 };
+
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(
-      length: 3,
-      vsync: this,
-      initialIndex: switch (widget.pestanaInicial) { 'valorizar' => 1, 'en_curso' => 2, _ => 0 },
-    );
+    _tabController = TabController(length: 3, vsync: this, initialIndex: _indiceDe(widget.pestanaInicial));
+    _tabController.addListener(_pestanaCambio);
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
+  }
+
+  /// Al asentarse una pestaña nueva la URL la refleja (?pestana=) sin reconstruir la pantalla:
+  /// la llave del router no depende de la pestaña, así el estado y las listas se conservan.
+  void _pestanaCambio() {
+    if (_tabController.indexIsChanging) return;
+    if (_tabController.index == _indiceDe(widget.pestanaInicial)) return;
+    final filtro = widget.filtroInicial;
+    final query = {'pestana': _idsPestana[_tabController.index], 'filtro': ?filtro};
+    context.go(Uri(path: '/facturacion', queryParameters: query).toString());
+  }
+
+  @override
+  void didUpdateWidget(FacturacionScreen anterior) {
+    super.didUpdateWidget(anterior);
+    // un enlace (atajo del Dashboard, "Ver todos") cambia la pestaña desde la URL
+    final destino = _indiceDe(widget.pestanaInicial);
+    if (widget.pestanaInicial != anterior.pestanaInicial && destino != _tabController.index) {
+      _tabController.animateTo(destino);
+    }
   }
 
   @override
   void dispose() {
+    _tabController.removeListener(_pestanaCambio);
     _tabController.dispose();
     super.dispose();
   }
@@ -316,7 +339,10 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
     setState(() {
       _errorArchivo = _archivo == null ? 'Elige el PDF de la factura.' : null;
       _errorFolio = _folioCtrl.text.trim().isEmpty ? 'Escribe el folio de la factura.' : null;
-      _errorMonto = (_montoCtrl.text.trim().isNotEmpty && monto == null) ? 'Escribe un monto válido, por ejemplo 249.900.' : null;
+      // los pesos son enteros: un monto con decimales no se envía
+      _errorMonto = (_montoCtrl.text.trim().isNotEmpty && (monto == null || monto != monto.truncateToDouble()))
+          ? 'Escribe un monto válido, por ejemplo 249.900.'
+          : null;
     });
     if (_errorArchivo != null || _errorFolio != null || _errorMonto != null) return;
     if (_facturaPorPeriodo && (_propuesta == null || _hastaElegido == null)) {
@@ -339,7 +365,7 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
             'periodo_hasta': _hastaElegido!,
           },
           'folio': _folioCtrl.text.trim(),
-          if (monto != null) 'monto': '$monto',
+          if (monto != null) 'monto': montoParaCampo(monto),
         },
       );
       if (mounted) {
@@ -483,7 +509,7 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Envío autorizado. Quedó encolado (se procesará cuando el correo esté configurado).')),
         );
-        Navigator.pop(context);
+        _cerrarSinPreguntar();
       }
     } on ApiException catch (e) {
       if (!mounted) return;
@@ -492,7 +518,7 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Esta factura ya tenía un envío pendiente: no hace falta autorizarlo de nuevo.')),
         );
-        Navigator.pop(context);
+        _cerrarSinPreguntar();
       } else {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
       }
@@ -508,10 +534,53 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
     }
   }
 
+  bool _envioAutorizado = false;
+  bool _salidaLibre = false;
+
+  bool get _pendienteDeEnvio => _facturaCreada != null && !_envioAutorizado && !_salidaLibre;
+
+  /// Cierre tras un envío autorizado: no pide confirmación.
+  void _cerrarSinPreguntar() {
+    _envioAutorizado = true;
+    Navigator.pop(context);
+  }
+
+  /// Si la factura ya existe y no se envió, pide confirmar antes de cerrar el cuadro.
+  Future<void> _pedirCierre() async {
+    if (!_pendienteDeEnvio) {
+      Navigator.pop(context);
+      return;
+    }
+    final cerrar = await mostrarConfirmacion(
+      context,
+      titulo: 'Factura sin enviar',
+      mensaje: 'La factura quedó cargada pero no se envió por correo. ¿Cerrar igual?',
+      textoAccion: 'Cerrar sin enviar',
+      textoCancelar: 'Volver',
+    );
+    if (!cerrar || !mounted) return;
+    // el PopScope deja salir recién al reconstruir: se avisa y se cierra después
+    setState(() => _salidaLibre = true);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) Navigator.pop(context);
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final subiendo = _facturaCreada == null;
+    return PopScope(
+      canPop: !_pendienteDeEnvio,
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) _pedirCierre();
+      },
+      child: _construirCuadro(subiendo),
+    );
+  }
+
+  Widget _construirCuadro(bool subiendo) {
     return CuadroDialogo(
+      alCerrar: _pedirCierre,
       icono: Icons.receipt_long,
       titulo: widget.item['titulo'] as String,
       subtitulo: subiendo ? 'Sube la factura del SII' : 'Revisa los datos y envía la factura al cliente',
@@ -522,7 +591,7 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
         children: subiendo ? _construirFormulario() : _construirVistaPrevia(),
       ),
       acciones: [
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
+        TextButton(onPressed: _pedirCierre, child: const Text('Cerrar')),
         if (subiendo)
           FilledButton(
             onPressed: (_procesando || _detectando || (_facturaPorPeriodo && (_propuesta?['nada_que_facturar'] ?? true) == true)) ? null : _subirFactura,

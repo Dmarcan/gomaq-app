@@ -163,6 +163,14 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
         }
         const s = solicitudResult.rows[0];
 
+        // el UNIQUE de usuarios.email es exacto: una cuenta con el mismo correo en otra capitalizacion
+        // no lo dispara, y el login (que no distingue mayusculas) dejaria dos cuentas ambiguas
+        const duplicada = await client.query('SELECT id FROM usuarios WHERE lower(email) = lower($1)', [s.email]);
+        if (duplicada.rows.length > 0) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'Ya existe una cuenta con ese correo. Rechaza la solicitud o pide al cliente que use otro correo' });
+        }
+
         let clienteIdFinal = cliente_id || null;
         if (!clienteIdFinal) {
             // el cliente es la empresa: antes se creaba con el nombre de la persona de contacto

@@ -5,6 +5,8 @@ const pool = require('../config/db');
 
 const { limiteRegistro } = require('../middleware/limites');
 const { validarCoordenadas } = require('../utils/geo');
+const { rutValido, MENSAJE_RUT_INVALIDO } = require('../utils/rut');
+const { normalizarCorreo } = require('../utils/correo');
 
 const router = express.Router();
 
@@ -15,15 +17,20 @@ const textoONulo = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
 // Nunca crea filas en usuarios ni clientes directamente.
 router.post('/', limiteRegistro, async (req, res) => {
     const {
-        nombre_contacto, nombre_empresa, email, password,
+        nombre_contacto, nombre_empresa, password,
         rut_empresa, telefono_whatsapp, horario_trabajo, horario_colacion, direccion,
     } = req.body;
+    // el correo se guarda en minusculas y sin espacios: asi no se duplica por la capitalizacion
+    const email = normalizarCorreo(req.body.email);
 
     if (!nombre_contacto || !email || !password) {
-        return res.status(400).json({ error: 'nombre_contacto, email y password son requeridos' });
+        return res.status(400).json({ error: 'Nombre de contacto, correo y contraseña son obligatorios' });
     }
-    if (password.length < 8) {
+    if (typeof password !== 'string' || password.length < 8) {
         return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+    }
+    if (typeof rut_empresa === 'string' && rut_empresa.trim() && !rutValido(rut_empresa)) {
+        return res.status(400).json({ error: MENSAJE_RUT_INVALIDO });
     }
 
     // ubicacion de la empresa (opcional): un panel o APK anterior no la manda y todo sigue igual
@@ -31,7 +38,7 @@ router.post('/', limiteRegistro, async (req, res) => {
     if (!coords.ok) return res.status(400).json({ error: coords.error });
 
     try {
-        const existente = await pool.query('SELECT id FROM usuarios WHERE email = $1', [email]);
+        const existente = await pool.query('SELECT id FROM usuarios WHERE lower(email) = $1', [email]);
         if (existente.rows.length > 0) {
             return res.status(400).json({ error: 'Ese correo ya tiene una cuenta' });
         }
@@ -41,7 +48,7 @@ router.post('/', limiteRegistro, async (req, res) => {
         // un rechazo no es permanente: si existe una solicitud rechazada con este
         // correo, la nueva postulacion la reemplaza (datos frescos, vuelve a pendiente)
         const rechazada = await pool.query(
-            `SELECT id FROM solicitudes_cliente WHERE email = $1 AND estado = 'rechazada'`,
+            `SELECT id FROM solicitudes_cliente WHERE lower(email) = $1 AND estado = 'rechazada'`,
             [email]
         );
         if (rechazada.rows.length > 0) {
@@ -56,6 +63,15 @@ router.post('/', limiteRegistro, async (req, res) => {
                 [nombre_contacto, passwordHash, rut_empresa || null, telefono_whatsapp || null, horario_trabajo || null, horario_colacion || null, direccion || null, textoONulo(nombre_empresa), coords.latitud, coords.longitud, rechazada.rows[0].id]
             );
             return res.status(201).json(actualizada.rows[0]);
+        }
+
+        // el indice unico es exacto: una solicitud antigua con otra capitalizacion no lo dispararia
+        const enRevision = await pool.query(
+            `SELECT id FROM solicitudes_cliente WHERE lower(email) = $1 AND estado = 'pendiente'`,
+            [email]
+        );
+        if (enRevision.rows.length > 0) {
+            return res.status(400).json({ error: 'Ya hay una solicitud de cuenta con ese correo en revisión' });
         }
 
         const result = await pool.query(

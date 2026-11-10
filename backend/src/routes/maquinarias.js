@@ -11,6 +11,8 @@ const { calcularEstadoMantencion } = require('../utils/mantencion');
 const { ordenSql } = require('../utils/ordenFlota');
 const { visiblePara, construirSqlDocumentos, construirSqlEquiposDelCliente, filaPublica } = require('../utils/documentosEquipo');
 
+const { columnaOtAbierta } = require('../utils/otAbiertaEquipo');
+
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
 
@@ -64,7 +66,7 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
         // para distinguir un equipo de otro sin abrirlo
         let sql = `SELECT m.id, m.codigo, m.tipo, m.estado, m.ubicacion, m.foto_url, m.categoria_equipo,
                           m.marca, m.modelo, m.capacidad_carga, m.altura_trabajo, m.tipo_combustible,
-                          m.cliente_id, c.nombre AS cliente
+                          m.cliente_id, c.nombre AS cliente${columnaOtAbierta(req.user.rol)}
                    FROM maquinarias m
                    LEFT JOIN clientes c ON c.id = m.cliente_id
                    ${where}

@@ -4,6 +4,7 @@ import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
 import '../../utils/formato.dart';
 import '../../utils/numeros.dart';
+import '../../utils/unidades.dart';
 import '../../widgets/dialogos.dart';
 import '../../widgets/estado_vacio.dart';
 import 'descuadres_tab.dart';
@@ -67,8 +68,8 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
         _motivos = motivos;
         _errorDescuadres = errorDescuadres;
       });
-    } on ApiException catch (e) {
-      setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -218,7 +219,7 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
       body: _cargando
           ? const Center(child: CircularProgressIndicator())
           : _error != null
-              ? Center(child: Text('Error: $_error'))
+              ? EstadoError(titulo: 'No se pudieron cargar los insumos', mensaje: _error!, onReintentar: _cargar)
               : TabBarView(
                   controller: _tabController,
                   children: [
@@ -243,7 +244,7 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
                             child: ListTile(
                               title: Text(insumo['nombre']),
                               subtitle: Text(
-                                'Stock: ${insumo['stock_actual']} ${insumo['unidad_medida']} · Costo unitario: ${Formato.clp(parsearNumero('${insumo['costo_unitario'] ?? ''}'), siVacio: '-')}',
+                                'Stock: ${medidaConUnidad(insumo['stock_actual'], '${insumo['unidad_medida'] ?? ''}', siVacio: '-')} · Costo unitario: ${Formato.clp(parsearNumero('${insumo['costo_unitario'] ?? ''}'), siVacio: '-')}',
                               ),
                               trailing: !puedeEscribir
                                   ? null
@@ -279,7 +280,7 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
                                 '${mov['tipo'] == 'ajuste' ? 'Ajuste de conteo · ' : ''}'
                                 '${mov['insumo_nombre'] ?? mov['descripcion'] ?? 'Repuesto'} · '
                                 '${mov['tipo'] == 'ajuste' ? (mov['ubicacion_destino_id'] != null ? '+' : '-') : ''}'
-                                '${mov['cantidad']} ${mov['unidad_medida'] ?? ''}',
+                                '${medidaConUnidad(mov['cantidad'], '${mov['unidad_medida'] ?? ''}', siVacio: '-')}',
                                 style: mov['anulada_at'] != null
                                     ? const TextStyle(decoration: TextDecoration.lineThrough, color: Colors.black54)
                                     : null,

@@ -33,6 +33,9 @@ class CuadroDialogo extends StatelessWidget {
   /// Si se puede cerrar con la X del encabezado (se apaga mientras se guarda).
   final bool cerrable;
 
+  /// Qué hace la X del encabezado. Por defecto cierra el cuadro sin más.
+  final VoidCallback? alCerrar;
+
   const CuadroDialogo({
     super.key,
     required this.icono,
@@ -42,6 +45,7 @@ class CuadroDialogo extends StatelessWidget {
     this.acciones = const [],
     this.ancho = 480,
     this.cerrable = true,
+    this.alCerrar,
   });
 
   @override
@@ -116,7 +120,7 @@ class CuadroDialogo extends StatelessWidget {
           IconButton(
             icon: const Icon(Icons.close),
             tooltip: 'Cerrar',
-            onPressed: cerrable ? () => Navigator.of(context).pop() : null,
+            onPressed: cerrable ? (alCerrar ?? () => Navigator.of(context).pop()) : null,
           ),
         ],
       ),
@@ -297,6 +301,7 @@ Future<bool> mostrarConfirmacion(
   required String textoAccion,
   IconData icono = Icons.help_outline,
   bool peligro = false,
+  String textoCancelar = 'Cancelar',
 }) async {
   final confirmado = await showDialog<bool>(
     context: context,
@@ -306,7 +311,7 @@ Future<bool> mostrarConfirmacion(
       ancho: 420,
       cuerpo: Text(mensaje, style: const TextStyle(fontSize: 14, height: 1.4)),
       acciones: [
-        TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: const Text('Cancelar')),
+        TextButton(onPressed: () => Navigator.of(dialogContext).pop(false), child: Text(textoCancelar)),
         FilledButton(
           onPressed: () => Navigator.of(dialogContext).pop(true),
           style: peligro ? FilledButton.styleFrom(backgroundColor: GomaqColors.estadoNegativo) : null,

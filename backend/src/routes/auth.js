@@ -11,7 +11,7 @@ const router = express.Router();
 router.post('/login', limiteLogin, async (req, res) => {
     const { email, password } = req.body;
     if (!email || !password) {
-        return res.status(400).json({ error: 'email y password son requeridos' });
+        return res.status(400).json({ error: 'Escribe tu correo y tu contraseña' });
     }
 
     try {
@@ -26,7 +26,7 @@ router.post('/login', limiteLogin, async (req, res) => {
             // devolvia sin comprobarla, lo que permitia a cualquiera averiguar que correos
             // estaban registrados probando uno por uno (enumeracion de usuarios).
             const solicitud = await pool.query(
-                `SELECT password_hash FROM solicitudes_cliente WHERE email = $1 AND estado = 'pendiente'`,
+                `SELECT password_hash FROM solicitudes_cliente WHERE lower(email) = lower($1) AND estado = 'pendiente'`,
                 [email]
             );
             const pendiente = solicitud.rows[0];

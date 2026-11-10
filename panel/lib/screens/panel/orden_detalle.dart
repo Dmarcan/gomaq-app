@@ -4,11 +4,13 @@ import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../services/api_client.dart';
+import '../../widgets/asignar_mecanico.dart';
 import '../../widgets/dialogos.dart';
 import '../../utils/formato.dart';
 import '../../utils/historial_ot.dart';
 import '../../utils/motivo_cambio.dart';
 import '../../utils/numeros.dart';
+import '../../utils/unidades.dart';
 import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../widgets/estado_chip.dart';
@@ -37,6 +39,58 @@ Future<void> abrirDetalleOrden(BuildContext context, int id, {VoidCallback? onCa
 
 /// Detalle de una orden. El mismo cuerpo se muestra como cuadro (desde Facturación) o como página
 /// completa (/ordenes/:id): con [enPagina] las acciones no cierran la pantalla, avisan y recargan.
+/// El gerente aprueba la valorización solo de una orden facturable, sin valorizar y ya finalizada.
+bool puedeAprobarValorizacion({required bool esGerente, required Map orden, required bool cerrada}) =>
+    esGerente && orden['facturable'] == true && orden['valorizacion'] == null && cerrada;
+
+/// Cantidad de repuestos vigentes (no anulados) que siguen en "Por decidir" (facturable 'pendiente').
+int repuestosSinDecidir(List<dynamic> lineas) => lineas
+    .where((l) => l is Map && l['anulada_at'] == null && (l['facturable'] ?? 'pendiente') == 'pendiente')
+    .length;
+
+/// Texto de la confirmación al aprobar con repuestos sin decidir; no bloquea, solo avisa.
+String textoConfirmarValorizacion(int n) =>
+    'Hay $n ${n == 1 ? 'repuesto sin decidir si se cobra' : 'repuestos sin decidir si se cobran'}. ¿Aprobar la valorización igual?';
+
+/// Quién atiende la orden, para la sección "Mecánico" del detalle.
+String textoMecanicoOrden(Map orden) {
+  final nombre = '${orden['mecanico_nombre'] ?? ''}'.trim();
+  if (nombre.isNotEmpty) return nombre;
+  return orden['mecanico_id'] == null ? 'Sin asignar' : 'Mecánico asignado';
+}
+
+/// El administrativo puede reasignar una orden que ya tiene mecánico y no está finalizada.
+bool puedeReasignar({required bool esAdministrativo, required Map orden}) =>
+    esAdministrativo && orden['mecanico_id'] != null && orden['estado'] != 'finalizada';
+
+/// Con la orden ya en viaje o en trabajo, cambiar de mecánico deja sin efecto lo que el anterior no alcanzó a enviar.
+bool reasignacionPideConfirmar(Object? estado) => const {'en_camino', 'en_terreno', 'en_reparacion'}.contains(estado);
+
+/// Qué se dice del destino de la OT. Nunca coordenadas: solo de dónde salió.
+String textoDestinoOt(Map orden) {
+  if (!hayDestinoOt(orden)) return 'Sin destino';
+  return switch (orden['destino_origen']) {
+    'guia' => 'Ubicación de la guía',
+    'solicitud' => 'Ubicación indicada en la solicitud del cliente',
+    _ => 'Ubicación del cliente',
+  };
+}
+
+/// El destino existe cuando están las dos coordenadas.
+bool hayDestinoOt(Map orden) => orden['destino_lat'] != null && orden['destino_lng'] != null;
+
+/// La hora de llegada estimada ("15:40"), solo con la OT en camino y si el servidor la entregó.
+/// null si no corresponde mostrarla.
+String? horaLlegadaEstimada(Map orden) {
+  if (orden['estado'] != 'en_camino' || orden['eta_llegada_at'] == null) return null;
+  final hora = Formato.diaMesHora(orden['eta_llegada_at'], siVacio: '');
+  return hora.isEmpty ? null : hora;
+}
+
+/// "2,5 litro" en vez de "2.50": la cantidad de una línea de repuesto con su unidad.
+String cantidadLineaRepuesto(Map linea) =>
+    medidaConUnidad(linea['cantidad'], '${linea['unidad_medida'] ?? ''}', siVacio: '${linea['cantidad'] ?? ''}');
+
 class DetalleOrden extends StatefulWidget {
   final Map<String, dynamic> orden;
   final VoidCallback onCambio;
@@ -50,6 +104,8 @@ class DetalleOrden extends StatefulWidget {
 class DetalleOrdenState extends State<DetalleOrden> {
   List<dynamic> _mecanicos = [];
   List<dynamic> _lineas = [];
+  // hasta que termina la primera carga no se dice "sin repuestos" (aparecía un instante de más)
+  bool _cargandoLineas = true;
   // línea de tiempo de la orden (solo administrativo y gerente)
   List<dynamic> _historial = [];
   bool _cargandoHistorial = true;
@@ -166,7 +222,10 @@ class DetalleOrdenState extends State<DetalleOrden> {
     try {
       final data = await ApiClient.instance.get('/api/insumos/orden/${widget.orden['id']}');
       if (mounted) setState(() => _lineas = data);
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _cargandoLineas = false);
+    }
   }
 
   /// Resuelve el "?" del papel. Al cambiar una línea el backend recalcula el facturable de
@@ -219,7 +278,7 @@ class DetalleOrdenState extends State<DetalleOrden> {
     }
   }
 
-  String _nombreLinea(dynamic linea) => '${linea['insumo_nombre'] ?? linea['descripcion'] ?? 'Repuesto'} · ${linea['cantidad']}';
+  String _nombreLinea(dynamic linea) => '${linea['insumo_nombre'] ?? linea['descripcion'] ?? 'Repuesto'} · ${cantidadLineaRepuesto(linea)}';
 
   static String _etiquetaFacturable(String valor) => switch (valor) {
         'si' => 'Se cobra',
@@ -324,12 +383,46 @@ class DetalleOrdenState extends State<DetalleOrden> {
     }
   }
 
+  /// Cambia el mecánico de una orden ya asignada y no finalizada. Con la orden en viaje o en trabajo
+  /// pide confirmación antes, porque lo que el mecánico anterior no envió se rechaza en su teléfono.
+  Future<void> _reasignar() async {
+    if (reasignacionPideConfirmar(_orden['estado'])) {
+      final confirmado = await mostrarConfirmacion(
+        context,
+        titulo: '¿Reasignar la orden?',
+        mensaje: 'Lo que el mecánico anterior tenga sin enviar quedará rechazado en su teléfono.',
+        textoAccion: 'Reasignar',
+        peligro: true,
+      );
+      if (!confirmado || !mounted) return;
+    }
+    final reasignada = await abrirAsignarMecanico(
+      context,
+      Map<String, dynamic>.from(_orden),
+      reasignar: true,
+      mecanicoActualId: _orden['mecanico_id'],
+    );
+    if (!reasignada || !mounted) return;
+    widget.onCambio();
+    await _refrescarTrasCambio();
+  }
+
   Future<void> _aprobarValorizacion() async {
     // "18.500" son dieciocho mil quinientos: leido con tryParse era 18,5 pesos
     final monto = parsearMonto(_valorizacionCtrl.text);
     if (monto == null || monto <= 0) {
       setState(() => _errorValorizacion = 'Escribe un monto válido, por ejemplo 249.900.');
       return;
+    }
+    final sinDecidir = repuestosSinDecidir(_lineas);
+    if (sinDecidir > 0) {
+      final seguir = await mostrarConfirmacion(
+        context,
+        titulo: '¿Aprobar con repuestos sin decidir?',
+        mensaje: textoConfirmarValorizacion(sinDecidir),
+        textoAccion: 'Aprobar igual',
+      );
+      if (!seguir || !mounted) return;
     }
     setState(() => _cargandoAccion = true);
     try {
@@ -444,6 +537,12 @@ class DetalleOrdenState extends State<DetalleOrden> {
   /// Repuestos de la OT con su facturable por línea, como la tabla del talonario.
   /// Las líneas "por decidir" (el "?" del papel) son las que gerencia tiene que resolver.
   Widget _seccionLineas(AuthService auth) {
+    if (_lineas.isEmpty && _cargandoLineas) {
+      return const Padding(
+        padding: EdgeInsets.only(bottom: 16),
+        child: Center(child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))),
+      );
+    }
     if (_lineas.isEmpty) {
       return const Padding(
         padding: EdgeInsets.only(bottom: 16),
@@ -469,7 +568,7 @@ class DetalleOrdenState extends State<DetalleOrden> {
               dense: true,
               contentPadding: EdgeInsets.zero,
               title: Text(
-                '${l['insumo_nombre'] ?? l['descripcion'] ?? 'Repuesto'} · ${l['cantidad']}',
+                '${l['insumo_nombre'] ?? l['descripcion'] ?? 'Repuesto'} · ${cantidadLineaRepuesto(l)}',
                 style: const TextStyle(decoration: TextDecoration.lineThrough, color: Colors.black54),
               ),
               subtitle: const Text('Anulada', style: TextStyle(fontSize: 12, color: Colors.black54)),
@@ -478,7 +577,7 @@ class DetalleOrdenState extends State<DetalleOrden> {
             ListTile(
               dense: true,
               contentPadding: EdgeInsets.zero,
-              title: Text('${l['insumo_nombre'] ?? l['descripcion'] ?? 'Repuesto'} · ${l['cantidad']}'),
+              title: Text('${l['insumo_nombre'] ?? l['descripcion'] ?? 'Repuesto'} · ${cantidadLineaRepuesto(l)}'),
               subtitle: Text(
                 Formato.clp(num.tryParse('${l['precio_unitario']}'), siVacio: 'Sin precio'),
                 style: const TextStyle(fontSize: 12),
@@ -620,6 +719,25 @@ class DetalleOrdenState extends State<DetalleOrden> {
         children: [
           _fila('Estado', Align(alignment: Alignment.centerLeft, child: EstadoChip(estado: o['estado']))),
           _fila('Cliente', _texto(o['cliente_nombre'])),
+          _fila(
+            'Destino',
+            Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 8,
+              children: [
+                _texto(textoDestinoOt(o), siVacio: 'Sin destino'),
+                if (hayDestinoOt(o))
+                  TextButton(
+                    onPressed: () {
+                      if (!widget.enPagina) Navigator.pop(context);
+                      context.go('/mapa');
+                    },
+                    child: const Text('Ver en el mapa'),
+                  ),
+              ],
+            ),
+          ),
+          if (horaLlegadaEstimada(o) != null) _fila('Llegada estimada', _texto(horaLlegadaEstimada(o))),
           _fila('Tipo de servicio', _texto(_etiquetaTipoServicio(o['tipo_servicio']))),
           _fila('Motivo', _texto(o['motivo'])),
           // el talonario separa lo que se encontró al llegar de lo que se hizo
@@ -641,7 +759,7 @@ class DetalleOrdenState extends State<DetalleOrden> {
                   child: DropdownButtonFormField<int>(
                     isExpanded: true,
                     decoration: decoracionCampo('Mecánico').copyWith(errorText: _errorMecanico),
-                    items: _mecanicos.map<DropdownMenuItem<int>>((m) => DropdownMenuItem(value: m['id'], child: Text(m['nombre']))).toList(),
+                    items: mecanicosAsignables(_mecanicos).map<DropdownMenuItem<int>>((m) => DropdownMenuItem(value: m['id'], child: Text(m['nombre']))).toList(),
                     onChanged: (v) => setState(() {
                       _mecanicoSeleccionado = v;
                       _errorMecanico = null;
@@ -658,7 +776,35 @@ class DetalleOrdenState extends State<DetalleOrden> {
             const SizedBox(height: 20),
           ],
 
-          if (auth.esGerente && o['facturable'] == true && o['valorizacion'] == null) ...[
+          if (puedeReasignar(esAdministrativo: auth.esAdministrativo, orden: o)) ...[
+            const TituloSeccion('Mecánico'),
+            // Wrap: bajo 600 px el botón baja debajo del nombre en vez de desbordar
+            Wrap(
+              spacing: 16,
+              runSpacing: 8,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                Text(textoMecanicoOrden(o), style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600)),
+                OutlinedButton.icon(
+                  onPressed: _cargandoAccion ? null : _reasignar,
+                  icon: const Icon(Icons.swap_horiz, size: 18),
+                  label: const Text('Reasignar'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 20),
+          ],
+
+          if (auth.esGerente && o['facturable'] == true && o['valorizacion'] == null && !_cerrada) ...[
+            // el servidor solo valoriza una orden finalizada (si no, responde 409)
+            const TituloSeccion('Aprobar valorización'),
+            const Padding(
+              padding: EdgeInsets.only(bottom: 20),
+              child: Text('Se valoriza cuando la orden esté finalizada.', style: TextStyle(fontSize: 14, color: Colors.black87)),
+            ),
+          ],
+
+          if (puedeAprobarValorizacion(esGerente: auth.esGerente, orden: o, cerrada: _cerrada)) ...[
             const TituloSeccion('Aprobar valorización'),
             Row(
               crossAxisAlignment: CrossAxisAlignment.start,

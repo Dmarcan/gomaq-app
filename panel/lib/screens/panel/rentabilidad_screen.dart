@@ -103,8 +103,8 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
         _hayMas = data['hay_mas'] == true;
         _resumen = Map<String, dynamic>.from(data['resumen'] ?? {});
       });
-    } on ApiException catch (e) {
-      if (mounted) setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
     }

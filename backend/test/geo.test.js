@@ -4,6 +4,7 @@ const assert = require('node:assert');
 const {
     validarCoordenadas,
     validarCoordenadasFormulario,
+    validarUbicacionBodega,
     coordenadasDeFila,
     distanciaMetros,
     etaAproximada,
@@ -153,5 +154,26 @@ describe('evaluarCapturadaEn', () => {
         for (const v of [undefined, null, '', 'ayer', {}]) {
             assert.deepStrictEqual(evaluarCapturadaEn(v, ahora), { ok: false, motivo: 'invalida' });
         }
+    });
+});
+
+describe('validarUbicacionBodega', () => {
+    test('un par valido se acepta', () => {
+        assert.deepStrictEqual(validarUbicacionBodega({ latitud: -33.5, longitud: -70.7 }), { ok: true, latitud: -33.5, longitud: -70.7 });
+    });
+
+    test('latitud y longitud en null son un borrado explicito', () => {
+        assert.deepStrictEqual(validarUbicacionBodega({ latitud: null, longitud: null }), { ok: true, latitud: null, longitud: null });
+    });
+
+    test('un cuerpo vacio, ausente o con una sola coordenada se rechaza', () => {
+        for (const cuerpo of [undefined, null, {}, { latitud: -33.5 }, { longitud: -70.7 }, { latitud: null }, { latitud: -33.5, longitud: null }, { latitud: null, longitud: -70.7 }]) {
+            assert.strictEqual(validarUbicacionBodega(cuerpo).ok, false, JSON.stringify(cuerpo));
+        }
+    });
+
+    test('texto o fuera de rango se rechaza', () => {
+        assert.strictEqual(validarUbicacionBodega({ latitud: '-33.5', longitud: '-70.7' }).ok, false);
+        assert.strictEqual(validarUbicacionBodega({ latitud: 91, longitud: 0 }).ok, false);
     });
 });

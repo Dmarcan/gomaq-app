@@ -1,9 +1,14 @@
 import 'dart:convert' show utf8;
 
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../services/api_client.dart';
+import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
+import '../../widgets/acciones_cuenta.dart';
 import '../../widgets/dialogos.dart';
+import '../../utils/roles.dart';
+import '../../widgets/estado_vacio.dart';
 
 class UsuariosScreen extends StatefulWidget {
   const UsuariosScreen({super.key});
@@ -38,8 +43,8 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
         // los clientes no reciben el aviso de mantencion: es operativo interno
         _internos = usuarios.where((u) => u['rol'] != 'cliente').toList();
       });
-    } on ApiException catch (e) {
-      setState(() => _error = e.message);
+    } catch (e) {
+      if (mounted) setState(() => _error = mensajeErrorCarga(e));
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
@@ -105,6 +110,19 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     }
   }
 
+  /// Aprobar creando un cliente nuevo: crea la empresa y activa la cuenta, así que se confirma.
+  Future<void> _crearClienteNuevo(Map<String, dynamic> solicitud) async {
+    final empresa = solicitud['nombre_empresa'] ?? solicitud['nombre_contacto'];
+    final confirmado = await mostrarConfirmacion(
+      context,
+      titulo: '¿Crear un cliente nuevo?',
+      mensaje: 'Se creará el cliente $empresa y se activará la cuenta de ${solicitud['nombre_contacto']}, que podrá ingresar al portal.',
+      textoAccion: 'Crear cliente',
+    );
+    if (!confirmado) return;
+    await _aprobar(solicitud['id']);
+  }
+
   Future<void> _rechazar(int solicitudId) async {
     final confirmado = await mostrarConfirmacion(
       context,
@@ -122,13 +140,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     }
   }
 
-  static const _rolesInternos = {
-    'mecanico': 'Mecánico',
-    'administrativo': 'Administrativo',
-    'gerente': 'Gerente',
-  };
-
-  String _rolLegible(dynamic rol) => _rolesInternos[rol] ?? '$rol';
+  String _rolLegible(dynamic rol) => nombreRol(rol);
 
   /// Crea una cuenta interna. La contraseña la escribe quien crea la cuenta y se la entrega a la
   /// persona: no hay proveedor de correo para enviarla, y el sistema nunca la vuelve a mostrar.
@@ -170,7 +182,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
             expandedInsets: EdgeInsets.zero,
             label: const Text('Rol *'),
             dropdownMenuEntries: [
-              for (final e in _rolesInternos.entries) DropdownMenuEntry<String>(value: e.key, label: e.value),
+              for (final e in rolesInternos.entries) DropdownMenuEntry<String>(value: e.key, label: e.value),
             ],
             validator: (v) => v == null ? 'Elige el rol de la cuenta.' : null,
             onSelected: (v) => redibujar(() => rol = v),
@@ -281,12 +293,23 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
   /// Desactiva o reactiva una cuenta interna. Desactivada no puede iniciar sesión y su sesión
   /// vigente se corta en la siguiente petición. Los datos y las órdenes se conservan.
   Future<void> _cambiarEstado(Map<String, dynamic> usuario, {required bool activar}) async {
+    if (activar) {
+      final confirmado = await mostrarConfirmacion(
+        context,
+        titulo: '¿Reactivar la cuenta de ${usuario['nombre']}?',
+        mensaje: 'Podrá volver a iniciar sesión con su contraseña actual.',
+        textoAccion: 'Reactivar cuenta',
+      );
+      if (!confirmado || !mounted) return;
+    }
     if (!activar) {
+      final aviso = avisoOtAbiertas(usuario['ot_abiertas']);
       final confirmado = await mostrarConfirmacion(
         context,
         titulo: '¿Desactivar la cuenta de ${usuario['nombre']}?',
         mensaje:
-            'No podrá iniciar sesión y su sesión actual se cierra. Sus órdenes y datos se conservan, y puedes reactivarla cuando quieras.',
+            'No podrá iniciar sesión y su sesión actual se cierra. Sus órdenes y datos se conservan, y puedes reactivarla cuando quieras.'
+            '${aviso == null ? '' : '\n\n$aviso'}',
         textoAccion: 'Desactivar cuenta',
         peligro: true,
       );
@@ -308,6 +331,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
   }
 
   Widget _tarjetaCuentas() {
+    final miId = context.watch<AuthService>().id;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -353,23 +377,12 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
                       color: activa ? null : GomaqColors.advertenciaFuerte,
                     ),
                   ),
-                  trailing: Wrap(
-                    spacing: 4,
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    children: [
-                      Semantics(
-                        label: 'Restablecer contraseña de ${u['nombre']}',
-                        excludeSemantics: true,
-                        child: TextButton(onPressed: () => _cambiarClave(u), child: const Text('Contraseña')),
-                      ),
-                      if (activa)
-                        TextButton(
-                          onPressed: () => _cambiarEstado(u, activar: false),
-                          child: Text('Desactivar', style: TextStyle(color: Theme.of(context).colorScheme.error)),
-                        )
-                      else
-                        TextButton(onPressed: () => _cambiarEstado(u, activar: true), child: const Text('Reactivar')),
-                    ],
+                  trailing: AccionesCuentaEquipo(
+                    usuario: u,
+                    esPropia: miId != null && '${u['id']}' == '$miId',
+                    onClave: () => _cambiarClave(u),
+                    onDesactivar: () => _cambiarEstado(u, activar: false),
+                    onReactivar: () => _cambiarEstado(u, activar: true),
                   ),
                 );
               }),
@@ -471,7 +484,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
                   contentPadding: EdgeInsets.zero,
                   value: u['recibe_alertas_mantencion'] == true,
                   onChanged: (v) => _guardarAlertas(u, recibe: v),
-                  title: Text('${u['nombre']} · ${u['rol']}'),
+                  title: Text('${u['nombre']} · ${_rolLegible(u['rol'])}'),
                   subtitle: Row(
                     children: [
                       Expanded(
@@ -497,20 +510,20 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
   @override
   Widget build(BuildContext context) {
     if (_cargando) return const Center(child: CircularProgressIndicator());
-    if (_error != null) return Center(child: Text('Error: $_error'));
+    if (_error != null) return EstadoError(titulo: 'No se pudieron cargar las cuentas', mensaje: _error!, onReintentar: _cargar);
 
     return RefreshIndicator(
       onRefresh: _cargar,
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
-        // +3: la tarjeta de cuentas, la de alertas de mantencion y el titulo de las solicitudes
+        // +3: el titulo de las solicitudes (primero), y al final la tarjeta de cuentas y la de alertas
         itemCount: _solicitudes.length + 3,
         itemBuilder: (context, index) {
-          if (index == 0) return _tarjetaCuentas();
-          if (index == 1) return _tarjetaAlertas();
-          if (index == 2) {
+          if (index == _solicitudes.length + 1) return _tarjetaCuentas();
+          if (index == _solicitudes.length + 2) return _tarjetaAlertas();
+          if (index == 0) {
             return Padding(
-              padding: const EdgeInsets.only(top: 24, bottom: 8),
+              padding: const EdgeInsets.only(bottom: 8),
               child: Text(
                 _solicitudes.isEmpty
                     ? 'No hay solicitudes de cuenta pendientes'
@@ -519,7 +532,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
               ),
             );
           }
-          final i = index - 3;
+          final i = index - 1;
           final s = _solicitudes[i];
           return Card(
             child: Padding(
@@ -544,7 +557,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
                     runSpacing: 8,
                     children: [
                       FilledButton.icon(
-                        onPressed: () => _aprobar(s['id']),
+                        onPressed: () => _crearClienteNuevo(s),
                         icon: const Icon(Icons.add_business, size: 16),
                         label: const Text('Crear cliente nuevo'),
                       ),

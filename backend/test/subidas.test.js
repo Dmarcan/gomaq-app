@@ -154,6 +154,28 @@ describe('rutas de subida', () => {
         return { status: r.status, body: json };
     }
 
+    test('el aviso de archivo grande usa el limite del subidor que fallo', async () => {
+        const grande = Buffer.alloc(6 * 1024 * 1024, 1);
+        const img = await subir('POST', '/api/solicitudes', 'cliente', grande, 'image/png', 'a.png', { maquinaria_id: '1', descripcion: 'x' });
+        assert.equal(img.status, 413);
+        assert.match(img.body.error, /máximo 5 MB/);
+        const { mensajeArchivoGrande, MAX_PDF_BYTES } = require('../src/middleware/upload');
+        assert.match(mensajeArchivoGrande(MAX_PDF_BYTES), /máximo 10 MB/);
+    });
+
+    test('una ruta /api inexistente responde 404 JSON', async () => {
+        const app = express();
+        app.use('/api', require('../src/middleware/errores').rutaApiNoEncontrada);
+        const srv = await new Promise((res) => { const s = app.listen(0, () => res(s)); });
+        try {
+            const r = await fetch(`http://127.0.0.1:${srv.address().port}/api/no-existe`);
+            assert.equal(r.status, 404);
+            assert.deepEqual(await r.json(), { error: 'Ruta no encontrada' });
+        } finally {
+            await new Promise((res) => srv.close(res));
+        }
+    });
+
     test('un texto declarado como PDF ya no pasa por /guias/detectar', async () => {
         const r = await subir('POST', '/api/maquinarias/guias/detectar', 'administrativo', 'no soy pdf', 'application/pdf', 'x.pdf');
         assert.equal(r.status, 400);

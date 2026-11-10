@@ -5388,13 +5388,16 @@ describe('bloque 5 (parte C): avisos al mecanico y al gerente', () => {
         assert.equal(lista[0].destinatario, 'mecanico@gomaq.test');
     });
 
-    test('un mecanico inactivo no recibe avisos', async (t) => {
+    // antes la asignacion pasaba (200) y solo se omitia el aviso; desde que una cuenta desactivada
+    // no puede recibir ordenes, la asignacion misma se rechaza y por lo tanto tampoco hay aviso
+    test('a un mecanico inactivo no se le asigna ni se le avisa', async (t) => {
         if (!requiereBase(t)) return;
         await contactos(MARCA.telefono, MARCA.telefonoDos);
         const ot = await crearOt('asignada', null);
         try {
             await pool.query("UPDATE usuarios SET estado_cuenta = 'rechazado' WHERE id = $1", [datos.mecanicoId]);
-            assert.equal((await pedir('PATCH', `/api/ordenes-trabajo/${ot}/asignar`, 'administrativo', { mecanico_id: datos.mecanicoId })).status, 200);
+            const r = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/asignar`, 'administrativo', { mecanico_id: datos.mecanicoId });
+            assert.equal(r.status, 400);
             assert.equal((await avisos('ot_asignada', ot)).length, 0);
         } finally {
             await pool.query("UPDATE usuarios SET estado_cuenta = 'activo' WHERE id = $1", [datos.mecanicoId]);
@@ -7043,5 +7046,46 @@ describe('orden de bloqueo OT -> equipo sin ciclos', () => {
         const equipo = await crearEquipo();
         const r = await pedir('POST', `/api/horometro/maquinaria/${equipo.id}`, 'administrativo', { valor: 5, orden_trabajo_id: 2000000000 });
         assert.equal(r.status, 400);
+    });
+});
+
+describe('cuentas del equipo: asignar a un desactivado y aprobar con correo repetido', () => {
+    test('asignar una OT a un mecanico desactivado responde 400', async (t) => {
+        if (!requiereBase(t)) return;
+        const correo = `desactivado-${crypto.randomUUID()}@gomaq.test`;
+        const u = await pool.query(
+            `INSERT INTO usuarios (nombre, email, password_hash, rol, estado_cuenta)
+             VALUES ('Mecanico desactivado de prueba', $1, 'x', 'mecanico', 'rechazado') RETURNING id`,
+            [correo]
+        );
+        try {
+            const ot = await crearOt('pendiente', null);
+            const r = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/asignar`, 'administrativo', { mecanico_id: u.rows[0].id });
+            assert.equal(r.status, 400, JSON.stringify(r.body));
+            assert.match(r.body.error, /desactivado/);
+        } finally {
+            await pool.query('DELETE FROM usuarios WHERE id = $1', [u.rows[0].id]);
+        }
+    });
+
+    test('aprobar una solicitud cuyo correo ya tiene cuenta (otra capitalizacion) responde 409', async (t) => {
+        if (!requiereBase(t)) return;
+        const correo = `duplicado-${crypto.randomUUID()}@gomaq.test`;
+        const u = await pool.query(
+            `INSERT INTO usuarios (nombre, email, password_hash, rol, estado_cuenta)
+             VALUES ('Cuenta existente de prueba', $1, 'x', 'cliente', 'activo') RETURNING id`,
+            [correo]
+        );
+        const s = await pool.query(
+            `INSERT INTO solicitudes_cliente (nombre_contacto, email, password_hash) VALUES ('Contacto de prueba', $1, 'x') RETURNING id`,
+            [correo.toUpperCase()]
+        );
+        try {
+            const r = await pedir('POST', `/api/usuarios/solicitudes/${s.rows[0].id}/aprobar`, 'administrativo', {});
+            assert.equal(r.status, 409, JSON.stringify(r.body));
+        } finally {
+            await pool.query('DELETE FROM solicitudes_cliente WHERE id = $1', [s.rows[0].id]);
+            await pool.query('DELETE FROM usuarios WHERE id = $1', [u.rows[0].id]);
+        }
     });
 });

@@ -5,18 +5,34 @@ import '../services/auth_service.dart';
 import '../theme/gomaq_theme.dart';
 import 'dialogos.dart';
 
+/// Mecánicos que se pueden elegir: solo cuentas activas y, al reasignar, sin el mecánico actual.
+List<dynamic> mecanicosAsignables(List<dynamic> mecanicos, {Object? actualId}) => mecanicos
+    .where((m) => (m['estado_cuenta'] ?? 'activo') == 'activo' && (actualId == null || '${m['id']}' != '$actualId'))
+    .toList();
+
 /// Abre el cuadro para asignar un mecánico a una orden. Devuelve `true` si se asignó.
-Future<bool> abrirAsignarMecanico(BuildContext context, Map<String, dynamic> orden) async {
-  final asignada = await showDialog<bool>(context: context, builder: (_) => AsignarMecanicoDialog(orden: orden));
+/// Con [reasignar] cambia el título y deja fuera al mecánico actual ([mecanicoActualId]).
+Future<bool> abrirAsignarMecanico(
+  BuildContext context,
+  Map<String, dynamic> orden, {
+  bool reasignar = false,
+  Object? mecanicoActualId,
+}) async {
+  final asignada = await showDialog<bool>(
+    context: context,
+    builder: (_) => AsignarMecanicoDialog(orden: orden, reasignar: reasignar, mecanicoActualId: mecanicoActualId),
+  );
   if (asignada == true && context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('OT #${orden['id']} asignada')));
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('OT #${orden['id']} ${reasignar ? 'reasignada' : 'asignada'}')));
   }
   return asignada == true;
 }
 
 class AsignarMecanicoDialog extends StatefulWidget {
   final Map<String, dynamic> orden;
-  const AsignarMecanicoDialog({super.key, required this.orden});
+  final bool reasignar;
+  final Object? mecanicoActualId;
+  const AsignarMecanicoDialog({super.key, required this.orden, this.reasignar = false, this.mecanicoActualId});
 
   @override
   State<AsignarMecanicoDialog> createState() => AsignarMecanicoState();
@@ -72,7 +88,7 @@ class AsignarMecanicoState extends State<AsignarMecanicoDialog> {
     // ya existe. El nombre viejo mandaba a buscar el formulario de crear en el lugar equivocado.
     return CuadroDialogo(
       icono: Icons.engineering,
-      titulo: 'Asignar mecánico',
+      titulo: widget.reasignar ? 'Reasignar mecánico' : 'Asignar mecánico',
       subtitulo: 'OT #${o['id']} · ${o['maquinaria_codigo'] ?? ''}',
       cuerpo: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -99,7 +115,7 @@ class AsignarMecanicoState extends State<AsignarMecanicoDialog> {
             if (_cargando)
               const Padding(padding: EdgeInsets.all(16), child: Center(child: CircularProgressIndicator()))
             else
-              for (final m in _mecanicos)
+              for (final m in mecanicosAsignables(_mecanicos, actualId: widget.mecanicoActualId))
                 ListTile(
                   contentPadding: EdgeInsets.zero,
                   leading: CircleAvatar(child: Text((m['nombre'] as String).substring(0, 1))),

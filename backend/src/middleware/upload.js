@@ -39,8 +39,24 @@ function verificarFirma(permitidos, descripcion) {
 }
 
 /** Envuelve una instancia de multer para que `.single(campo)` incluya la comprobacion de la firma. */
-function conFirma(instancia, permitidos, descripcion) {
-    return { single: (campo) => [instancia.single(campo), verificarFirma(permitidos, descripcion)] };
+function conFirma(instancia, permitidos, descripcion, limiteBytes) {
+    return {
+        single: (campo) => {
+            const subir = instancia.single(campo);
+            // anota el limite real de este subidor en el error, para que el mensaje no mienta
+            const conLimite = (req, res, next) => subir(req, res, (err) => {
+                if (err && err.code === 'LIMIT_FILE_SIZE') err.limiteBytes = limiteBytes;
+                next(err);
+            });
+            return [conLimite, verificarFirma(permitidos, descripcion)];
+        },
+    };
+}
+
+/** "El archivo es demasiado grande (máximo 5 MB)" con el límite real del subidor. */
+function mensajeArchivoGrande(limiteBytes) {
+    const mb = Math.round((limiteBytes || MAX_ADJUNTO_BYTES) / (1024 * 1024));
+    return `El archivo es demasiado grande (máximo ${mb} MB)`;
 }
 
 const IMAGENES = ['jpeg', 'png', 'webp', 'heic'];
@@ -50,21 +66,21 @@ const subidaPdf = conFirma(multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: MAX_PDF_BYTES, files: 1 },
     fileFilter: soloTipos(['application/pdf'], 'un PDF'),
-}), ['pdf'], 'un PDF válido');
+}), ['pdf'], 'un PDF válido', MAX_PDF_BYTES);
 
 /** Foto de un equipo en la ficha tecnica o evidencia de una solicitud: solo imagen (sin SVG), hasta 5 MB. */
 const subidaImagen = conFirma(multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: MAX_IMAGEN_BYTES, files: 1 },
     fileFilter: soloTipos(['image/'], 'una imagen'),
-}), IMAGENES, 'una imagen JPEG, PNG, WEBP o HEIC');
+}), IMAGENES, 'una imagen JPEG, PNG, WEBP o HEIC', MAX_IMAGEN_BYTES);
 
 /** Documento de un vehiculo: PDF o foto del papel, hasta 10 MB. */
 const subidaDocumento = conFirma(multer({
     storage: multer.memoryStorage(),
     limits: { fileSize: MAX_ADJUNTO_BYTES, files: 1 },
     fileFilter: soloTipos(['application/pdf', 'image/'], 'un PDF o una imagen'),
-}), ['pdf', ...IMAGENES], 'un PDF o una imagen JPEG, PNG, WEBP o HEIC');
+}), ['pdf', ...IMAGENES], 'un PDF o una imagen JPEG, PNG, WEBP o HEIC', MAX_ADJUNTO_BYTES);
 
 /**
  * Traduce los errores de multer a respuestas entendibles. Se monta como manejador de errores
@@ -73,7 +89,7 @@ const subidaDocumento = conFirma(multer({
 function manejarErroresDeSubida(err, req, res, next) {
     if (!(err instanceof multer.MulterError)) return next(err);
     if (err.code === 'LIMIT_FILE_SIZE') {
-        return res.status(413).json({ error: 'El archivo es demasiado grande (máximo 10 MB)' });
+        return res.status(413).json({ error: mensajeArchivoGrande(err.limiteBytes) });
     }
     return res.status(400).json({ error: err.message || 'Archivo no válido' });
 }
@@ -84,6 +100,7 @@ module.exports = {
     subidaDocumento,
     verificarFirma,
     manejarErroresDeSubida,
+    mensajeArchivoGrande,
     MAX_PDF_BYTES,
     MAX_IMAGEN_BYTES,
     MAX_ADJUNTO_BYTES,

@@ -107,14 +107,10 @@ class _ClienteSeguimientoScreenState extends State<ClienteSeguimientoScreen> {
           }
           final item = _abiertos[i - 1];
           final lineas = _lineasResumen(item);
-          return Card(
-            child: ListTile(
-              isThreeLine: lineas.length >= 2,
-              title: Text(item['titulo']),
-              subtitle: _resumen(lineas),
-              trailing: EstadoChip(estado: item['estado'] ?? 'pendiente', etiqueta: etiquetaParaCliente(item['estado'])),
-              onTap: () => showDialog(context: context, builder: (_) => _SeguimientoDialog(item: item)),
-            ),
+          return TarjetaSeguimiento(
+            item: item,
+            lineas: lineas,
+            alTocar: () => showDialog(context: context, builder: (_) => _SeguimientoDialog(item: item)),
           );
         },
       ),
@@ -138,10 +134,60 @@ class _ClienteSeguimientoScreenState extends State<ClienteSeguimientoScreen> {
     ];
   }
 
-  Widget _resumen(List<String> lineas) => Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [for (final l in lineas) Text(l, maxLines: 2, overflow: TextOverflow.ellipsis)],
-      );
+}
+
+/// Una solicitud u orden abierta del cliente. Desde 600 px la etiqueta de estado va a la derecha;
+/// en pantallas angostas va arriba del título, para no apretar el texto.
+class TarjetaSeguimiento extends StatelessWidget {
+  final Map<String, dynamic> item;
+  final List<String> lineas;
+  final VoidCallback alTocar;
+  const TarjetaSeguimiento({super.key, required this.item, required this.lineas, required this.alTocar});
+
+  @override
+  Widget build(BuildContext context) {
+    final angosto = MediaQuery.sizeOf(context).width < 600;
+    final chip = EstadoChip(estado: item['estado'] ?? 'pendiente', etiqueta: etiquetaParaCliente(item['estado']));
+    final resumen = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        for (var i = 0; i < lineas.length; i++)
+          // el paso actual (primera línea) se lee completo; el resto se recorta. Sin maxLines, los
+          // puntos suspensivos dejarían el texto en una sola línea cortada: por eso el paso no los lleva
+          Text(
+            lineas[i],
+            maxLines: (angosto && i == 0) ? null : 2,
+            overflow: (angosto && i == 0) ? null : TextOverflow.ellipsis,
+          ),
+      ],
+    );
+    return Card(
+      child: angosto
+          ? InkWell(
+              onTap: alTocar,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    chip,
+                    const SizedBox(height: 8),
+                    Text('${item['titulo']}', style: Theme.of(context).textTheme.titleMedium),
+                    const SizedBox(height: 4),
+                    DefaultTextStyle.merge(style: Theme.of(context).textTheme.bodyMedium, child: resumen),
+                  ],
+                ),
+              ),
+            )
+          : ListTile(
+              isThreeLine: lineas.length >= 2,
+              title: Text('${item['titulo']}'),
+              subtitle: resumen,
+              trailing: chip,
+              onTap: alTocar,
+            ),
+    );
+  }
 }
 
 class _SeguimientoDialog extends StatelessWidget {

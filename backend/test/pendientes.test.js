@@ -64,6 +64,15 @@ describe('cobroParaCliente', () => {
         assert.equal(cobroParaCliente({ estado: 'finalizada', facturable: false, lineasPendientes: '1' }), 'por_definir');
     });
 
+    test('finalizada con valorizacion aprobada: con cobro aunque queden lineas pendientes', () => {
+        assert.equal(cobroParaCliente({ estado: 'finalizada', facturable: true, lineasPendientes: 1, valorizacion: 249900 }), 'con_cobro');
+        assert.equal(cobroParaCliente({ estado: 'finalizada', facturable: true, lineasPendientes: 0, valorizacion: '249900' }), 'con_cobro');
+        // sin valorizacion (null o ausente) la regla de siempre
+        assert.equal(cobroParaCliente({ estado: 'finalizada', facturable: true, lineasPendientes: 1, valorizacion: null }), 'por_definir');
+        // una orden abierta sigue sin decir nada
+        assert.equal(cobroParaCliente({ estado: 'en_reparacion', facturable: true, lineasPendientes: 1, valorizacion: 1000 }), null);
+    });
+
     test('finalizada: con cobro si es facturable, sin cobro si no', () => {
         assert.equal(cobroParaCliente({ estado: 'finalizada', facturable: true, lineasPendientes: 0 }), 'con_cobro');
         assert.equal(cobroParaCliente({ estado: 'finalizada', facturable: false, lineasPendientes: 0 }), 'sin_cobro');

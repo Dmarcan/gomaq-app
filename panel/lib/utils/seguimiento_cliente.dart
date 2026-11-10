@@ -159,9 +159,14 @@ String tituloAsistencia(Map<String, dynamic> asistencia) =>
 String? etiquetaCobro(String? cobro) => switch (cobro) {
       'con_cobro' => 'Con cobro',
       'sin_cobro' => 'Sin cobro',
-      'por_definir' => 'Por confirmar',
+      'por_definir' => 'Cobro por confirmar',
       _ => null,
     };
+
+/// Explicación breve para el cliente cuando el cobro aún no está definido: GOMAQ no ha decidido
+/// qué repuestos de la reparación se cobran (el servidor lo marca 'por_definir').
+String? explicacionCobro(String? cobro) =>
+    cobro == 'por_definir' ? 'GOMAQ aún está definiendo qué repuestos se cobran.' : null;
 
 /// Pestaña del portal que pide la URL (`?pestana=`): 0 equipos, 1 seguimiento, 2 historial.
 int pestanaDePortal(String? valor) => switch (valor) {
