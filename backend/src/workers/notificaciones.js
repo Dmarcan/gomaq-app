@@ -1,5 +1,7 @@
 const pool = require('../config/db');
 const { planificarReintento, plazoTomaSegundos, conTimeout } = require('../utils/reintentosNotificacion');
+const { armarCorreoFactura } = require('../utils/plantillaCorreoFactura');
+const { enviarCorreoResend } = require('../services/correoResend');
 
 const INTERVALO_MS = 15000;
 const MAX_INTENTOS = 5;
@@ -11,19 +13,66 @@ const TIMEOUT_ENVIO_MS = Math.max(1000, Number(process.env.NOTIF_TIMEOUT_MS) || 
 // cada cuanto deja una linea de "sigo vivo" en el log cuando no hay nada que enviar
 const LATIDO_MS = 10 * 60 * 1000;
 
-// Stub: aun no hay cuenta de WhatsApp Business ni proveedor de correo configurado.
-// Cuando existan las credenciales, reemplazar el cuerpo de esta funcion por la
-// llamada real a WhatsApp Cloud API (canal='whatsapp') o al servicio de correo (canal='email').
-// Pasar `signal` a fetch para que el timeout corte la llamada. Si el proveedor responde 429,
-// lanzar un error con `reintentarEnSegundos` (el Retry-After): se reprograma sin gastar intento.
-// El resto del patron Outbox (reintentos, backoff, estado de error) no necesita cambiar.
-// Los correos de factura llevan `payload.asunto` y `payload.cuerpo`: el cuerpo es TEXTO PLANO (text/plain).
-// Si algun dia se arma un correo HTML con ese texto, hay que escaparlo antes de insertarlo.
-// Los avisos internos (ot_asignada, ot_reasignada, ot_por_valorizar, factura_anulada, ajuste_inventario; ver
-// utils/avisos.js) no tienen plantilla todavia: al conectar el proveedor, un tipo sin plantilla debe lanzar un
-// error explicito (por ejemplo `Sin plantilla para ${payload.tipo}`) en vez de mandar un mensaje vacio.
+// Envio real. Hoy solo hay proveedor para el correo de factura (Resend, por API HTTP). WhatsApp y los
+// avisos internos (ot_asignada, ot_reasignada, ot_por_valorizar, factura_anulada, ajuste_inventario,
+// mantencion_proxima, etc.; ver utils/avisos.js) aun no tienen proveedor ni plantilla: un tipo sin
+// plantilla falla como error permanente, no manda un mensaje vacio.
+// Configuracion: RESEND_API_KEY, CORREO_REMITENTE (en pruebas 'onboarding@resend.dev', que solo entrega
+// a la cuenta dueña de la clave) y CORREO_CONTACTO (correo al que escriben los clientes; el correo pide
+// no responder al remitente).
+function errorConfiguracion(mensaje) {
+    // sin clave el problema no es de la fila: se espera sin gastar intentos
+    return Object.assign(new Error(mensaje), { reintentarEnSegundos: 3600 });
+}
+
+async function adjuntarPdfFactura(facturaId, signal) {
+    if (!facturaId) throw Object.assign(new Error('El aviso no indica la factura'), { permanente: true });
+    const fila = await pool.query('SELECT folio, archivo_url FROM facturas WHERE id = $1', [facturaId]);
+    if (fila.rows.length === 0 || !fila.rows[0].archivo_url) {
+        throw Object.assign(new Error('La factura no tiene archivo para adjuntar'), { permanente: true });
+    }
+    // se carga aqui y no arriba: config/supabase.js exige SUPABASE_URL y SUPABASE_SERVICE_KEY al cargarse
+    if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
+        throw errorConfiguracion('Faltan SUPABASE_URL y SUPABASE_SERVICE_KEY en el worker para adjuntar el PDF');
+    }
+    const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
+    const { data, error } = await supabase.storage.from(BUCKET_DOCUMENTOS).download(fila.rows[0].archivo_url);
+    if (signal && signal.aborted) throw new Error('Envio cancelado por timeout');
+    if (error || !data) throw new Error(`No se pudo leer el PDF de la factura: ${error ? error.message : 'sin datos'}`);
+    const bytes = Buffer.from(await data.arrayBuffer());
+    const nombre = String(fila.rows[0].folio || facturaId).replace(/[^\w.-]+/g, '_');
+    return [{ filename: `factura-${nombre}.pdf`, content: bytes.toString('base64') }];
+}
+
 async function enviarNotificacion(notificacion, signal) {
-    throw new Error(`Proveedor de ${notificacion.canal} no configurado todavia`);
+    const payload = notificacion.payload || {};
+    if (notificacion.canal !== 'email') {
+        // sin proveedor: reintentar no lo arregla, queda en 'error' (el panel permite reenviarlo despues)
+        throw Object.assign(new Error(`Proveedor de ${notificacion.canal} no configurado todavia`), { permanente: true });
+    }
+    if (payload.tipo !== 'factura_emitida') {
+        throw Object.assign(new Error(`Sin plantilla para ${payload.tipo}`), { permanente: true });
+    }
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) throw errorConfiguracion('Falta RESEND_API_KEY en el worker');
+
+    const correo = armarCorreoFactura({
+        asunto: payload.asunto,
+        cuerpo: payload.cuerpo,
+        contacto: process.env.CORREO_CONTACTO,
+    });
+    const adjuntos = await adjuntarPdfFactura(payload.factura_id, signal);
+    await enviarCorreoResend({
+        apiKey,
+        desde: process.env.CORREO_REMITENTE || 'onboarding@resend.dev',
+        para: notificacion.destinatario,
+        asunto: correo.asunto,
+        texto: correo.texto,
+        html: correo.html,
+        adjuntos,
+        claveIdempotencia: `gomaq-notif-${notificacion.id}`,
+        signal,
+    });
 }
 
 // El envio real se puede reemplazar (solo las pruebas lo hacen) para simular un proveedor que responde bien.

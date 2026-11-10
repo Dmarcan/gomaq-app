@@ -19,7 +19,16 @@ export default defineRailway(() => {
       restartPolicyType: "ON_FAILURE",
       restartPolicyMaxRetries: 5,
     },
-    env: { DATABASE_URL: preserve(), JWT_SECRET: preserve(), SUPABASE_SERVICE_KEY: preserve(), SUPABASE_URL: preserve(), TRUST_PROXY: preserve() },
+    env: {
+      DATABASE_URL: preserve(),
+      JWT_SECRET: preserve(),
+      SUPABASE_SERVICE_KEY: preserve(),
+      SUPABASE_URL: preserve(),
+      TRUST_PROXY: preserve(),
+      // ya existian en Railway sin estar declaradas: un `apply` las habria borrado
+      NOTIFICACIONES_EN_PROCESO: preserve(),
+      ORS_API_KEY: preserve(),
+    },
   });
   // Worker de notificaciones: mismo repo, sin HTTP (sin healthcheck ni dominio) y siempre activo.
   // Solo se redespliega si cambia el backend, la base o su propio Dockerfile.
@@ -32,7 +41,16 @@ export default defineRailway(() => {
     },
     deploy: { restartPolicyType: "ALWAYS" },
     replicas: { "us-east4-eqdc4a": 1 },
-    env: { DATABASE_URL: preserve(), RAILWAY_DEPLOYMENT_DRAINING_SECONDS: preserve() },
+    // RESEND_API_KEY, SUPABASE_* (para adjuntar el PDF) y los datos del correo de facturas: los valores viven en Railway
+    env: {
+      DATABASE_URL: preserve(),
+      RAILWAY_DEPLOYMENT_DRAINING_SECONDS: preserve(),
+      RESEND_API_KEY: preserve(),
+      SUPABASE_URL: preserve(),
+      SUPABASE_SERVICE_KEY: preserve(),
+      CORREO_REMITENTE: preserve(),
+      CORREO_CONTACTO: preserve(),
+    },
   });
 
   return project("gomaq", {

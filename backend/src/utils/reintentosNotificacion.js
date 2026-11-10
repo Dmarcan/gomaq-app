@@ -21,6 +21,10 @@ function planificarReintento({ intentos, maxIntentos, error }) {
         };
     }
     const nuevosIntentos = intentos + 1;
+    // Error permanente (dato invalido, sin plantilla): reintentar no lo arregla, queda en 'error' ya.
+    if (error && error.permanente === true) {
+        return { intentos: nuevosIntentos, estado: 'error', esperaSegundos: ESPERA_BASE_SEGUNDOS };
+    }
     return {
         intentos: nuevosIntentos,
         estado: nuevosIntentos >= maxIntentos ? 'error' : 'pendiente',

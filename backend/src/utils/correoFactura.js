@@ -26,8 +26,8 @@ function textoPorDefecto(factura) {
     const saludo = factura.cliente_nombre ? `Estimado/a ${factura.cliente_nombre}:` : 'Estimado/a cliente:';
     return {
         asunto: `Factura folio ${folio} - GOMAQ Maquinarias`,
-        cuerpo: `${saludo}\n\nAdjuntamos la factura folio ${folio} correspondiente a ${concepto}${periodo}. `
-            + 'Ante cualquier consulta, puede responder directamente este correo.\n\nGOMAQ Maquinarias',
+        cuerpo: `${saludo}\n\nAdjuntamos la factura folio ${folio} correspondiente a ${concepto}${periodo}.`
+            + '\n\nGOMAQ Maquinarias',
     };
 }
 
