@@ -9,6 +9,7 @@ const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
 const { detectarCliente } = require('../utils/detectarCliente');
+const { detectarEquipo } = require('../utils/detectarEquipo');
 const { parsearGuia } = require('../utils/parsearDocumento');
 const { calcularEstadoMantencion, requiereAviso } = require('../utils/mantencion');
 const { encolarAvisoMantencion } = require('./horometro');
@@ -29,7 +30,7 @@ router.post('/guias/detectar', verifyToken, requireRole('administrativo'), subid
     }
     try {
         const texto = await leerTextoPdf(req.file.buffer);
-        const { fecha_detectada, hora_detectada, tipo_detectado, rut_detectado, horometro_detectado } = parsearGuia(texto);
+        const { fecha_detectada, hora_detectada, tipo_detectado, rut_detectado, horometro_detectado, numero_interno_detectado } = parsearGuia(texto);
 
         // el panel maneja un instante completo, asi que si el PDF no trae hora se compone
         // con 00:00 - pero se informa aparte en hora_detectada para que la UI no la de por
@@ -47,6 +48,7 @@ router.post('/guias/detectar', verifyToken, requireRole('administrativo'), subid
             tipo_detectado,
             horometro_detectado,
             cliente_detectado: await detectarCliente(texto, rut_detectado),
+            equipo_detectado: await detectarEquipo(numero_interno_detectado),
             texto_legible: texto.trim().length > 0,
         });
     } catch (err) {

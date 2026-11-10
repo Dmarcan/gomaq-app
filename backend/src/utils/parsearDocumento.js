@@ -154,8 +154,22 @@ function parsearHorometro(texto) {
     return isNaN(numero) ? null : numero;
 }
 
+/**
+ * Numero interno del equipo impreso en la guia ("N° INTERNO: 0807"), sin ceros a la izquierda
+ * ('807'), o null. Es el numero con que GOMAQ identifica el equipo; en el sistema va al final
+ * del codigo (PL-807), y ese cruce lo hace utils/detectarEquipo.
+ */
+function parsearNumeroInterno(texto) {
+    if (!texto) return null;
+    const match = sinAcentos(texto).match(/\bN\s*(?:[°ºo]\.?|\.)?\s*interno\s*:?\s*(\d{1,8})\b/i);
+    if (!match) return null;
+    const numero = match[1].replace(/^0+/, '');
+    return numero || null;
+}
+
 function parsearGuia(texto) {
     return {
+        numero_interno_detectado: parsearNumeroInterno(texto),
         fecha_detectada: parsearFechaEmision(texto),
         hora_detectada: parsearHora(texto),
         tipo_detectado: detectarTipoGuia(texto),
@@ -181,6 +195,7 @@ module.exports = {
     parsearRutReceptor,
     parsearMonto,
     parsearHorometro,
+    parsearNumeroInterno,
     normalizarRut,
     parsearGuia,
     parsearFactura,

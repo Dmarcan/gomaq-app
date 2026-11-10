@@ -38,6 +38,8 @@ class _GuiasScreenState extends State<GuiasScreen> {
   bool _detectando = false;
   bool _huboDeteccion = false;
   bool _horaDetectada = false;
+  // código del equipo que dice el PDF cuando no está entre los que se pueden elegir
+  String? _equipoFueraDeLista;
   final _horometroCtrl = TextEditingController();
   DateTime _fecha = DateTime.now();
   TimeOfDay _hora = TimeOfDay.now();
@@ -187,6 +189,8 @@ class _GuiasScreenState extends State<GuiasScreen> {
       _archivo = resultado.files.single;
       _huboDeteccion = false;
       _horaDetectada = false;
+      _equipoFueraDeLista = null;
+      _hora = TimeOfDay.now();
       _horometroCtrl.clear();
     });
     await _detectarDatos();
@@ -213,7 +217,9 @@ class _GuiasScreenState extends State<GuiasScreen> {
           // traen, y el backend completa con 00:00 para armar el instante: darla por buena
           // haria que HORA_CORTE cobre el dia del despacho sin que nadie lo haya decidido.
           _horaDetectada = resultado['hora_detectada'] == true;
-          if (_horaDetectada) _hora = TimeOfDay(hour: detectada.hour, minute: detectada.minute);
+          // sin hora en el PDF se propone la del momento en que se carga la guia (no la de
+          // cuando se abrio la pantalla); queda a la vista y editable
+          _hora = _horaDetectada ? TimeOfDay(hour: detectada.hour, minute: detectada.minute) : TimeOfDay.now();
         }
         // las guias de entrega traen impreso "HOROMETRO: 1156"; queda como una lectura
         // mas del equipo, editable por si viene mal leido
@@ -227,6 +233,23 @@ class _GuiasScreenState extends State<GuiasScreen> {
           if (_clientes.any((c) => c['id'] == idDetectado)) {
             _clienteId = idDetectado;
             _clienteCtrl.text = _nombreCliente ?? '';
+          }
+        }
+        // el equipo sale del "N° INTERNO" impreso en la guía. Solo se elige si está en la lista
+        // del tipo de guía (un despacho no toma uno ya arrendado); si no, se avisa cuál era
+        _equipoFueraDeLista = null;
+        final equipoDetectado = resultado['equipo_detectado'];
+        if (equipoDetectado != null) {
+          Map<String, dynamic>? enLista;
+          for (final m in _maquinariasDisponibles) {
+            if (m['id'] == equipoDetectado['id']) enLista = m;
+          }
+          if (enLista != null) {
+            _seleccionada = enLista;
+            _equipoCtrl.text = _etiquetaEquipo(enLista);
+            _claveEquipo++;
+          } else if (_seleccionada == null) {
+            _equipoFueraDeLista = '${equipoDetectado['codigo']}';
           }
         }
       });
@@ -530,6 +553,18 @@ class _GuiasScreenState extends State<GuiasScreen> {
                 }),
               ),
             ),
+            if (_equipoFueraDeLista != null && _seleccionada == null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Semantics(
+                  liveRegion: true,
+                  child: Text(
+                    'El PDF menciona el equipo $_equipoFueraDeLista, pero no está en esta lista. '
+                    'Revisa su estado o activa "Ver todos los equipos".',
+                    style: const TextStyle(fontSize: 12, color: Color(0xFFB25000)),
+                  ),
+                ),
+              ),
             SwitchListTile(
               contentPadding: EdgeInsets.zero,
               dense: true,
@@ -624,7 +659,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
                 const Padding(
                   padding: EdgeInsets.only(top: 4),
                   child: Text(
-                    'La hora no venía en el PDF: ingrésala tú, porque define si se cobra este día.',
+                    'La hora no venía en el PDF: se usó la hora en que cargaste la guía. Cámbiala si fue otra, porque define si se cobra este día.',
                     style: TextStyle(fontSize: 12, color: Color(0xFFB25000)),
                   ),
                 ),

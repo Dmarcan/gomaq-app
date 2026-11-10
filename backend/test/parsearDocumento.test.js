@@ -157,6 +157,7 @@ describe('parsearGuia', () => {
             rut_detectado: '12345678-5',
             folio_detectado: '458',
             horometro_detectado: 1156,
+            numero_interno_detectado: '807',
         });
     });
 
@@ -168,6 +169,7 @@ describe('parsearGuia', () => {
             rut_detectado: '12345678-5',
             folio_detectado: '511',
             horometro_detectado: null,
+            numero_interno_detectado: '807',
         });
     });
 
