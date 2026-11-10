@@ -17,6 +17,8 @@ const { leerTextoPdf } = require('../utils/leerTextoPdf');
 const { detectarCliente } = require('../utils/detectarCliente');
 const { parsearFactura } = require('../utils/parsearDocumento');
 
+const { validarTraslado } = require('../utils/trasladoFactura');
+
 const router = express.Router();
 validarIdsEnRuta(router, ['facturaId', 'guiaDespachoId']);
 
@@ -163,7 +165,7 @@ const esDia = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !
 // solapes). Compatibilidad: solo con guia_recepcion_id (panel antiguo) factura todo lo que falta
 // hasta el fin del arriendo.
 router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
-    const { guia_recepcion_id, guia_despacho_id, periodo_desde, periodo_hasta, folio, monto } = req.body;
+    const { guia_recepcion_id, guia_despacho_id, periodo_desde, periodo_hasta, folio, monto, monto_traslado } = req.body;
     const conPeriodo = Boolean(guia_despacho_id);
     if ((!conPeriodo && !guia_recepcion_id) || !folio || !req.file) {
         return res.status(400).json({ error: 'guia_despacho_id (o guia_recepcion_id), folio y archivo (PDF) son requeridos' });
@@ -177,6 +179,8 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
     if (monto !== undefined && monto !== null && monto !== '' && montoEnteroONulo(monto) === null) {
         return res.status(400).json({ error: 'El monto debe ser un número entero de pesos, sin puntos ni decimales, de hasta 10 dígitos' });
     }
+    const trasladoValido = validarTraslado(monto, monto_traslado);
+    if (trasladoValido.error) return res.status(400).json({ error: trasladoValido.error });
     const idOrigen = Number(conPeriodo ? guia_despacho_id : guia_recepcion_id);
     if (!Number.isInteger(idOrigen) || idOrigen <= 0) {
         return res.status(400).json({ error: 'Id de guía inválido' });
@@ -240,10 +244,10 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
         const cierra = arriendo.fin !== null && hasta === arriendo.fin && arriendo.guia_recepcion_id !== null;
         const result = await client.query(
             `INSERT INTO facturas (maquinaria_id, guia_recepcion_id, guia_despacho_id, periodo_desde, periodo_hasta,
-                                   cliente_id, folio, archivo_url, monto)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+                                   cliente_id, folio, archivo_url, monto, monto_traslado)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
             [arriendo.maquinaria_id, cierra ? arriendo.guia_recepcion_id : null, arriendo.guia_despacho_id, desde, hasta,
-             arriendo.cliente_id, folioValido.folio, rutaStorage, montoONulo(monto)]
+             arriendo.cliente_id, folioValido.folio, rutaStorage, montoONulo(monto), trasladoValido.traslado]
         );
         await client.query('COMMIT');
         res.status(201).json(result.rows[0]);
@@ -351,7 +355,7 @@ router.get('/arriendos-en-curso', verifyToken, requireRole('administrativo', 'ge
 // PATCH /api/facturacion/:facturaId - corrige folio/monto despues de creada la factura
 // (por si la deteccion del PDF se equivoco), funciona para cualquier tipo de factura
 router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (req, res) => {
-    const { folio, monto } = req.body || {};
+    const { folio, monto, monto_traslado } = req.body || {};
     if (!/^\d{1,9}$/.test(String(req.params.facturaId))) return res.status(400).json({ error: 'Id de factura inválido' });
     let folioNuevo = null;
     if (folio !== undefined && folio !== null && folio !== '') {
@@ -363,13 +367,17 @@ router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (r
     if (monto !== undefined && monto !== null && monto !== '' && montoEnteroONulo(monto) === null) {
         return res.status(400).json({ error: 'El monto debe ser un número entero de pesos, sin puntos ni decimales, de hasta 10 dígitos' });
     }
+    // formato del traslado; la regla contra el monto final se revisa con la fila bloqueada
+    if (!(monto_traslado === undefined || monto_traslado === null || monto_traslado === '') && montoEnteroONulo(monto_traslado) === null) {
+        return res.status(400).json({ error: 'El traslado debe ser un número entero de pesos, sin puntos ni decimales, de hasta 10 dígitos' });
+    }
     let client;
     try {
         client = await pool.connect();
         await client.query('BEGIN');
         // se bloquea la fila: serializa con encolarCorreoFactura (que tambien la bloquea), asi un envio no
         // puede colarse entre la revision de abajo y el UPDATE
-        const fila = await client.query('SELECT id FROM facturas WHERE id = $1 FOR UPDATE', [req.params.facturaId]);
+        const fila = await client.query('SELECT id, monto, monto_traslado FROM facturas WHERE id = $1 FOR UPDATE', [req.params.facturaId]);
         if (fila.rows.length === 0) {
             await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Factura no encontrada' });
@@ -380,9 +388,19 @@ router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (r
             await client.query('ROLLBACK');
             return res.status(409).json({ error: 'La factura tiene un envío pendiente: espera a que salga o cancélalo antes de corregirla' });
         }
+        // monto y traslado finales (lo nuevo o lo ya guardado) deben seguir cuadrando
+        // NUMERIC llega como texto con decimales ('249900.00'): se pasa a numero entero antes de validar
+        const montoGuardado = fila.rows[0].monto === null ? null : Number(fila.rows[0].monto);
+        const montoFinal = montoONulo(monto) ?? montoGuardado;
+        const trasladoEnviado = !(monto_traslado === undefined || monto_traslado === null || monto_traslado === '');
+        const trasladoFinal = validarTraslado(montoFinal, trasladoEnviado ? monto_traslado : Number(fila.rows[0].monto_traslado));
+        if (trasladoFinal.error) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: trasladoFinal.error });
+        }
         const result = await client.query(
-            `UPDATE facturas SET folio = COALESCE($1, folio), monto = COALESCE($2, monto) WHERE id = $3 RETURNING *`,
-            [folioNuevo, montoONulo(monto), req.params.facturaId]
+            `UPDATE facturas SET folio = COALESCE($1, folio), monto = COALESCE($2, monto), monto_traslado = $3 WHERE id = $4 RETURNING *`,
+            [folioNuevo, montoONulo(monto), trasladoFinal.traslado, req.params.facturaId]
         );
         // un correo anterior que agoto sus reintentos (error) llevaba el folio y el monto viejos
         await cancelarCorreosPrevios(client, req.params.facturaId, 'Factura corregida');

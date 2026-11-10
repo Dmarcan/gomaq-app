@@ -900,6 +900,23 @@ describe('costos por equipo', () => {
         assert.equal(e.dias_arrendado, 6, 'las guias fallidas no suman dias');
     });
 
+    test('el traslado cobrado en una factura no cuenta como ingreso del equipo', async (t) => {
+        if (!requiereBase(t)) return;
+        const equipo = await equipoConMovimiento();
+        // factura de 100.000 con 20.000 de traslado: suma 80.000 de arriendo, mas los 10.000 de la otra factura
+        await pool.query(
+            `INSERT INTO facturas (folio, archivo_url, monto, monto_traslado, maquinaria_id) VALUES ('T-TRASLADO', 'x', 100000, 20000, $1)`,
+            [equipo.id]
+        );
+        const { items } = await buscar(equipo);
+        assert.equal(items[0].ingreso, 90000);
+        // la base no admite un traslado mayor que el monto
+        await assert.rejects(
+            pool.query(`INSERT INTO facturas (folio, archivo_url, monto, monto_traslado, maquinaria_id) VALUES ('T-TRASLADO-MAL', 'x', 1000, 2000, $1)`, [equipo.id]),
+            /facturas_monto_traslado_chk/
+        );
+    });
+
     test('un equipo sin movimiento queda sin datos en vez de inventarlos', async (t) => {
         if (!requiereBase(t)) return;
         const equipo = await crearEquipo(null);
@@ -5150,6 +5167,29 @@ describe('bloque 5 (PR B): revision adversarial del correo de la factura', () =>
             assert.equal((await pedir('PATCH', `/api/facturacion/${id}`, 'administrativo', { folio })).status, 400, JSON.stringify(folio));
         }
         assert.equal((await pedir('PATCH', `/api/facturacion/${id}`, 'administrativo', { folio: 'F-5102/B' })).status, 200);
+    });
+
+    test('el traslado de una factura se corrige sin pasarse del monto', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt();
+        await agregarLinea(ot, { facturable: 'si', precio_unitario: 1000 });
+        await cerrarOt(ot, 1000);
+        const ok = await subirFactura(ot, 'administrativo', { folio: 'T-TRAS-1', monto: '100000' });
+        assert.equal(ok.status, 201);
+        const id = ok.body.id;
+        const traslado = async () => Number((await pool.query('SELECT monto_traslado FROM facturas WHERE id = $1', [id])).rows[0].monto_traslado);
+        assert.equal(await traslado(), 0, 'sin indicarlo, el traslado vale 0');
+        assert.equal((await pedir('PATCH', `/api/facturacion/${id}`, 'administrativo', { monto_traslado: '20000' })).status, 200);
+        assert.equal(await traslado(), 20000);
+        for (const malo of ['100001', '-5', '1.5', 'abc']) {
+            assert.equal((await pedir('PATCH', `/api/facturacion/${id}`, 'administrativo', { monto_traslado: malo })).status, 400, malo);
+        }
+        // bajar el monto por debajo del traslado ya guardado tambien se rechaza
+        assert.equal((await pedir('PATCH', `/api/facturacion/${id}`, 'administrativo', { monto: '10000' })).status, 400);
+        assert.equal(await traslado(), 20000, 'un rechazo no cambia nada');
+        // otro cambio (folio) no toca el traslado
+        assert.equal((await pedir('PATCH', `/api/facturacion/${id}`, 'administrativo', { folio: 'T-TRAS-2' })).status, 200);
+        assert.equal(await traslado(), 20000);
     });
 
     test('corregir la factura cancela el correo anterior que quedo en error', async (t) => {

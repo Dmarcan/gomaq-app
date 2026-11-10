@@ -12,6 +12,7 @@
 // el monto, y las horas de trabajo existen como tramos pero no hay ningun valor hora definido
 // en el negocio. Ambos quedan fuera hasta que esos datos existan.
 
+const { ingresoSinTraslado } = require('./trasladoFactura');
 const { inicioCobroDia, finCobroDia, sumarDias, diaCalendarioUtc } = require('./diasArriendo');
 
 const MS_DIA = 24 * 60 * 60 * 1000;
@@ -47,8 +48,9 @@ function calcularGasto(lineas) {
 function calcularIngreso(facturas) {
     if (!Array.isArray(facturas)) return 0;
     return facturas.reduce((total, factura) => {
-        const monto = Number(factura && factura.monto);
-        return isNaN(monto) ? total : total + monto;
+        // el traslado cobrado en la factura no es ingreso del equipo (migracion 033)
+        const ingreso = ingresoSinTraslado(factura && factura.monto, factura && factura.monto_traslado);
+        return ingreso === null ? total : total + ingreso;
     }, 0);
 }
 

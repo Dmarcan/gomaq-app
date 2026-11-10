@@ -236,6 +236,11 @@ class FacturaPendienteDialog extends StatefulWidget {
 class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
   final _folioCtrl = TextEditingController();
   final _montoCtrl = TextEditingController();
+  // parte de la factura que es traslado (solo arriendos): no cuenta como ingreso del equipo
+  final _trasladoCtrl = TextEditingController();
+  final _trasladoEditCtrl = TextEditingController();
+  String? _errorTraslado;
+  String? _errorTrasladoEdicion;
   PlatformFile? _archivo;
   bool _detectando = false;
   bool _procesando = false;
@@ -275,6 +280,8 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
   void dispose() {
     _folioCtrl.dispose();
     _montoCtrl.dispose();
+    _trasladoCtrl.dispose();
+    _trasladoEditCtrl.dispose();
     _folioEditCtrl.dispose();
     _montoEditCtrl.dispose();
     _asuntoCtrl.dispose();
@@ -333,6 +340,22 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
     }
   }
 
+  /// Texto de error del traslado o null. Vacío vale 0; debe ser entero y no pasar del monto.
+  String? _validarTraslado(String texto, double? monto) {
+    if (texto.trim().isEmpty) return null;
+    final t = parsearMonto(texto);
+    if (t == null || t != t.truncateToDouble() || t < 0) return 'Escribe un traslado válido, por ejemplo 140.000.';
+    if (t > 0 && monto == null) return 'Para indicar un traslado, escribe primero el monto.';
+    if (monto != null && t > monto) return 'El traslado no puede ser mayor que el monto.';
+    return null;
+  }
+
+  /// El traslado 0 se muestra como campo vacío.
+  String _trasladoParaEditar(dynamic valor) {
+    final n = double.tryParse('$valor');
+    return n == null || n == 0 ? '' : numeroParaEditar(valor);
+  }
+
   Future<void> _subirFactura() async {
     // "249.900" son doscientos cuarenta y nueve mil novecientos; leido con tryParse era 249,9
     final monto = parsearMonto(_montoCtrl.text);
@@ -343,8 +366,9 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
       _errorMonto = (_montoCtrl.text.trim().isNotEmpty && (monto == null || monto != monto.truncateToDouble()))
           ? 'Escribe un monto válido, por ejemplo 249.900.'
           : null;
+      _errorTraslado = widget.item['tipo'] == 'arriendo' ? _validarTraslado(_trasladoCtrl.text, monto) : null;
     });
-    if (_errorArchivo != null || _errorFolio != null || _errorMonto != null) return;
+    if (_errorArchivo != null || _errorFolio != null || _errorMonto != null || _errorTraslado != null) return;
     if (_facturaPorPeriodo && (_propuesta == null || _hastaElegido == null)) {
       setState(() => _errorPropuesta = 'No hay un período por facturar en este arriendo.');
       return;
@@ -366,6 +390,7 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
           },
           'folio': _folioCtrl.text.trim(),
           if (monto != null) 'monto': montoParaCampo(monto),
+          if (esArriendo && _trasladoCtrl.text.trim().isNotEmpty) 'monto_traslado': montoParaCampo(parsearMonto(_trasladoCtrl.text)!),
         },
       );
       if (mounted) {
@@ -373,6 +398,7 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
           _facturaCreada = resultado;
           _folioEditCtrl.text = resultado['folio']?.toString() ?? '';
           _montoEditCtrl.text = numeroParaEditar(resultado['monto']);
+          _trasladoEditCtrl.text = _trasladoParaEditar(resultado['monto_traslado']);
         });
         _cargarVistaPrevia();
       }
@@ -398,12 +424,18 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
     final monto = parsearMonto(_montoEditCtrl.text);
     final montoInvalido = _montoEditCtrl.text.trim().isNotEmpty && monto == null;
     setState(() => _errorMontoEdicion = montoInvalido ? 'Escribe un monto válido, por ejemplo 249.900.' : null);
-    if (montoInvalido) return;
+    final esArriendo = widget.item['tipo'] == 'arriendo';
+    // el monto que quedará: el escrito o, si se dejó vacío, el que ya tenía la factura
+    final montoFinal = monto ?? double.tryParse('${_facturaCreada!['monto']}');
+    final errorTraslado = esArriendo ? _validarTraslado(_trasladoEditCtrl.text, montoFinal) : null;
+    setState(() => _errorTrasladoEdicion = errorTraslado);
+    if (montoInvalido || errorTraslado != null) return;
     setState(() => _guardandoEdicion = true);
     try {
       final actualizada = await ApiClient.instance.patch('/api/facturacion/${_facturaCreada!['id']}', {
         'folio': _folioEditCtrl.text.trim().isEmpty ? null : _folioEditCtrl.text.trim(),
         'monto': monto,
+        if (esArriendo) 'monto_traslado': _trasladoEditCtrl.text.trim().isEmpty ? 0 : parsearMonto(_trasladoEditCtrl.text),
       });
       if (mounted) {
         setState(() => _facturaCreada = actualizada);
@@ -729,6 +761,18 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
           ),
         ],
       ),
+      if (widget.item['tipo'] == 'arriendo') ...[
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: _trasladoCtrl,
+          keyboardType: TextInputType.number,
+          decoration: decoracionCampo('Traslado incluido en el monto (opcional)', prefijo: r'$ ')
+              .copyWith(errorText: _errorTraslado, helperText: 'Entrega y retiro del equipo. No cuenta como ingreso del equipo en la rentabilidad.'),
+          onChanged: (_) {
+            if (_errorTraslado != null) setState(() => _errorTraslado = null);
+          },
+        ),
+      ],
     ];
   }
 
@@ -761,6 +805,18 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
                 ),
               ],
             ),
+            if (widget.item['tipo'] == 'arriendo') ...[
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _trasladoEditCtrl,
+                keyboardType: TextInputType.number,
+                decoration: decoracionCampo('Traslado incluido en el monto (opcional)', prefijo: r'$ ')
+                    .copyWith(errorText: _errorTrasladoEdicion),
+                onChanged: (_) {
+                  if (_errorTrasladoEdicion != null) setState(() => _errorTrasladoEdicion = null);
+                },
+              ),
+            ],
             const SizedBox(height: 10),
             Align(
               alignment: Alignment.centerRight,

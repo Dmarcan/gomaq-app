@@ -60,7 +60,7 @@ const SQL_LINEAS = `
 // Ingreso facturado por equipo, por sus dos caminos: factura de arriendo (facturas.maquinaria_id,
 // migracion 008) y factura de reparacion (a traves de la orden de trabajo).
 const SQL_FACTURAS = `
-    SELECT COALESCE(f.maquinaria_id, ot.maquinaria_id) AS maquinaria_id, f.monto
+    SELECT COALESCE(f.maquinaria_id, ot.maquinaria_id) AS maquinaria_id, f.monto, f.monto_traslado
     FROM facturas f
     LEFT JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
     WHERE COALESCE(f.maquinaria_id, ot.maquinaria_id) IS NOT NULL
@@ -231,7 +231,7 @@ router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativ
                 [id, desde, hasta]
             ),
             pool.query(
-                `SELECT f.id, f.folio, f.monto, f.created_at, f.orden_trabajo_id
+                `SELECT f.id, f.folio, f.monto, f.monto_traslado, f.created_at, f.orden_trabajo_id
                  FROM facturas f
                  LEFT JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
                  WHERE COALESCE(f.maquinaria_id, ot.maquinaria_id) = $1
@@ -251,7 +251,7 @@ router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativ
                 cantidad: num(l.cantidad),
                 precio_unitario: num(l.precio_unitario),
             })),
-            facturas: facturas.rows.map((f) => ({ ...f, monto: num(f.monto) })),
+            facturas: facturas.rows.map((f) => ({ ...f, monto: num(f.monto), monto_traslado: num(f.monto_traslado) })),
         });
     } catch (err) {
         console.error(err);
