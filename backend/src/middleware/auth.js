@@ -12,7 +12,10 @@ const pool = require('../config/db');
 // una caida de Postgres no cierre la sesion de nadie.
 
 async function buscarEnBase(id) {
-    const r = await pool.query('SELECT rol, cliente_id, estado_cuenta FROM usuarios WHERE id = $1', [id]);
+    const r = await pool.query(
+        'SELECT rol, cliente_id, estado_cuenta, password_cambiada_at FROM usuarios WHERE id = $1',
+        [id]
+    );
     return r.rows[0] || null;
 }
 
@@ -54,6 +57,15 @@ async function verifyToken(req, res, next) {
     }
     if (!usuario || usuario.estado_cuenta !== 'activo') {
         return res.status(401).json({ error: 'Tu cuenta no está activa. Vuelve a iniciar sesión o contacta a GOMAQ' });
+    }
+
+    // el token lleva (claim `pc`) la hora del ultimo cambio de contrasena que habia al emitirse, en
+    // milisegundos (0 si nunca se cambio). Si hoy es otra, la contrasena se cambio despues y esa sesion
+    // ya no vale. Compararlo asi, y no con `iat` (que va en segundos), no deja ninguna ventana: un token
+    // emitido en el mismo segundo del cambio, antes o despues, se distingue igual.
+    const cambioActual = usuario.password_cambiada_at ? new Date(usuario.password_cambiada_at).getTime() : 0;
+    if (cambioActual !== (Number.isFinite(claims.pc) ? claims.pc : 0)) {
+        return res.status(401).json({ error: 'Tu contraseña cambió. Vuelve a iniciar sesión' });
     }
 
     // rol y cliente salen de la base, no del token: un cambio de rol o de empresa rige de inmediato

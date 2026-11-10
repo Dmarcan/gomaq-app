@@ -3,7 +3,7 @@ require('../utils/asyncErrores');
 const { validarIdsEnRuta, validarCuerpo } = require('../utils/validacion');
 const pool = require('../config/db');
 const bcrypt = require('bcryptjs');
-const { validarNuevaCuenta, validarCambioDeEstado, ROLES_INTERNOS } = require('../utils/cuentasInternas');
+const { validarNuevaCuenta, validarCambioDeEstado, validarCambioDePassword, ROLES_INTERNOS } = require('../utils/cuentasInternas');
 const { verifyToken, requireRole } = require('../middleware/auth');
 
 const { SQL_CUENTAS_POR_APROBAR } = require('../utils/pendientes');
@@ -96,6 +96,32 @@ router.patch('/:id/estado', verifyToken, requireRole('administrativo', 'gerente'
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al cambiar el estado de la cuenta' });
+    }
+});
+
+// POST /api/usuarios/:id/password - restablece la contrasena de una cuenta interna (quien la olvido, o
+// una cuenta comprometida). No hay proveedor de correo: la escribe quien restablece y se la entrega a
+// la persona. Las sesiones que la cuenta ya tenia abiertas dejan de valer (password_cambiada_at). La
+// clave se guarda solo como hash y no vuelve en ninguna respuesta. Las cuentas de cliente quedan fuera.
+router.post('/:id/password', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    const v = validarCambioDePassword(req.body);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    try {
+        const hash = await bcrypt.hash(v.password, 10);
+        const result = await pool.query(
+            `UPDATE usuarios SET password_hash = $1, password_cambiada_at = now()
+             WHERE id = $2 AND rol = ANY($3::rol_usuario[])
+             RETURNING id, nombre, email, rol`,
+            [hash, req.params.id, ROLES_INTERNOS]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Usuario interno no encontrado' });
+        }
+        console.log(`Contraseña de la cuenta ${result.rows[0].id} restablecida por el usuario ${req.user.id}`);
+        res.json({ ok: true, id: result.rows[0].id });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al restablecer la contraseña' });
     }
 });
 

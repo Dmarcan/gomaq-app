@@ -11,6 +11,24 @@ const MAX_NOMBRE = 150;
 const MAX_EMAIL = 150;
 const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
+/** Reglas de una contrasena nueva: minimo 8 caracteres y no mas de 72 bytes (bcrypt trunca en silencio). */
+function validarPassword(password) {
+    if (typeof password !== 'string' || password.length < MIN_PASSWORD) {
+        return { ok: false, error: `La contraseña debe tener al menos ${MIN_PASSWORD} caracteres` };
+    }
+    if (Buffer.byteLength(password, 'utf8') > MAX_PASSWORD_BYTES) {
+        return { ok: false, error: `La contraseña no puede pasar de ${MAX_PASSWORD_BYTES} bytes (unos ${MAX_PASSWORD_BYTES} caracteres)` };
+    }
+    return { ok: true };
+}
+
+/** Valida el cuerpo de POST /api/usuarios/:id/password. */
+function validarCambioDePassword(body) {
+    const b = body && typeof body === 'object' ? body : {};
+    const v = validarPassword(b.password);
+    return v.ok ? { ok: true, password: b.password } : v;
+}
+
 /**
  * Valida el cuerpo de POST /api/usuarios y lo deja normalizado.
  * @returns {{ok: true, datos: {nombre:string, email:string, rol:string, password:string}} | {ok: false, error: string}}
@@ -28,12 +46,8 @@ function validarNuevaCuenta(body) {
     if (typeof b.rol !== 'string' || !ROLES_INTERNOS.includes(b.rol)) {
         return { ok: false, error: `El rol debe ser uno de: ${ROLES_INTERNOS.join(', ')}` };
     }
-    if (typeof b.password !== 'string' || b.password.length < MIN_PASSWORD) {
-        return { ok: false, error: `La contraseña debe tener al menos ${MIN_PASSWORD} caracteres` };
-    }
-    if (Buffer.byteLength(b.password, 'utf8') > MAX_PASSWORD_BYTES) {
-        return { ok: false, error: `La contraseña no puede pasar de ${MAX_PASSWORD_BYTES} bytes (unos ${MAX_PASSWORD_BYTES} caracteres)` };
-    }
+    const clave = validarPassword(b.password);
+    if (!clave.ok) return clave;
     return { ok: true, datos: { nombre, email, rol: b.rol, password: b.password } };
 }
 
@@ -56,4 +70,7 @@ function validarCambioDeEstado(body, idObjetivo, idActor) {
     return { ok: true, estado: activo ? 'activo' : 'rechazado' };
 }
 
-module.exports = { ROLES_INTERNOS, MIN_PASSWORD, MAX_PASSWORD_BYTES, validarNuevaCuenta, validarCambioDeEstado };
+module.exports = {
+    ROLES_INTERNOS, MIN_PASSWORD, MAX_PASSWORD_BYTES,
+    validarPassword, validarCambioDePassword, validarNuevaCuenta, validarCambioDeEstado,
+};

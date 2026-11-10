@@ -16,7 +16,7 @@ router.post('/login', limiteLogin, async (req, res) => {
 
     try {
         const result = await pool.query(
-            'SELECT id, nombre, email, password_hash, rol, cliente_id, estado_cuenta FROM usuarios WHERE lower(email) = lower($1)',
+            'SELECT id, nombre, email, password_hash, rol, cliente_id, estado_cuenta, password_cambiada_at FROM usuarios WHERE lower(email) = lower($1)',
             [email]
         );
         const usuario = result.rows[0];
@@ -50,8 +50,11 @@ router.post('/login', limiteLogin, async (req, res) => {
             return res.status(403).json({ error: 'Tu cuenta está desactivada. Contacta a GOMAQ' });
         }
 
+        // `pc`: hora del ultimo cambio de contrasena (ms; 0 si nunca), para que verifyToken corte las
+        // sesiones emitidas antes de un restablecimiento
+        const pc = usuario.password_cambiada_at ? new Date(usuario.password_cambiada_at).getTime() : 0;
         const token = jwt.sign(
-            { id: usuario.id, rol: usuario.rol, cliente_id: usuario.cliente_id },
+            { id: usuario.id, rol: usuario.rol, cliente_id: usuario.cliente_id, pc },
             process.env.JWT_SECRET,
             { expiresIn: '12h' }
         );

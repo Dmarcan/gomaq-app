@@ -16,6 +16,19 @@ if (faltantes.length > 0) {
     process.exit(1);
 }
 
+// Un secreto de firma debil o de ejemplo permitiria firmar sesiones falsas: en produccion no se
+// parte con el. Si esto falla en un despliegue, Railway deja corriendo la version anterior (el
+// healthcheck no responde) hasta que se ponga un JWT_SECRET largo y aleatorio.
+const { validarSecretoJwt, MIN_LARGO } = require('./src/utils/secretoJwt');
+const secreto = validarSecretoJwt(process.env.JWT_SECRET, process.env.NODE_ENV);
+if (!secreto.ok) {
+    console.error(
+        `JWT_SECRET no es seguro: ${secreto.motivo}. Usa un valor aleatorio de al menos ${MIN_LARGO} caracteres ` +
+        '(por ejemplo `openssl rand -hex 32`). Cambiarlo cierra las sesiones abiertas; la cola de la app del mecanico no se pierde.'
+    );
+    process.exit(1);
+}
+
 const path = require('path');
 require('./src/utils/asyncErrores');
 const express = require('express');

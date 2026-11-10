@@ -139,6 +139,30 @@ describe('verifyToken revisa la cuenta en la base', () => {
         }
     });
 
+    test('un token emitido antes de que se cambiara la contraseña deja de valer (sin ventana, ni en el mismo segundo)', async () => {
+        const cambio = new Date('2026-11-10T12:00:00.500Z');
+        const ms = cambio.getTime();
+        const casos = [
+            { claim: 0, bd: cambio, pasa: false, nombre: 'token de antes del cambio (la clave se cambio despues)' },
+            { claim: undefined, bd: cambio, pasa: false, nombre: 'token antiguo sin claim, y la clave ya se cambio' },
+            { claim: ms - 1, bd: cambio, pasa: false, nombre: 'token con un cambio anterior, y hubo otro despues' },
+            { claim: ms, bd: cambio, pasa: true, nombre: 'token emitido despues del cambio' },
+            { claim: 0, bd: null, pasa: true, nombre: 'la clave nunca se cambio' },
+            { claim: undefined, bd: null, pasa: true, nombre: 'token antiguo sin claim y la clave nunca se cambio' },
+            { claim: ms, bd: null, pasa: false, nombre: 'el claim dice que se cambio pero la base no: no coincide' },
+        ];
+        for (const c of casos) {
+            restaurar = usarBuscadorDeUsuarios(async () => ({
+                rol: 'mecanico', cliente_id: null, estado_cuenta: 'activo', password_cambiada_at: c.bd,
+            }));
+            const req = { headers: { authorization: `Bearer ${firmar({ id: 7, rol: 'mecanico', cliente_id: null, pc: c.claim })}` } };
+            const { res, continuo } = await ejecutar(verifyToken, req);
+            assert.equal(continuo, c.pasa, c.nombre);
+            assert.equal(res.codigo, c.pasa ? null : 401, c.nombre);
+            restaurar();
+        }
+    });
+
     test('un id que no es entero no llega a la base', async () => {
         let consultas = 0;
         restaurar = usarBuscadorDeUsuarios(async () => { consultas++; return { rol: 'gerente', cliente_id: null, estado_cuenta: 'activo' }; });

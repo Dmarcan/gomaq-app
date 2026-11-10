@@ -225,6 +225,59 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     }
   }
 
+  /// Restablece la contraseña de otra cuenta (la olvidó, o la cuenta está comprometida). No hay
+  /// proveedor de correo: la escribe quien la restablece y se la entrega a la persona. Las sesiones
+  /// que esa cuenta tenía abiertas se cierran.
+  Future<void> _cambiarClave(Map<String, dynamic> usuario) async {
+    final claveCtrl = TextEditingController();
+    final repetirCtrl = TextEditingController();
+    final hecho = await mostrarFormulario(
+      context,
+      icono: Icons.lock_reset,
+      titulo: 'Restablecer contraseña',
+      subtitulo: '${usuario['nombre']} · ${usuario['email']}',
+      textoAccion: 'Restablecer',
+      ancho: 440,
+      contenido: (context, redibujar) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Su sesión actual se cierra y entra con la contraseña nueva. Entrégasela en persona: el sistema no la envía ni la vuelve a mostrar.',
+            style: TextStyle(fontSize: 13, color: Colors.black54),
+          ),
+          separadorCampos,
+          TextFormField(
+            controller: claveCtrl,
+            autofocus: true,
+            obscureText: true,
+            decoration: decoracionCampo('Contraseña nueva *', ayuda: 'Mínimo 8 caracteres.'),
+            validator: (v) {
+              final t = v ?? '';
+              if (t.length < 8) return 'Mínimo 8 caracteres.';
+              if (utf8.encode(t).length > 72) return 'Demasiado larga (máximo 72 bytes).';
+              return null;
+            },
+          ),
+          separadorCampos,
+          TextFormField(
+            controller: repetirCtrl,
+            obscureText: true,
+            decoration: decoracionCampo('Repetir contraseña *'),
+            validator: (v) => v == claveCtrl.text ? null : 'Las contraseñas no coinciden.',
+          ),
+        ],
+      ),
+      alGuardar: () => ApiClient.instance.post('/api/usuarios/${usuario['id']}/password', {'password': claveCtrl.text}),
+    );
+    claveCtrl.dispose();
+    repetirCtrl.dispose();
+    if (hecho && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Contraseña restablecida. Entrégasela en persona: no se vuelve a mostrar.')),
+      );
+    }
+  }
+
   /// Desactiva o reactiva una cuenta interna. Desactivada no puede iniciar sesión y su sesión
   /// vigente se corta en la siguiente petición. Los datos y las órdenes se conservan.
   Future<void> _cambiarEstado(Map<String, dynamic> usuario, {required bool activar}) async {
@@ -300,12 +353,24 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
                       color: activa ? null : GomaqColors.advertenciaFuerte,
                     ),
                   ),
-                  trailing: activa
-                      ? TextButton(
+                  trailing: Wrap(
+                    spacing: 4,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      Semantics(
+                        label: 'Restablecer contraseña de ${u['nombre']}',
+                        excludeSemantics: true,
+                        child: TextButton(onPressed: () => _cambiarClave(u), child: const Text('Contraseña')),
+                      ),
+                      if (activa)
+                        TextButton(
                           onPressed: () => _cambiarEstado(u, activar: false),
                           child: Text('Desactivar', style: TextStyle(color: Theme.of(context).colorScheme.error)),
                         )
-                      : TextButton(onPressed: () => _cambiarEstado(u, activar: true), child: const Text('Reactivar')),
+                      else
+                        TextButton(onPressed: () => _cambiarEstado(u, activar: true), child: const Text('Reactivar')),
+                    ],
+                  ),
                 );
               }),
           ],

@@ -1,7 +1,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { validarNuevaCuenta, validarCambioDeEstado, ROLES_INTERNOS } = require('../src/utils/cuentasInternas');
+const { validarNuevaCuenta, validarCambioDeEstado, validarCambioDePassword, validarPassword, ROLES_INTERNOS } = require('../src/utils/cuentasInternas');
 
 const valido = (extra = {}) => ({ nombre: 'Juan Pérez', email: 'juan@gomaq.cl', rol: 'mecanico', password: 'una-clave-larga', ...extra });
 
@@ -47,6 +47,23 @@ describe('validarNuevaCuenta', () => {
         assert.equal(validarNuevaCuenta(valido({ nombre: 'x'.repeat(151) })).ok, false);
         for (const email of ['sin-arroba', 'a@b', 'a b@c.cl', '@gomaq.cl', 'a@.cl', `${'x'.repeat(146)}@g.cl`]) {
             assert.equal(validarNuevaCuenta(valido({ email })).ok, false, email);
+        }
+    });
+});
+
+describe('validarPassword y validarCambioDePassword', () => {
+    test('minimo 8 caracteres y maximo 72 bytes', () => {
+        assert.equal(validarPassword('1234567').ok, false);
+        assert.equal(validarPassword('12345678').ok, true);
+        assert.equal(validarPassword('a'.repeat(72)).ok, true);
+        assert.equal(validarPassword('a'.repeat(73)).ok, false);
+        assert.equal(validarPassword('é'.repeat(40)).ok, false, '80 bytes');
+    });
+
+    test('el cuerpo debe traer una contraseña de texto', () => {
+        assert.deepEqual(validarCambioDePassword({ password: 'una-clave-nueva' }), { ok: true, password: 'una-clave-nueva' });
+        for (const cuerpo of [null, undefined, 'texto', 5, [], {}, { password: 12345678 }, { password: ['abcdefgh'] }, { clave: 'una-clave-nueva' }]) {
+            assert.equal(validarCambioDePassword(cuerpo).ok, false, JSON.stringify(cuerpo));
         }
     });
 });

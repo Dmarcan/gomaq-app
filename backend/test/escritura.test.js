@@ -55,7 +55,7 @@ before(async () => {
     // relleno de los portales (ids 98765x, que no existen) valen lo que firman, como antes.
     require('../src/middleware/auth').usarBuscadorDeUsuarios(async (id, claims) => {
         if (id >= 987000) return { rol: claims.rol, cliente_id: claims.cliente_id ?? null, estado_cuenta: 'activo' };
-        const r = await pool.query('SELECT rol, cliente_id, estado_cuenta FROM usuarios WHERE id = $1', [id]);
+        const r = await pool.query('SELECT rol, cliente_id, estado_cuenta, password_cambiada_at FROM usuarios WHERE id = $1', [id]);
         return r.rows[0] || null;
     });
 
@@ -6029,6 +6029,50 @@ describe('bloque 6 (parte 1): contratos para el dashboard, Ordenes y el portal',
                 assert.ok(lista.body.every((u) => 'estado_cuenta' in u));
             } finally {
                 if (creados.length) await pool.query('DELETE FROM usuarios WHERE id = ANY($1)', [creados]);
+            }
+        });
+
+        test('restablecer la contraseña de otra cuenta: la clave nueva entra, la vieja no, y la sesion abierta se corta', async (t) => {
+            if (!requiereBase(t)) return;
+            const sufijo = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
+            const correo = `qa.clave.${sufijo}@gomaq.test`;
+            const creada = await pedir('POST', '/api/usuarios', 'administrativo', {
+                nombre: 'QA clave', email: correo, rol: 'mecanico', password: 'clave-original-1',
+            });
+            assert.equal(creada.status, 201);
+            const id = creada.body.id;
+            const entrar = (password) => fetch(`${base}/api/auth/login`, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: correo, password }),
+            });
+            try {
+                const sesion = await (await entrar('clave-original-1')).json();
+                const conToken = (token) => fetch(`${base}/api/ordenes-trabajo?limit=1`, { headers: { Authorization: `Bearer ${token}` } });
+                assert.equal((await conToken(sesion.token)).status, 200);
+
+                // el mecanico no restablece claves; una clave corta o mal tipada se rechaza
+                assert.equal((await pedir('POST', `/api/usuarios/${id}/password`, 'mecanico', { password: 'otra-clave-nueva' })).status, 403);
+                assert.equal((await pedir('POST', `/api/usuarios/${id}/password`, 'administrativo', { password: '123' })).status, 400);
+                assert.equal((await pedir('POST', `/api/usuarios/${id}/password`, 'administrativo', { password: 12345678 })).status, 400);
+                assert.equal((await conToken(sesion.token)).status, 200, 'un intento rechazado no corta la sesion');
+
+                // sin esperas: el corte no depende de la hora en segundos del token (claim pc, en milisegundos)
+                const cambio = await pedir('POST', `/api/usuarios/${id}/password`, 'gerente', { password: 'clave-restablecida-2' });
+                assert.equal(cambio.status, 200);
+                assert.ok(!JSON.stringify(cambio.body).includes('clave-restablecida-2'), 'nunca devuelve la clave');
+                assert.ok(!('password_hash' in cambio.body));
+
+                assert.equal((await conToken(sesion.token)).status, 401, 'la sesion que ya tenia se corta');
+                assert.equal((await entrar('clave-original-1')).status, 401, 'la clave vieja ya no sirve');
+                const nueva = await entrar('clave-restablecida-2');
+                assert.equal(nueva.status, 200, 'la clave nueva entra');
+                assert.equal((await conToken((await nueva.json()).token)).status, 200, 'y su sesion funciona de inmediato');
+
+                // las cuentas de cliente y las que no existen quedan fuera
+                const cliente = (await pool.query(`SELECT id FROM usuarios WHERE rol = 'cliente' LIMIT 1`)).rows[0];
+                if (cliente) assert.equal((await pedir('POST', `/api/usuarios/${cliente.id}/password`, 'administrativo', { password: 'clave-restablecida-2' })).status, 404);
+                assert.equal((await pedir('POST', '/api/usuarios/99999999/password', 'administrativo', { password: 'clave-restablecida-2' })).status, 404);
+            } finally {
+                await pool.query('DELETE FROM usuarios WHERE id = $1', [id]);
             }
         });
 
