@@ -305,7 +305,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
         _cargarRecientes();
       }
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo adjuntar el documento: ${e.message}')));
     }
   }
 
@@ -399,7 +399,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
             content: Text('Ya se registró una guía con los datos anteriores; revisa Recientes antes de volver a guardar.'),
           ));
         } else {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+          ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo guardar la guía: ${e.message}')));
         }
       }
     } catch (_) {

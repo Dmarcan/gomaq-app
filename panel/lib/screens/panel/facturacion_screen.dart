@@ -157,7 +157,7 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
     ];
 
     if (items.isEmpty) {
-      return const Center(child: Text('No hay nada listo para facturar por el momento'));
+      return const Center(child: Text('Aún no hay trabajos ni arriendos listos para facturar.'));
     }
     return RefreshIndicator(
       onRefresh: _cargar,
@@ -377,7 +377,7 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
         _cargarVistaPrevia();
       }
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo crear la factura: ${e.message}')));
       // el periodo pudo cambiar (otra factura, una recepción nueva): se muestra el vigente
       if (mounted && e.statusCode == 409 && _facturaPorPeriodo) _cargarPropuesta();
     } catch (_) {
@@ -416,7 +416,7 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
         ));
       }
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudieron guardar los cambios: ${e.message}')));
     } catch (_) {
       // plazo vencido o sin red: la correccion pudo haberse guardado o no
       if (mounted) {
@@ -520,7 +520,7 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
         );
         _cerrarSinPreguntar();
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo autorizar el envío: ${e.message}')));
       }
     } catch (_) {
       // plazo vencido o sin red: el servidor pudo haber encolado el correo

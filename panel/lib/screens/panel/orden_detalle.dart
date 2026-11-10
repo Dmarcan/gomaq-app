@@ -270,7 +270,7 @@ class DetalleOrdenState extends State<DetalleOrden> {
     try {
       await enviar(const {});
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo guardar el cambio: ${e.message}')));
     } catch (_) {
       _avisoRed();
     } finally {
@@ -326,7 +326,7 @@ class DetalleOrdenState extends State<DetalleOrden> {
     try {
       await enviar(const {});
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo anular la línea: ${e.message}')));
     } catch (_) {
       _avisoRed();
     } finally {
@@ -375,7 +375,7 @@ class DetalleOrdenState extends State<DetalleOrden> {
       widget.onCambio();
       await _terminarAccion('Orden asignada');
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo asignar la orden: ${e.message}')));
     } catch (_) {
       _avisoRed();
     } finally {
@@ -430,7 +430,7 @@ class DetalleOrdenState extends State<DetalleOrden> {
       widget.onCambio();
       await _terminarAccion('Valorización aprobada');
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo aprobar la valorización: ${e.message}')));
     } catch (_) {
       _avisoRed();
     } finally {
@@ -464,7 +464,7 @@ class DetalleOrdenState extends State<DetalleOrden> {
         unawaited(_cargarHistorial());
       }
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo subir la factura: ${e.message}')));
       // 409: ya tenía su factura (subida desde otra pantalla)
       if (e.statusCode == 409) unawaited(_cargarOrden());
     } catch (_) {

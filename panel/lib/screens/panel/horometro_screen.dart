@@ -104,7 +104,7 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('Error: $_error'),
+            Text('No se pudo cargar el horómetro: $_error'),
             const SizedBox(height: 12),
             ElevatedButton(onPressed: _cargar, child: const Text('Reintentar')),
           ],
@@ -480,7 +480,7 @@ class _DialogoHistorialState extends State<_DialogoHistorial> {
       cuerpo: SizedBox(
         height: 400,
         child: _error != null
-            ? Center(child: Text('Error: $_error'))
+            ? Center(child: Text('No se pudo cargar el historial del equipo: $_error'))
             : datos == null
                 ? const Center(child: CircularProgressIndicator())
                 : Column(

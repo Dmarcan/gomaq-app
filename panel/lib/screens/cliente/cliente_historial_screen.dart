@@ -55,7 +55,7 @@ class _ClienteHistorialScreenState extends State<ClienteHistorialScreen> {
       return EstadoRefrescable(
         onRefresh: _cargar,
         child: const EstadoVacio(
-          icono: Icons.history,
+          imagen: gGomaqGris,
           titulo: 'Aún no hay trabajos terminados',
           mensaje: 'Cuando GOMAQ cierre un trabajo sobre tus equipos, aparecerá aquí con su factura.',
         ),

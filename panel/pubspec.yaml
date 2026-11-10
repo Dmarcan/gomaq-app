@@ -1,5 +1,5 @@
 name: gomaq_web
-description: "A new Flutter project."
+description: "Panel web y Android de GOMAQ (administrativo, gerente y portal del cliente)"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -84,6 +84,7 @@ flutter:
   assets:
     - assets/logo_gomaq_sobre_claro.png
     - assets/logo_gomaq_sobre_oscuro.png
+    - assets/g_gomaq_gris.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:

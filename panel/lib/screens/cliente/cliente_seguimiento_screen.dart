@@ -81,7 +81,7 @@ class _ClienteSeguimientoScreenState extends State<ClienteSeguimientoScreen> {
       return EstadoRefrescable(
         onRefresh: _cargar,
         child: const EstadoVacio(
-          icono: Icons.timeline,
+          imagen: gGomaqGris,
           titulo: 'No tienes asistencias abiertas',
           mensaje: 'Para reportar una falla o pedir una mantención, toca «Solicitar asistencia» '
               'en uno de tus equipos.',

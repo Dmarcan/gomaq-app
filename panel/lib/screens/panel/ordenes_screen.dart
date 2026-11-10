@@ -262,7 +262,7 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
     try {
       maquinarias = (await ApiClient.instance.get('/api/maquinarias'))['items'];
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo cargar la lista de equipos: ${e.message}')));
       return;
     } catch (_) {
       if (mounted) {
@@ -311,7 +311,6 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
               // el cliente no se pregunta: la base ya sabe quién tiene el equipo, y el servidor
               // lo copia a la orden al crearla
               LineaInfo(
-                icono: Icons.business,
                 texto: equipo['cliente'] != null ? 'Cliente: ${equipo['cliente']}' : 'Sin cliente: es una mantención interna',
               ),
             ],
@@ -396,7 +395,7 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
                   child: Center(
                     child: OutlinedButton(
                       onPressed: _cargandoMas ? null : _cargarMas,
-                      child: Text(_cargandoMas ? 'Cargando...' : 'Cargar más'),
+                      child: Text(_cargandoMas ? 'Cargando órdenes…' : 'Cargar más'),
                     ),
                   ),
                 ),

@@ -242,7 +242,7 @@ class _MapaScreenState extends State<MapaScreen> {
           if (datos == null)
             Expanded(
               child: Center(
-                child: _cargando ? const CircularProgressIndicator() : const Text('No hay datos para mostrar.'),
+                child: _cargando ? const CircularProgressIndicator() : const Text('Aún no hay equipos con ubicación para mostrar en el mapa.'),
               ),
             )
           else ...[

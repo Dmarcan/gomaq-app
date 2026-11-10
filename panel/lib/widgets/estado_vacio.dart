@@ -1,12 +1,19 @@
 import 'package:flutter/material.dart';
 import '../services/api_client.dart';
 
+/// La G de GOMAQ en gris, para estados vacíos del portal del cliente.
+const gGomaqGris = 'assets/g_gomaq_gris.png';
+
 /// Pantalla o lista sin datos: qué es, por qué está vacía y cómo empezar.
 ///
 /// Antes varias secciones (Asistencias, el catálogo de Insumos) quedaban completamente en
 /// blanco cuando no había datos, y no se distinguía de una pantalla que no cargó.
 class EstadoVacio extends StatelessWidget {
-  final IconData icono;
+  /// Ícono del estado. Si se pasa [imagen] no se usa (uno de los dos es obligatorio).
+  final IconData? icono;
+
+  /// Imagen decorativa (asset) en lugar del ícono, p. ej. la G gris de GOMAQ ([gGomaqGris]).
+  final String? imagen;
   final String titulo;
   final String mensaje;
   final String? textoAccion;
@@ -14,12 +21,13 @@ class EstadoVacio extends StatelessWidget {
 
   const EstadoVacio({
     super.key,
-    required this.icono,
+    this.icono,
+    this.imagen,
     required this.titulo,
     required this.mensaje,
     this.textoAccion,
     this.onAccion,
-  });
+  }) : assert(icono != null || imagen != null, 'EstadoVacio necesita un icono o una imagen');
 
   @override
   Widget build(BuildContext context) {
@@ -31,7 +39,10 @@ class EstadoVacio extends StatelessWidget {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(icono, size: 56, color: Colors.grey.shade500),
+              if (imagen != null)
+                Image.asset(imagen!, height: 56, excludeFromSemantics: true)
+              else
+                Icon(icono, size: 56, color: Colors.grey.shade500),
               const SizedBox(height: 16),
               Text(titulo,
                   textAlign: TextAlign.center,

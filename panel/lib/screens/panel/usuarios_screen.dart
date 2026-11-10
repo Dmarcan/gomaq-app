@@ -55,7 +55,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     try {
       clientes = await ApiClient.instance.get('/api/clientes');
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo cargar la lista de clientes: ${e.message}')));
       return;
     }
 
@@ -106,7 +106,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cuenta activada')));
       _cargar();
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo activar la cuenta: ${e.message}')));
     }
   }
 
@@ -136,7 +136,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
       await ApiClient.instance.post('/api/usuarios/solicitudes/$solicitudId/rechazar', {});
       _cargar();
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo rechazar la solicitud: ${e.message}')));
     }
   }
 
@@ -326,7 +326,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
         SnackBar(content: Text(activar ? 'Cuenta reactivada' : 'Cuenta desactivada')),
       );
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo cambiar el estado de la cuenta: ${e.message}')));
     }
   }
 
@@ -420,7 +420,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
         if (i != -1) _internos[i] = actualizado;
       });
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudieron guardar las alertas: ${e.message}')));
     }
   }
 

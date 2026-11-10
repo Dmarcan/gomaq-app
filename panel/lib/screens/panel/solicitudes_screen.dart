@@ -52,7 +52,7 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
       }
       _cargar();
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo convertir la asistencia: ${e.message}')));
     }
   }
 

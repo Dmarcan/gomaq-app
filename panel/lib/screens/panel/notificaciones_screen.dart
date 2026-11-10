@@ -95,7 +95,7 @@ class _NotificacionesScreenState extends State<NotificacionesScreen> {
       }
       _cargar();
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo reintentar el envío: ${e.message}')));
     }
   }
 

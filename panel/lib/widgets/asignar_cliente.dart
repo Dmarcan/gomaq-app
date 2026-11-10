@@ -28,7 +28,7 @@ Future<bool> asignarEquipoACliente(
   try {
     clientes = await ApiClient.instance.get('/api/clientes');
   } on ApiException catch (e) {
-    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    if (context.mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo cargar la lista de clientes: ${e.message}')));
     return false;
   } catch (_) {
     if (context.mounted) {

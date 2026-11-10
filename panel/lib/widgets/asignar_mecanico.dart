@@ -54,7 +54,7 @@ class AsignarMecanicoState extends State<AsignarMecanicoDialog> {
       final data = await ApiClient.instance.get('/api/usuarios?rol=mecanico');
       if (mounted) setState(() => _mecanicos = data);
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo cargar la lista de mecánicos: ${e.message}')));
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('No se pudo cargar la lista de mecánicos. Intenta de nuevo.')));
@@ -70,7 +70,7 @@ class AsignarMecanicoState extends State<AsignarMecanicoDialog> {
       await ApiClient.instance.patch('/api/ordenes-trabajo/${widget.orden['id']}/asignar', {'mecanico_id': mecanicoId});
       if (mounted) Navigator.pop(context, true);
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo asignar el mecánico: ${e.message}')));
     } catch (_) {
       // sin red o plazo vencido: el cuadro sigue abierto y se puede reintentar
       if (mounted) {

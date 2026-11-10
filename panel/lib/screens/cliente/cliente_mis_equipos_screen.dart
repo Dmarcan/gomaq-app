@@ -152,7 +152,7 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
             const Padding(
               padding: EdgeInsets.only(top: 32),
               child: EstadoVacio(
-                icono: Icons.local_shipping_outlined,
+                imagen: gGomaqGris,
                 titulo: 'Aún no tienes equipos',
                 mensaje: 'Cuando GOMAQ te entregue un equipo en arriendo, aparecerá aquí.',
               ),

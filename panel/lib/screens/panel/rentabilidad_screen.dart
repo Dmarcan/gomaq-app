@@ -121,7 +121,7 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
         _hayMas = data['hay_mas'] == true;
       });
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudieron cargar más equipos: ${e.message}')));
     } finally {
       if (mounted) setState(() => _cargandoMas = false);
     }
@@ -603,7 +603,7 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
           Text('Mostrando ${_equipos.length} de $_total equipos', style: const TextStyle(fontSize: 12, color: Colors.black54)),
           if (_hayMas) ...[
             const SizedBox(height: 8),
-            OutlinedButton(onPressed: _cargandoMas ? null : _cargarMas, child: Text(_cargandoMas ? 'Cargando...' : 'Cargar más')),
+            OutlinedButton(onPressed: _cargandoMas ? null : _cargarMas, child: Text(_cargandoMas ? 'Cargando equipos…' : 'Cargar más')),
           ],
         ],
       ),

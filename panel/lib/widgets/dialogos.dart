@@ -366,9 +366,9 @@ String? Function(String?) numeroOpcional(String mensaje, {bool monto = false}) =
 
 /// Una línea gris con un dato que se ve pero no se edita (el cliente de un equipo, por ejemplo).
 class LineaInfo extends StatelessWidget {
-  final IconData icono;
+  final IconData? icono;
   final String texto;
-  const LineaInfo({super.key, required this.icono, required this.texto});
+  const LineaInfo({super.key, this.icono, required this.texto});
 
   @override
   Widget build(BuildContext context) {
@@ -378,8 +378,10 @@ class LineaInfo extends StatelessWidget {
       decoration: BoxDecoration(color: Colors.grey.shade100, borderRadius: BorderRadius.circular(10)),
       child: Row(
         children: [
-          ExcludeSemantics(child: Icon(icono, size: 18, color: Colors.black54)),
-          const SizedBox(width: 8),
+          if (icono != null) ...[
+            ExcludeSemantics(child: Icon(icono, size: 18, color: Colors.black54)),
+            const SizedBox(width: 8),
+          ],
           Expanded(child: Text(texto, style: const TextStyle(fontSize: 13))),
         ],
       ),

@@ -61,7 +61,7 @@ class _AppConRouterState extends State<_AppConRouter> {
   @override
   Widget build(BuildContext context) {
     return MaterialApp.router(
-      title: 'GOMAQ - Panel de Gestión',
+      title: 'GOMAQ · Panel de gestión',
       theme: construirTemaGomaq(),
       routerConfig: _router,
       // Sin esto los selectores de fecha y hora salían en inglés.

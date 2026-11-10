@@ -37,7 +37,13 @@ class _ClientePortalScreenState extends State<ClientePortalScreen> {
     return Scaffold(
       backgroundColor: GomaqColors.fondoCalido,
       appBar: AppBar(
-        title: Text('GOMAQ - ${_titulos[_tab]}'),
+        title: Row(
+          children: [
+            Image.asset('assets/logo_gomaq_sobre_claro.png', height: 20, semanticLabel: 'GOMAQ'),
+            const SizedBox(width: 12),
+            Flexible(child: Text(_titulos[_tab], overflow: TextOverflow.ellipsis)),
+          ],
+        ),
         backgroundColor: GomaqColors.fondoCalido,
         actions: [
           IconButton(

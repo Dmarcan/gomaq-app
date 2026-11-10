@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Naranja del logo de GOMAQ: fondo del icono -->
+    <!-- Naranja del logo de GOMAQ: fondo del icono y del circulo de la pantalla de inicio -->
     <color name="ic_launcher_fondo">#F58634</color>
+    <!-- Mismo fondo crema del panel: sin esto la pantalla de inicio destellaba en blanco -->
+    <color name="launch_fondo">#FDF6F1</color>
 </resources>

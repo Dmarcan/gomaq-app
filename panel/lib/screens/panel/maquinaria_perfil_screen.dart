@@ -147,7 +147,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
       );
       await _cargar();
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo subir la foto: ${e.message}')));
     } finally {
       if (mounted) setState(() => _subiendoFoto = false);
     }
@@ -321,7 +321,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
             .showSnackBar(SnackBar(content: Text('${_maquinaria!['codigo']} quedó ${GomaqColors.etiquetaEstado(elegido).toLowerCase()}')));
       }
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo cambiar el estado: ${e.message}')));
     }
   }
 
