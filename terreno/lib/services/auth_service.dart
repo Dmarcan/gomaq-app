@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:sqflite/sqflite.dart';
 import '../db/local_database.dart';
+import '../utils/cambios.dart';
 import 'api_client.dart';
 import 'posicion_service.dart';
 
@@ -65,7 +66,7 @@ class AuthService extends ChangeNotifier {
         final nombreAnterior = await db.leerSesion('usuario_nombre') ?? 'otra cuenta';
         throw ApiException(
           409,
-          'Este teléfono tiene $pendientes cambios sin enviar de $nombreAnterior. '
+          'Este teléfono tiene ${textoCambios(pendientes)} sin enviar de $nombreAnterior. '
           'Esa persona debe iniciar sesión y sincronizar antes de que otra cuenta use el teléfono.',
         );
       }

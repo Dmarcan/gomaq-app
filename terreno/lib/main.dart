@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
 import 'services/auth_service.dart';
@@ -30,6 +31,14 @@ class GomaqMecanicoApp extends StatelessWidget {
       child: MaterialApp(
         title: 'GOMAQ Mecánico',
         theme: construirTemaGomaq(),
+        // textos del sistema (menú, volver, cerrar) en español para el lector de pantalla
+        locale: const Locale('es', 'CL'),
+        supportedLocales: const [Locale('es', 'CL'), Locale('es')],
+        localizationsDelegates: const [
+          GlobalMaterialLocalizations.delegate,
+          GlobalWidgetsLocalizations.delegate,
+          GlobalCupertinoLocalizations.delegate,
+        ],
         home: const _Raiz(),
       ),
     );

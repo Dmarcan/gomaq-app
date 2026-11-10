@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../db/local_database.dart';
 import '../theme/gomaq_theme.dart';
+import '../utils/hoja_inferior.dart';
 
 /// Elige un equipo de la flota con buscador por codigo, tipo o cliente. La flota ronda los 500
 /// equipos: un desplegable simple obligaba a recorrerlos todos con el dedo.
@@ -19,16 +20,20 @@ Future<Map<String, dynamic>?> elegirEquipo(BuildContext context, {int? excluirId
     );
     return null;
   }
+  final paddingSuperior = MediaQuery.paddingOf(context).top;
   return showModalBottomSheet<Map<String, dynamic>>(
     context: context,
     isScrollControlled: true,
-    builder: (sheetContext) => _HojaSelectorEquipo(flota: flota),
+    useSafeArea: true,
+    builder: (sheetContext) => _HojaSelectorEquipo(flota: flota, paddingSuperior: paddingSuperior),
   );
 }
 
 class _HojaSelectorEquipo extends StatefulWidget {
   final List<Map<String, dynamic>> flota;
-  const _HojaSelectorEquipo({required this.flota});
+  // barra de estado, medida fuera de la hoja: useSafeArea la descuenta dentro y ya no se puede leer
+  final double paddingSuperior;
+  const _HojaSelectorEquipo({required this.flota, required this.paddingSuperior});
 
   @override
   State<_HojaSelectorEquipo> createState() => _HojaSelectorEquipoState();
@@ -52,7 +57,12 @@ class _HojaSelectorEquipoState extends State<_HojaSelectorEquipo> {
         // sube la hoja cuando aparece el teclado
         padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
         child: SizedBox(
-          height: MediaQuery.of(context).size.height * 0.75,
+          // con useSafeArea la hoja ya queda bajo la barra de estado; el tope descuenta el teclado
+          height: alturaHojaInferior(
+            altoPantalla: MediaQuery.of(context).size.height,
+            alturaTeclado: MediaQuery.of(context).viewInsets.bottom,
+            paddingSuperior: widget.paddingSuperior,
+          ),
           child: Column(
             children: [
               Padding(

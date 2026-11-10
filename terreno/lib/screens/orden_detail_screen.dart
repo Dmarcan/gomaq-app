@@ -14,6 +14,8 @@ import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../widgets/estado_chip.dart';
 import '../widgets/foto_thumbnail.dart';
+import '../utils/accion_unica.dart';
+import '../utils/datos_finales.dart';
 import '../utils/formato.dart';
 import '../utils/navegacion.dart';
 import '../widgets/dialogo_horometro.dart';
@@ -21,6 +23,7 @@ import '../widgets/dialogo_texto.dart';
 import '../widgets/errores_sync.dart';
 import '../widgets/seccion_bloqueada.dart';
 import '../widgets/selector_equipo.dart';
+import '../widgets/sync_banner.dart' show SyncBanner;
 import 'cerrar_orden_screen.dart';
 import 'maquinaria_historial_screen.dart';
 
@@ -41,6 +44,9 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
   /// Id con el que se opera la OT (el real si una creada en terreno ya se sincronizo).
   late final SyncService _sincronizador;
   int get _id => _sincronizador.resolverIdOrden(widget.ordenId);
+
+  /// Guardado como `_sincronizador`: al salir con "atras" ya no se puede leer del `context`.
+  late final ConnectivityService _conectividad;
 
   OrdenTrabajo? _orden;
   final _diagnosticoCtrl = TextEditingController();
@@ -64,6 +70,20 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
   bool _precioEditado = false;
   // evita abrir dos tramos si se toca INICIAR dos veces seguidas
   bool _iniciando = false;
+  // guardas contra el doble toque: mientras una accion se guarda, el boton queda deshabilitado
+  late final AccionUnica _agregando = AccionUnica(alCambiar: _refrescar);
+  late final AccionUnica _alternando = AccionUnica(alCambiar: _refrescar);
+  late final AccionUnica _aceptando = AccionUnica(alCambiar: _refrescar);
+  // sube cada vez que se limpia el repuesto elegido, para que el selector vuelva a "elige uno"
+  int _versionSelectorInsumo = 0;
+  // ultimo valor de la observacion final y del folio que vino de la base (o se encolo): permite
+  // guardar lo escrito si el mecanico finaliza o sale sin pulsar "Guardar"
+  String _observacionFinalGuardada = '';
+  String _folioGuardado = '';
+  // true si las fotos ANTES ya existian al abrir la pantalla; se decide una sola vez para que la
+  // tarjeta no cambie de lugar justo despues de tomar la foto
+  bool? _antesAlFinal;
+  bool _habiaSincronizando = false;
   // cambios sin enviar de todo el telefono, para el icono de la barra superior
   int _pendientes = 0;
   int _enError = 0;
@@ -90,6 +110,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
   void initState() {
     super.initState();
     _sincronizador = context.read<SyncService>();
+    _conectividad = context.read<ConnectivityService>();
     WidgetsBinding.instance.addObserver(this);
     // la cantidad parte en 1: lo comun es poner una unidad
     _cantidadInsumoCtrl.text = '1';
@@ -108,8 +129,17 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
     );
   }
 
+  void _refrescar() {
+    if (mounted) setState(() {});
+  }
+
   void _alCambiarSync() {
-    if (mounted) _actualizarEstadoSync();
+    if (!mounted) return;
+    _actualizarEstadoSync();
+    // al terminar de enviar, los iconos de "Pendiente de envío" de repuestos y tramos se recalculan
+    final sincronizando = _sincronizador.sincronizando;
+    if (_habiaSincronizando && !sincronizando) _cargar();
+    _habiaSincronizando = sincronizando;
   }
 
   Future<void> _actualizarEstadoSync() async {
@@ -187,7 +217,12 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
       _tipoServicio = _orden!.tipoServicio;
       if (_observacionFinalCtrl.text.isEmpty) _observacionFinalCtrl.text = _orden!.observacionFinal ?? '';
       if (_folioPapelCtrl.text.isEmpty) _folioPapelCtrl.text = _orden!.folioPapel ?? '';
+      _observacionFinalGuardada = _orden!.observacionFinal ?? '';
+      _folioGuardado = _orden!.folioPapel ?? '';
       _fotosLocales = fotos;
+      _habiaSincronizando = _sincronizador.sincronizando;
+      // la posicion de la tarjeta "Fotos ANTES" se decide con la primera carga y ya no cambia
+      _antesAlFinal ??= fotos.any((f) => (f['tipo'] ?? 'antes') == 'antes');
       _insumosLocales = insumos;
       _catalogoInsumos = catalogo;
       _catalogoChecklist = checklist;
@@ -241,7 +276,9 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
 
   /// Cierra el tramo abierto, o abre uno nuevo. En el papel son los bloques
   /// INICIO / TÉRMINO DEL TRABAJO, y hay más de uno porque el trabajo se puede retomar.
-  Future<void> _alternarTramo() async {
+  Future<void> _alternarTramo() => _alternando.ejecutar(_alternarTramoSinGuarda);
+
+  Future<void> _alternarTramoSinGuarda() async {
     final abierto = _tramosLocales.where((t) => t['termino'] == null).toList();
     final sync = context.read<SyncService>();
     final db = await LocalDatabase.instance.database;
@@ -268,12 +305,14 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
   }
 
   /// Guarda las observaciones iniciales si cambiaron, sin aviso ni recarga. Se usa al salir del campo y
-  /// de la pantalla; usa el sincronizador guardado porque al salir ya no hay `context`.
-  Future<void> _guardarObservacionesIniciales() async {
+  /// de la pantalla; usa el sincronizador guardado porque al salir ya no hay `context`. Devuelve si
+  /// encoló algo.
+  Future<bool> _guardarObservacionesIniciales() async {
     final texto = _diagnosticoCtrl.text.trim();
-    if (texto == _diagnosticoGuardado || _orden?.estado == 'finalizada') return;
+    if (texto == _diagnosticoGuardado || _orden?.estado == 'finalizada') return false;
     _diagnosticoGuardado = texto;
     await _sincronizador.encolarDiagnostico(_id, diagnostico: texto);
+    return true;
   }
 
   Future<void> _guardarDiagnostico({String? estado, bool aviso = true}) async {
@@ -288,11 +327,11 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
   }
 
   /// El mecanico acepta el trabajo: la oficina ve que lo recibio. No hace falta senal.
-  Future<void> _aceptarTrabajo() async {
-    await context.read<SyncService>().encolarDiagnostico(_id, estado: 'aceptada');
-    await _cargar();
-    _intentarSincronizarAhora();
-  }
+  Future<void> _aceptarTrabajo() => _aceptando.ejecutar(() async {
+        await context.read<SyncService>().encolarDiagnostico(_id, estado: 'aceptada');
+        await _cargar();
+        _intentarSincronizarAhora();
+      });
 
   /// Sale hacia el destino: desde aqui corre el tiempo de viaje, separado del de trabajo, y el
   /// cliente ve que el tecnico va en camino.
@@ -515,12 +554,16 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
             child: TextButton(
               onPressed: () async {
                 if (estado == EstadoUbicacion.permisoDenegado) {
-                  // todavía se puede pedir con el diálogo normal de Android, sin ir a Ajustes
-                  await PosicionService.iniciarSeguimiento(
-                    _id,
-                    destinoLat: _orden?.destinoLat,
-                    destinoLng: _orden?.destinoLng,
-                  );
+                  // se pide con el diálogo normal de Android; si sigue negado (tras dos negativas
+                  // Android ya no pregunta) se abren los ajustes de la app
+                  final accion = await PosicionService.pedirPermisoOAjustes();
+                  if (accion == AccionTrasPermiso.iniciarSeguimiento) {
+                    await PosicionService.iniciarSeguimiento(
+                      _id,
+                      destinoLat: _orden?.destinoLat,
+                      destinoLng: _orden?.destinoLng,
+                    );
+                  }
                 } else {
                   await PosicionService.abrirAjustes(estado);
                 }
@@ -630,7 +673,9 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
     _precioInsumoCtrl.text = costo == null ? '' : costo.round().toString();
   }
 
-  Future<void> _agregarInsumo() async {
+  Future<void> _agregarInsumo() => _agregando.ejecutar(_agregarInsumoSinGuarda);
+
+  Future<void> _agregarInsumoSinGuarda() async {
     final cantidad = double.tryParse(_cantidadInsumoCtrl.text.replaceAll(',', '.'));
     final descripcion = _descripcionInsumoCtrl.text.trim();
     final insumoId = _insumoSeleccionadoId;
@@ -668,15 +713,70 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
     _precioEditado = false;
     setState(() {
       _facturableLinea = 'pendiente';
+      // sin repuesto elegido: un segundo toque no repite la linea
+      _insumoSeleccionadoId = null;
+      _versionSelectorInsumo++;
       _precargarPrecio();
     });
     await _cargar();
     _intentarSincronizarAhora();
   }
 
+  /// Encola la cabecera del talonario (observacion final y folio) si hay algo escrito sin guardar.
+  /// Es la misma tarea `datos_ot` del boton "Guardar". Lee los campos antes de cualquier espera,
+  /// porque al salir de la pantalla los controladores se liberan enseguida. Devuelve si encoló algo.
+  Future<bool> _guardarDatosPendientes() async {
+    if (_orden?.estado == 'finalizada') return false;
+    final obs = _observacionFinalCtrl.text.trim();
+    final folio = _folioPapelCtrl.text.trim();
+    final tipo = _tipoServicio;
+    if (!hayDatosFinalesSinGuardar(
+      observacionActual: obs,
+      observacionGuardada: _observacionFinalGuardada,
+      folioActual: folio,
+      folioGuardado: _folioGuardado,
+    )) {
+      return false;
+    }
+    _observacionFinalGuardada = obs;
+    _folioGuardado = folio;
+    await _sincronizador.encolarDatosOt(
+      _id,
+      tipoServicio: tipo,
+      observacionFinal: obs.isEmpty ? null : obs,
+      folioPapel: folio.isEmpty ? null : folio,
+    );
+    return true;
+  }
+
+  /// Al salir con "atras" no se pierde nada de lo escrito: observaciones iniciales y finales.
+  ///
+  /// Lo encolado aqui se envia de inmediato, como tras cualquier otra accion de la pantalla. Antes
+  /// solo se encolaba: la lista de ordenes, al volver, recarga lo local pero no sincroniza, y el
+  /// cambio quedaba "por enviar" hasta el refresco periodico de la lista (hasta 3 minutos). La
+  /// sincronizacion se pide recien despues de que las dos tareas quedaron en la cola, para que la
+  /// pasada las incluya. No usa `_intentarSincronizarAhora` porque esa revisa `mounted` y lee del
+  /// `context`, y aqui la pantalla ya se esta cerrando: usa las referencias guardadas.
+  Future<void> _guardarAlSalir() async {
+    final encolados = await Future.wait([_guardarObservacionesIniciales(), _guardarDatosPendientes()]);
+    if (!encolados.contains(true) || !_conectividad.online) return;
+    try {
+      // si ya hay una pasada en curso, PasadasEnSerie agenda otra que incluye estas tareas
+      await _sincronizador.sincronizar();
+    } catch (_) {
+      // queda encolado para reintentar despues
+    }
+  }
+
   Future<void> _finalizar() async {
-    final orden = _orden;
-    if (orden == null) return;
+    final ordenInicial = _orden;
+    if (ordenInicial == null) return;
+    // lo escrito en observacion final y folio sin pulsar "Guardar" se encola ANTES del cierre
+    await _guardarDatosPendientes();
+    if (!mounted) return;
+    await _cargar();
+    final OrdenTrabajo orden = _orden ?? ordenInicial;
+    if (!mounted) return;
     await Navigator.push(
       context,
       MaterialPageRoute(
@@ -988,6 +1088,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
               const SizedBox(height: 8),
               if (_catalogoInsumos.isNotEmpty)
                 DropdownButtonFormField<int?>(
+                  key: ValueKey('insumo_$_versionSelectorInsumo'),
                   initialValue: _insumoSeleccionadoId,
                   isExpanded: true,
                   decoration: const InputDecoration(isDense: true, labelText: 'Repuesto del catálogo'),
@@ -1041,7 +1142,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
                   const SizedBox(width: 4),
                   IconButton(
                     tooltip: 'Agregar repuesto',
-                    onPressed: _agregarInsumo,
+                    onPressed: _agregando.enCurso ? null : _agregarInsumo,
                     icon: const Icon(Icons.add_circle, color: GomaqColors.primario, size: 30),
                   ),
                 ],
@@ -1337,7 +1438,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
               SizedBox(
                 width: double.infinity,
                 child: OutlinedButton.icon(
-                  onPressed: _alternarTramo,
+                  onPressed: _alternando.enCurso ? null : _alternarTramo,
                   icon: Icon(abierto.isEmpty ? Icons.play_arrow : Icons.stop, size: 18),
                   label: Text(abierto.isEmpty ? 'INICIAR TIEMPO DE TRABAJO' : 'DETENER TIEMPO DE TRABAJO'),
                 ),
@@ -1388,7 +1489,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
       case 'pendiente':
         texto = 'ACEPTAR TRABAJO';
         icono = Icons.check_circle_outline;
-        accion = _aceptarTrabajo;
+        accion = _aceptando.enCurso ? null : _aceptarTrabajo;
         accionSecundaria = _iniciarTrabajo;
         break;
       case 'aceptada':
@@ -1487,7 +1588,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
     if (enviando) {
       icono = Icons.sync;
       color = GomaqColors.estadoPositivo;
-      texto = 'Enviando cambios…';
+      texto = SyncBanner.textoSincronizando(pendientes: _pendientes, enError: _enError);
     } else if (_enError > 0) {
       icono = Icons.sync_problem;
       color = GomaqColors.estadoNegativo;
@@ -1532,7 +1633,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
     return PopScope(
       // salir con "atras" no debe perder lo escrito en observaciones iniciales
       onPopInvokedWithResult: (didPop, _) {
-        if (didPop) _guardarObservacionesIniciales();
+        if (didPop) _guardarAlSalir();
       },
       child: Scaffold(
       appBar: AppBar(title: Text(etiquetaOt(orden.id)), actions: [_indicadorSync()]),
@@ -1562,7 +1663,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
             // en el orden en que se hace el trabajo: documentar el estado inicial, intervenir, y
             // dejar al final lo que se necesita para cerrar. El talonario en papel y el PDF
             // conservan su orden; esto es solo la pantalla.
-            if (_fotosDeTipo('antes').isEmpty) _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: true),
+            if (_antesAlFinal != true) _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: true),
             _seccionObservacionesIniciales(soloLectura: false),
             _seccionTipoServicio(soloLectura: false),
             _seccionChecklist(soloLectura: false),
@@ -1576,7 +1677,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
             ),
             _seccionTramos(soloLectura: false),
             // las ANTES ya tomadas se pliegan al final: no hace falta verlas mientras se trabaja
-            if (_fotosDeTipo('antes').isNotEmpty) _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: true),
+            if (_antesAlFinal == true) _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: true),
           ] else if (finalizada) ...[
             _seccionObservacionesIniciales(soloLectura: true),
             _seccionTipoServicio(soloLectura: true),

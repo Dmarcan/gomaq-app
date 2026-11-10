@@ -19,6 +19,22 @@ void main() {
     expect(PosicionService.ordenSeguida, isNull);
   });
 
+  group('accionTrasPedirPermiso', () {
+    test('con permiso concedido se inicia el seguimiento', () {
+      expect(accionTrasPedirPermiso(LocationPermission.whileInUse), AccionTrasPermiso.iniciarSeguimiento);
+      expect(accionTrasPedirPermiso(LocationPermission.always), AccionTrasPermiso.iniciarSeguimiento);
+    });
+
+    test('si sigue negado se abren los ajustes de la app', () {
+      expect(accionTrasPedirPermiso(LocationPermission.denied), AccionTrasPermiso.abrirAjustes);
+      expect(accionTrasPedirPermiso(LocationPermission.deniedForever), AccionTrasPermiso.abrirAjustes);
+    });
+
+    test('si no se puede determinar no se hace nada', () {
+      expect(accionTrasPedirPermiso(LocationPermission.unableToDetermine), AccionTrasPermiso.nada);
+    });
+  });
+
   group('estadoDeUbicacion', () {
     test('con el GPS apagado manda el GPS, sin importar el permiso', () {
       for (final p in LocationPermission.values) {

@@ -5,6 +5,8 @@ import '../services/api_client.dart';
 import '../services/connectivity_service.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../utils/cantidad_unidad.dart';
+import '../utils/hoja_inferior.dart';
 import '../utils/uuid.dart';
 
 /// Stock del furgon del mecanico (patron "van stock").
@@ -64,10 +66,12 @@ class _MiFurgonScreenState extends State<MiFurgonScreen> {
       return;
     }
 
+    final paddingSuperior = MediaQuery.paddingOf(context).top;
     final eleccion = await showModalBottomSheet<_EleccionCarga>(
       context: context,
       isScrollControlled: true,
-      builder: (_) => _HojaCargaBodega(catalogo: catalogo),
+      useSafeArea: true,
+      builder: (_) => _HojaCargaBodega(catalogo: catalogo, paddingSuperior: paddingSuperior),
     );
     if (eleccion == null || !mounted) return;
     await _enviarCarga(eleccion);
@@ -217,7 +221,7 @@ class _MiFurgonScreenState extends State<MiFurgonScreen> {
                               style: TextStyle(fontSize: 12, color: GomaqColors.estadoNegativo))
                           : null,
                       trailing: Text(
-                        '$cantidad ${item['unidad_medida'] ?? ''}',
+                        cantidadConUnidad(cantidad, '${item['unidad_medida'] ?? ''}'),
                         style: TextStyle(
                           fontWeight: FontWeight.bold,
                           color: descuadre ? GomaqColors.estadoNegativo : null,
@@ -242,7 +246,9 @@ class _EleccionCarga {
 /// el furgon de quien carga, y no deja pedir mas de lo que hay en bodega.
 class _HojaCargaBodega extends StatefulWidget {
   final List<Map<String, dynamic>> catalogo;
-  const _HojaCargaBodega({required this.catalogo});
+  // barra de estado medida fuera de la hoja (useSafeArea la descuenta dentro)
+  final double paddingSuperior;
+  const _HojaCargaBodega({required this.catalogo, required this.paddingSuperior});
 
   @override
   State<_HojaCargaBodega> createState() => _HojaCargaBodegaState();
@@ -289,7 +295,12 @@ class _HojaCargaBodegaState extends State<_HojaCargaBodega> {
       child: Padding(
         padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
         child: SizedBox(
-          height: MediaQuery.of(context).size.height * 0.8,
+          height: alturaHojaInferior(
+            altoPantalla: MediaQuery.of(context).size.height,
+            alturaTeclado: MediaQuery.of(context).viewInsets.bottom,
+            paddingSuperior: widget.paddingSuperior,
+            fraccion: 0.8,
+          ),
           child: _elegido == null ? _lista(visibles) : _cantidad(_elegido!),
         ),
       ),
@@ -325,7 +336,7 @@ class _HojaCargaBodegaState extends State<_HojaCargaBodega> {
                             ? 'Unidad: ${item['unidad_medida']}'
                             : sinStock
                                 ? 'Sin stock en bodega'
-                                : 'Bodega: ${_fmt(bodega)} · Tu furgón: ${_fmt(furgon ?? 0)} ${item['unidad_medida'] ?? ''}',
+                                : textoStockBodegaFurgon(bodega, furgon ?? 0, '${item['unidad_medida'] ?? ''}'),
                       ),
                       onTap: () => setState(() {
                         _elegido = item;
@@ -356,7 +367,7 @@ class _HojaCargaBodegaState extends State<_HojaCargaBodega> {
           if (bodega != null)
             Padding(
               padding: const EdgeInsets.fromLTRB(12, 4, 12, 12),
-              child: Text('En bodega: ${_fmt(bodega)} · En tu furgón: ${_fmt(furgon ?? 0)} ${item['unidad_medida'] ?? ''}'),
+              child: Text(textoStockBodegaFurgon(bodega, furgon ?? 0, '${item['unidad_medida'] ?? ''}', detalle: true)),
             ),
           TextField(
             controller: _cantidadCtrl,

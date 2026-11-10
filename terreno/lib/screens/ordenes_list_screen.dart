@@ -7,8 +7,10 @@ import '../services/auth_service.dart';
 import '../services/connectivity_service.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
+import '../utils/cambios.dart';
 import '../widgets/dialogo_texto.dart';
 import '../widgets/errores_sync.dart';
+import '../widgets/lista_vacia_ordenes.dart';
 import '../widgets/orden_card.dart';
 import '../widgets/selector_equipo.dart';
 import '../widgets/sync_banner.dart';
@@ -35,7 +37,10 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
   List<OrdenTrabajo> _ordenes = [];
   int _pendientes = 0;
   int _enError = 0;
+  int _enEspera = 0;
   String? _problemaEnvio;
+  // OT cerradas en el telefono cuyo cierre sigue en la cola: no se pliegan con las finalizadas
+  Set<int> _cierreSinEnviar = {};
   // ordenes sin mecanico que se pueden tomar; null = no se pudo consultar (sin senal)
   int? _disponibles;
   StreamSubscription<bool>? _conexionSub;
@@ -109,14 +114,29 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
     final syncService = context.read<SyncService>();
     final pendientes = await syncService.contarPendientes();
     final enError = await syncService.contarEnError();
+    final enEspera = enError > 0 ? await syncService.contarDetrasDeErrores() : 0;
     final problema = await syncService.ultimoProblemaPendiente();
+    final cierreSinEnviar = await syncService.ordenesConCierreSinEnviar();
     if (!mounted) return;
     setState(() {
       _ordenes = rows.map(OrdenTrabajo.fromLocalMap).toList();
       _pendientes = pendientes;
       _enError = enError;
+      _enEspera = enEspera;
       _problemaEnvio = problema;
+      _cierreSinEnviar = cierreSinEnviar;
     });
+  }
+
+  /// "Actualizar" tocado a mano (franja o lista vacia). Sin senal lo dice, en vez de no hacer nada.
+  Future<void> _actualizarAMano() async {
+    if (!context.read<ConnectivityService>().online) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('Sin conexión. Se actualizará cuando vuelva la señal.'),
+      ));
+      return;
+    }
+    await _sincronizarSiHayConexion();
   }
 
 
@@ -131,7 +151,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
       builder: (dialogContext) => AlertDialog(
         title: const Text('¿Cerrar sesión?'),
         content: Text(pendientes > 0
-            ? 'Tienes $pendientes cambios sin enviar. Quedan guardados en el teléfono y se enviarán '
+            ? 'Tienes ${textoCambios(pendientes)} sin enviar. Quedan guardados en el teléfono y se enviarán '
                 'cuando vuelvas a entrar con tu cuenta. Mientras tanto, nadie más podrá usar la app '
                 'en este teléfono.'
             : 'Tu trabajo está sincronizado.'),
@@ -225,6 +245,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
   List<Widget> _tarjetas() {
     Widget tarjeta(OrdenTrabajo orden) => OrdenCard(
           orden: orden,
+          cierreSinEnviar: orden.estado == 'finalizada' && _cierreSinEnviar.contains(orden.id),
           onAbrir: () async {
             await Navigator.push(
               context,
@@ -235,7 +256,11 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
         );
 
     final abiertas = _ordenes.where((o) => o.estado != 'finalizada').toList();
-    final finalizadas = _ordenes.where((o) => o.estado == 'finalizada').toList();
+    // cerradas en el telefono pero con el cierre aun en la cola: quedan a la vista, no plegadas
+    // entre las finalizadas, porque para la oficina siguen abiertas
+    final sinEnviar = _ordenes.where((o) => o.estado == 'finalizada' && _cierreSinEnviar.contains(o.id)).toList();
+    final finalizadas =
+        _ordenes.where((o) => o.estado == 'finalizada' && !_cierreSinEnviar.contains(o.id)).toList();
     final conPosicion = abiertas.asMap().entries.toList()
       ..sort((a, b) {
         final c = _prioridad(a.value.estado).compareTo(_prioridad(b.value.estado));
@@ -244,6 +269,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
 
     return [
       for (final e in conPosicion) tarjeta(e.value),
+      for (final o in sinEnviar) tarjeta(o),
       if (finalizadas.isNotEmpty) ...[
         InkWell(
           onTap: () => setState(() => _verFinalizadas = !_verFinalizadas),
@@ -364,8 +390,10 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
             sincronizando: sincronizando,
             pendientes: _pendientes,
             enError: _enError,
+            enEspera: _enEspera,
             problema: _problemaEnvio,
             onTapErrores: () => mostrarErroresDeSync(context, alCambiar: _cargarLocal),
+            onActualizar: _actualizarAMano,
           ),
           Expanded(
             child: _ordenes.isEmpty && _sync.sincronizando && _sync.ultimaSincronizacion == null
@@ -380,23 +408,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
                     ),
                   )
                 : _ordenes.isEmpty
-                ? const Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.assignment_outlined, size: 56, color: GomaqColors.textoSecundario),
-                        SizedBox(height: 12),
-                        Padding(
-                          padding: EdgeInsets.symmetric(horizontal: 32),
-                          child: Text(
-                            'No tienes órdenes asignadas. Cuando el administrativo te asigne una, aparecerá aquí. También puedes crear una con el botón Nueva OT.',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(color: GomaqColors.textoSecundario),
-                          ),
-                        ),
-                      ],
-                    ),
-                  )
+                ? ListaVaciaOrdenes(onActualizar: _actualizarAMano)
                 : RefreshIndicator(
                     onRefresh: _sincronizarSiHayConexion,
                     child: ListView(

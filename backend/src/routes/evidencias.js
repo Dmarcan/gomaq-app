@@ -16,6 +16,8 @@ validarIdsEnRuta(router, ['id']);
 // Ademas de evidencias, la app sube la firma de recepcion al cerrar la OT (carpeta 'firmas');
 // esa NO pasa por /confirmar: su path viaja en el PATCH /finalizar y queda en firmas_recepcion.
 const CARPETAS_PERMITIDAS = ['firmas'];
+const MENSAJE_ALMACENAMIENTO_NO_DISPONIBLE =
+    'El servidor de fotos no está disponible en este momento. Se reintentará más tarde.';
 
 router.post('/:id/evidencia/solicitar-upload', verifyToken, requireRole('mecanico'), async (req, res) => {
     const { id } = req.params;
@@ -35,10 +37,21 @@ router.post('/:id/evidencia/solicitar-upload', verifyToken, requireRole('mecanic
         // la ruta la arma el servidor; del nombre que manda el telefono solo queda la extension
         const carpetas = carpeta ? [carpeta, `ot-${Number(id)}`] : [`ot-${Number(id)}`];
         const path = rutaArchivo(carpetas, nombre_archivo);
-        const { data, error } = await supabase.storage.from(BUCKET).createSignedUploadUrl(path);
-        if (error) throw error;
 
-        res.json({ path: data.path, token: data.token, signedUrl: data.signedUrl });
+        // Si falla el almacenamiento (Supabase caido o pausado) se responde 503 y no 500: es un
+        // problema pasajero del lado del servidor, y la app del mecanico lo reintenta sola sin
+        // gastar intentos. El mensaje lo puede leer el mecanico.
+        let firmada;
+        try {
+            const { data, error } = await supabase.storage.from(BUCKET).createSignedUploadUrl(path);
+            if (error) throw error;
+            firmada = data;
+        } catch (errAlmacenamiento) {
+            console.error(errAlmacenamiento);
+            return res.status(503).json({ error: MENSAJE_ALMACENAMIENTO_NO_DISPONIBLE });
+        }
+
+        res.json({ path: firmada.path, token: firmada.token, signedUrl: firmada.signedUrl });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al generar URL de subida' });

@@ -36,8 +36,39 @@ EstadoUbicacion estadoDeUbicacion({required bool servicioActivo, required Locati
   }
 }
 
+/// Que hacer despues de pedirle el permiso de ubicacion al mecanico con el boton "Dar permiso".
+enum AccionTrasPermiso { iniciarSeguimiento, abrirAjustes, nada }
+
+/// Resultado del permiso -> accion. Si sigue negado (Android deja de mostrar el dialogo tras dos
+/// negativas) solo queda mandar a los ajustes de la app. Funcion pura para poder probarla.
+AccionTrasPermiso accionTrasPedirPermiso(LocationPermission resultado) {
+  switch (resultado) {
+    case LocationPermission.whileInUse:
+    case LocationPermission.always:
+      return AccionTrasPermiso.iniciarSeguimiento;
+    case LocationPermission.denied:
+    case LocationPermission.deniedForever:
+      return AccionTrasPermiso.abrirAjustes;
+    case LocationPermission.unableToDetermine:
+      return AccionTrasPermiso.nada;
+  }
+}
+
 class PosicionService {
   PosicionService._();
+
+  /// Boton "Dar permiso": pide el permiso y, si sigue negado, abre los ajustes de la app. Devuelve
+  /// la accion tomada. Nunca lanza.
+  static Future<AccionTrasPermiso> pedirPermisoOAjustes() async {
+    try {
+      final resultado = await Geolocator.requestPermission();
+      final accion = accionTrasPedirPermiso(resultado);
+      if (accion == AccionTrasPermiso.abrirAjustes) await Geolocator.openAppSettings();
+      return accion;
+    } catch (_) {
+      return AccionTrasPermiso.nada;
+    }
+  }
 
   /// Estado actual de la ubicación del teléfono, sin pedir nada ni abrir diálogos.
   static Future<EstadoUbicacion> estadoUbicacion() async {
@@ -127,8 +158,14 @@ class PosicionService {
   /// (Android no deja arrancar un servicio de ubicacion desde segundo plano). Si ya se sigue esa OT
   /// no hace nada (salvo tomar el destino si antes no lo tenia); si se sigue otra, cambia. Con el
   /// destino ([destinoLat] y [destinoLng]) tambien detecta la llegada. Nunca lanza: sin permiso o sin
-  /// GPS no pasa nada.
-  static Future<void> iniciarSeguimiento(int ordenId, {double? destinoLat, double? destinoLng}) async {
+  /// GPS no pasa nada. Solo con [pedirPermiso] abre el dialogo de permiso; las llamadas automaticas
+  /// no lo piden (al salir al destino ya se pidio una vez).
+  static Future<void> iniciarSeguimiento(
+    int ordenId, {
+    double? destinoLat,
+    double? destinoLng,
+    bool pedirPermiso = false,
+  }) async {
     if (ordenId < 0) return;
     if (_ordenSeguida == ordenId && _suscripcion != null) {
       _detector ??= _crearDetector(destinoLat, destinoLng);
@@ -138,7 +175,7 @@ class PosicionService {
     try {
       if (!await Geolocator.isLocationServiceEnabled()) return;
       var permiso = await Geolocator.checkPermission();
-      if (permiso == LocationPermission.denied) permiso = await Geolocator.requestPermission();
+      if (permiso == LocationPermission.denied && pedirPermiso) permiso = await Geolocator.requestPermission();
       if (permiso != LocationPermission.whileInUse && permiso != LocationPermission.always) return;
 
       final LocationSettings ajustes = Platform.isAndroid

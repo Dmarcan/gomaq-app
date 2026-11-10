@@ -7,21 +7,16 @@ import 'package:sqflite/sqflite.dart';
 import '../db/local_database.dart';
 import '../models/orden_trabajo.dart';
 import '../utils/cuerpo_cierre.dart';
+import '../utils/fallo_sync.dart';
+import '../utils/pasadas_en_serie.dart';
 import '../utils/uuid.dart';
 import 'api_client.dart';
 
-/// Fallo que jamas va a resolverse reintentando (ej. el archivo local ya no existe):
-/// la tarea pasa a error de inmediato con un mensaje entendible, sin quemar reintentos.
-class ErrorPermanenteSync implements Exception {
-  final String mensaje;
-  ErrorPermanenteSync(this.mensaje);
-  @override
-  String toString() => mensaje;
-}
+export '../utils/fallo_sync.dart' show ErrorPermanenteSync;
 
 class SyncService extends ChangeNotifier {
-  bool _sincronizando = false;
-  bool get sincronizando => _sincronizando;
+  late final PasadasEnSerie _pasadas = PasadasEnSerie(pasada: _pasada, alCambiar: notifyListeners);
+  bool get sincronizando => _pasadas.enCurso;
 
   // true cuando el servidor rechazo el token (401/403): la cola queda pausada
   // sin consumir reintentos hasta que el mecanico vuelva a iniciar sesion
@@ -356,6 +351,28 @@ class SyncService extends ChangeNotifier {
     return Sqflite.firstIntValue(result) ?? 0;
   }
 
+  /// Cambios pendientes que no pueden salir porque otro cambio de la misma OT quedo en error (la
+  /// cola respeta el orden dentro de cada OT). Las lecturas de horometro sin OT (id 0) no se
+  /// frenan entre si, asi que no cuentan.
+  Future<int> contarDetrasDeErrores() async {
+    final db = await _db;
+    final result = await db.rawQuery(
+      "SELECT COUNT(*) as n FROM cola_sincronizacion WHERE estado = 'pendiente' AND orden_trabajo_id != 0 "
+      "AND orden_trabajo_id IN (SELECT orden_trabajo_id FROM cola_sincronizacion WHERE estado = 'error')",
+    );
+    return Sqflite.firstIntValue(result) ?? 0;
+  }
+
+  /// OT que el telefono ya muestra finalizadas pero cuyo cierre sigue en la cola (pendiente o en
+  /// error): para la oficina siguen abiertas.
+  Future<Set<int>> ordenesConCierreSinEnviar() async {
+    final db = await _db;
+    final filas = await db.rawQuery(
+      "SELECT DISTINCT orden_trabajo_id FROM cola_sincronizacion WHERE tipo = 'finalizar' AND estado IN ('pendiente', 'error')",
+    );
+    return filas.map((f) => f['orden_trabajo_id'] as int).toSet();
+  }
+
   Future<List<Map<String, dynamic>>> tareasEnError() async {
     final db = await _db;
     return db.query('cola_sincronizacion', where: "estado = 'error'", orderBy: 'creado_en ASC');
@@ -449,13 +466,27 @@ class SyncService extends ChangeNotifier {
 
   /// Devuelve las tareas en error al estado pendiente (con reintentos en cero)
   /// y dispara una sincronizacion inmediata.
+  /// El contador de fallos transitorios del payload tambien vuelve a cero y se borra la hora del
+  /// primero (el uuid y lo demas del payload no se tocan): si no, una tarea que llego al tope
+  /// volvia a error al primer fallo.
   Future<void> reintentarErrores() async {
     final db = await _db;
-    await db.update(
-      'cola_sincronizacion',
-      {'intentos': 0, 'estado': 'pendiente', 'ultimo_error': null},
-      where: "estado = 'error'",
-    );
+    await db.transaction((txn) async {
+      final filas = await txn.query('cola_sincronizacion', columns: ['id', 'payload'], where: "estado = 'error'");
+      for (final fila in filas) {
+        String? payloadNuevo;
+        try {
+          final payload = Map<String, dynamic>.from(jsonDecode(fila['payload'] as String) as Map);
+          if (tieneMarcasFallosTransitorios(payload)) payloadNuevo = jsonEncode(sinFallosTransitorios(payload));
+        } catch (_) {}
+        await txn.update(
+          'cola_sincronizacion',
+          {'intentos': 0, 'estado': 'pendiente', 'ultimo_error': null, 'payload': ?payloadNuevo},
+          where: 'id = ?',
+          whereArgs: [fila['id']],
+        );
+      }
+    });
     notifyListeners();
     await sincronizar();
   }
@@ -465,41 +496,38 @@ class SyncService extends ChangeNotifier {
   /// Sincronizacion rapida: envia la cola, baja las OT y el furgon. Es lo que hace falta tras cada
   /// accion del mecanico y al volver a la app. La completa agrega catalogos, flota e historial de
   /// equipos; se hace sola al abrir la app y cada pocas horas, o con `completa: true`.
-  Future<void> sincronizar({bool completa = false}) async {
-    if (_sincronizando) return;
-    _sincronizando = true;
-    notifyListeners();
-    try {
-      await _push();
-      await _pull();
-      // el pull respondio autorizado: si habia un aviso de sesion expirada, ya no aplica
-      reiniciarSesion();
-      await _pullMiFurgon();
+  ///
+  /// Si ya hay una en curso, se agenda una sola pasada mas para cuando termine (ver
+  /// PasadasEnSerie): antes la peticion se perdia.
+  Future<void> sincronizar({bool completa = false}) => _pasadas.pedir(completa: completa);
 
-      final vencida = _ultimaCompleta == null || DateTime.now().difference(_ultimaCompleta!) > _vigenciaCompleta;
-      if (completa || vencida) {
-        // cada bloque por separado: un catalogo lento o caido no debe impedir los demas ni
-        // dejar sin refrescar lo que ya se bajo
-        var todoOk = true;
-        for (final bloque in [
-          _pullCatalogoInsumos,
-          _pullCatalogoChecklist,
-          _pullMaquinarias,
-          _pullHistorialEquipos,
-        ]) {
-          try {
-            await bloque();
-          } catch (_) {
-            todoOk = false;
-          }
+  Future<void> _pasada(bool completa) async {
+    await _push();
+    await _pull();
+    // el pull respondio autorizado: si habia un aviso de sesion expirada, ya no aplica
+    reiniciarSesion();
+    await _pullMiFurgon();
+
+    final vencida = _ultimaCompleta == null || DateTime.now().difference(_ultimaCompleta!) > _vigenciaCompleta;
+    if (completa || vencida) {
+      // cada bloque por separado: un catalogo lento o caido no debe impedir los demas ni
+      // dejar sin refrescar lo que ya se bajo
+      var todoOk = true;
+      for (final bloque in [
+        _pullCatalogoInsumos,
+        _pullCatalogoChecklist,
+        _pullMaquinarias,
+        _pullHistorialEquipos,
+      ]) {
+        try {
+          await bloque();
+        } catch (_) {
+          todoOk = false;
         }
-        if (todoOk) _ultimaCompleta = DateTime.now();
       }
-      _ultimaSincronizacion = DateTime.now();
-    } finally {
-      _sincronizando = false;
-      notifyListeners();
+      if (todoOk) _ultimaCompleta = DateTime.now();
     }
+    _ultimaSincronizacion = DateTime.now();
   }
 
   Future<void> _pull() async {
@@ -541,8 +569,8 @@ class SyncService extends ChangeNotifier {
   }
 
   /// Refresca solo el furgon (stock, vehiculo y perfil). Tras cargar repuestos desde la bodega no
-  /// hace falta una sincronizacion completa, y ademas `sincronizar()` no hace nada si ya hay una
-  /// en curso, con lo que el stock podia quedar sin actualizar.
+  /// hace falta una sincronizacion completa, y ademas `sincronizar()` con otra en curso espera a
+  /// que esa termine antes de su propia pasada.
   Future<void> actualizarFurgon() async {
     await _pullMiFurgon();
     notifyListeners();
@@ -735,16 +763,19 @@ class SyncService extends ChangeNotifier {
     await batch.commit(noResult: true);
   }
 
-  // Clasificacion de errores (practica estandar de colas offline-first):
+  // Clasificacion de errores (practica estandar de colas offline-first), en utils/fallo_sync.dart:
   // - Errores de red/timeout: NO consumen reintentos (la tarea no fallo, no hubo red)
   //   y abortan el resto del push - se reintenta completo cuando vuelva la senal.
-  // - 401/403: NO consumen reintentos; pausan la cola y marcan sesionExpirada para
-  //   que la UI pida volver a iniciar sesion. El trabajo local queda intacto.
+  // - 401: NO consume reintentos; pausa la cola y marca sesionExpirada para que la UI pida
+  //   volver a iniciar sesion. El trabajo local queda intacto. 403: esa tarea a error.
+  // - 5xx, 429 y 408 (de la API o del almacenamiento de fotos): NO consumen reintentos; frenan
+  //   solo esa OT en esta pasada y se cuentan en el payload; pasan a error solo con
+  //   topeFallosTransitorios fallos y plazoFallosTransitorios desde el primero.
   // - Otros errores del servidor (rechazo real de negocio): consumen un reintento,
   //   y tras maxIntentos la tarea pasa a 'error' - visible en la UI con reintento manual.
   Future<void> _push() async {
     final db = await _db;
-    const maxIntentos = 5;
+    const maxIntentos = maxIntentosSync;
     final pendientes = await db.query(
       'cola_sincronizacion',
       where: 'estado = ? AND intentos < ?',
@@ -787,78 +818,82 @@ class SyncService extends ChangeNotifier {
           _sesionExpirada = false;
           notifyListeners();
         }
-      } on SocketException {
-        // sin red: abortar sin castigar la tarea, pero dejando el motivo visible
-        await _anotarProblema(tarea['id'] as int, 'Sin conexión con el servidor. Se reintentará al volver la señal.');
-        return;
-      } on TimeoutException {
-        await _anotarProblema(tarea['id'] as int, 'El servidor no respondió a tiempo. Se reintentará en la próxima actualización.');
-        return;
-      } on http.ClientException {
-        await _anotarProblema(tarea['id'] as int, 'No se pudo conectar con el servidor. Se reintentará en la próxima actualización.');
-        return;
-      } on ErrorPermanenteSync catch (err) {
-        // irrecuperable (ej. foto borrada del telefono): a error de inmediato,
-        // con mensaje entendible, sin quemar reintentos que no sirven
-        if (otId != 0) otsConFallo.add(otId);
-        await db.update(
-          'cola_sincronizacion',
-          {'intentos': maxIntentos, 'ultimo_error': err.mensaje, 'estado': 'error'},
-          where: 'id = ?',
-          whereArgs: [tarea['id']],
-        );
-      } on ApiException catch (err) {
-        if (err.statusCode == 401) {
-          _sesionExpirada = true;
-          notifyListeners();
-          return; // token invalido: pausar toda la cola sin consumir reintentos
-        }
-        if (err.statusCode == 403) {
-          // Sesion valida pero sin permiso sobre ESTA tarea, tipicamente porque la OT se
-          // reasigno a otro tecnico. Antes se trataba como sesion expirada y pausaba la cola
-          // entera para siempre: volver a iniciar sesion no lo arreglaba, porque la misma
-          // tarea volvia a dar 403. Ahora solo esa tarea pasa a error, con su motivo.
-          if (otId != 0) otsConFallo.add(otId);
-          await db.update(
-            'cola_sincronizacion',
-            {
-              'intentos': maxIntentos,
-              'ultimo_error': 'Sin permiso: ${err.message}. Si la orden se reasignó a otro técnico, '
-                  'avisa al administrativo.',
-              'estado': 'error',
-            },
-            where: 'id = ?',
-            whereArgs: [tarea['id']],
-          );
-          continue;
-        }
-        if (otId != 0) otsConFallo.add(otId);
-        final intentos = (tarea['intentos'] as int) + 1;
-        await db.update(
-          'cola_sincronizacion',
-          {
-            'intentos': intentos,
-            'ultimo_error': err.message,
-            'estado': intentos >= maxIntentos ? 'error' : 'pendiente',
-          },
-          where: 'id = ?',
-          whereArgs: [tarea['id']],
-        );
       } catch (err) {
-        if (otId != 0) otsConFallo.add(otId);
-        final intentos = (tarea['intentos'] as int) + 1;
-        await db.update(
-          'cola_sincronizacion',
-          {
-            'intentos': intentos,
-            'ultimo_error': err.toString(),
-            'estado': intentos >= maxIntentos ? 'error' : 'pendiente',
-          },
-          where: 'id = ?',
-          whereArgs: [tarea['id']],
-        );
+        final decision = clasificarFalloSync(err);
+        switch (decision.accion) {
+          case AccionFallo.esperarRed:
+            // sin red: abortar sin castigar la tarea, pero dejando el motivo visible
+            await _anotarProblema(tarea['id'] as int, decision.mensaje);
+            return;
+          case AccionFallo.pausarSesion:
+            _sesionExpirada = true;
+            notifyListeners();
+            return; // token invalido: pausar toda la cola sin consumir reintentos
+          case AccionFallo.aError:
+            // irrecuperable (foto borrada del telefono) o 403 (la OT se reasigno a otro tecnico:
+            // volver a iniciar sesion no lo arregla): a error de inmediato, con su motivo y sin
+            // quemar reintentos que no sirven
+            if (otId != 0) otsConFallo.add(otId);
+            await db.update(
+              'cola_sincronizacion',
+              {'intentos': maxIntentos, 'ultimo_error': decision.mensaje, 'estado': 'error'},
+              where: 'id = ?',
+              whereArgs: [tarea['id']],
+            );
+          case AccionFallo.transitorio:
+            // el servidor o el almacenamiento de fotos fallo por su lado: la tarea no tiene la
+            // culpa. Frena solo esta OT (el orden dentro de ella se respeta) y sigue con las demas.
+            if (otId != 0) otsConFallo.add(otId);
+            await _anotarFalloTransitorio(tarea['id'] as int, decision);
+          case AccionFallo.gastarIntento:
+            if (otId != 0) otsConFallo.add(otId);
+            final intentos = (tarea['intentos'] as int) + 1;
+            await db.update(
+              'cola_sincronizacion',
+              {
+                'intentos': intentos,
+                'ultimo_error': decision.mensaje,
+                'estado': intentos >= maxIntentos ? 'error' : 'pendiente',
+              },
+              where: 'id = ?',
+              whereArgs: [tarea['id']],
+            );
+        }
       }
     }
+  }
+
+  /// Cuenta un fallo transitorio en el payload de la tarea, sin tocar `intentos`. El payload se
+  /// relee de la base y no del snapshot de `_push`: mientras se ejecutaba, la tarea pudo guardar
+  /// ahi su uuid (tareas antiguas) o el path de la foto o firma ya subida, y eso no se pierde.
+  /// Con el contador se guarda la hora del primer fallo: la tarea pasa a error solo con el tope de
+  /// fallos Y el plazo cumplidos (ver contarFalloTransitorio).
+  ///
+  /// Las dos llaves viajan al servidor en las tareas que mandan el payload completo (datos_ot,
+  /// checklist y diagnostico): esas rutas leen solo sus campos y validan solo esos, asi que las
+  /// ignoran, igual que el `uuid` que ya viaja ahi.
+  Future<void> _anotarFalloTransitorio(int tareaId, DecisionFallo decision) async {
+    final db = await _db;
+    final filas = await db.query('cola_sincronizacion', columns: ['payload'], where: 'id = ?', whereArgs: [tareaId]);
+    if (filas.isEmpty) return;
+    Map<String, dynamic> payload;
+    try {
+      payload = Map<String, dynamic>.from(jsonDecode(filas.first['payload'] as String) as Map);
+    } catch (_) {
+      await _anotarProblema(tareaId, decision.mensaje);
+      return;
+    }
+    final conteo = contarFalloTransitorio(payload);
+    await db.update(
+      'cola_sincronizacion',
+      {
+        'payload': jsonEncode(conteo.payload),
+        'ultimo_error': conteo.aError ? (decision.mensajeAlAgotar ?? decision.mensaje) : decision.mensaje,
+        if (conteo.aError) ...{'estado': 'error', 'intentos': maxIntentosSync},
+      },
+      where: 'id = ?',
+      whereArgs: [tareaId],
+    );
   }
 
   Future<void> _ejecutarTarea(Map<String, dynamic> tarea, [Map<int, int>? remapeo]) async {
@@ -927,10 +962,7 @@ class SyncService extends ChangeNotifier {
       // bloquear el cierre para siempre por un PNG borrado seria peor para el negocio
       if (await archivo.exists()) {
         final nombreArchivo = rutaFirma.split(Platform.pathSeparator).last;
-        final solicitud = await ApiClient.instance.post(
-          '/api/ordenes-trabajo/$ordenId/evidencia/solicitar-upload',
-          {'nombre_archivo': nombreArchivo, 'carpeta': 'firmas'},
-        );
+        final solicitud = await _solicitarSubida(ordenId, {'nombre_archivo': nombreArchivo, 'carpeta': 'firmas'});
         final resp = await http
             .put(
               Uri.parse(solicitud['signedUrl'] as String),
@@ -939,7 +971,7 @@ class SyncService extends ChangeNotifier {
             )
             .timeout(const Duration(seconds: 20));
         if (resp.statusCode >= 300) {
-          throw Exception('Fallo la subida de la firma a Supabase Storage: ${resp.statusCode}');
+          throw ErrorSubidaArchivo(resp.statusCode);
         }
         firmaPath = solicitud['path'] as String;
         payload['firma_path'] = firmaPath;
@@ -959,6 +991,19 @@ class SyncService extends ChangeNotifier {
     );
   }
 
+  /// Pide la URL firmada para subir una foto o firma. Si el servidor responde que el
+  /// almacenamiento no esta disponible (5xx, 429, 408), el fallo se informa como de la subida de
+  /// fotos, para que el mecanico vea un motivo que entienda. Los rechazos (403, 409...) siguen
+  /// saliendo como ApiException y se tratan igual que antes.
+  Future<dynamic> _solicitarSubida(int ordenId, Map<String, dynamic> cuerpo) async {
+    try {
+      return await ApiClient.instance.post('/api/ordenes-trabajo/$ordenId/evidencia/solicitar-upload', cuerpo);
+    } on ApiException catch (err) {
+      if (esCodigoTransitorio(err.statusCode)) throw ErrorSubidaArchivo(err.statusCode);
+      rethrow;
+    }
+  }
+
   /// Sube la foto a Supabase y la registra en la OT.
   ///
   /// Idempotente ante reintentos, igual que la firma: el path de la foto ya subida se guarda en
@@ -975,10 +1020,7 @@ class SyncService extends ChangeNotifier {
       }
       final nombreArchivo = rutaLocal.split(Platform.pathSeparator).last;
 
-      final solicitud = await ApiClient.instance.post(
-        '/api/ordenes-trabajo/$ordenId/evidencia/solicitar-upload',
-        {'nombre_archivo': nombreArchivo},
-      );
+      final solicitud = await _solicitarSubida(ordenId, {'nombre_archivo': nombreArchivo});
 
       final signedUrl = solicitud['signedUrl'] as String;
       final resp = await http
@@ -989,7 +1031,7 @@ class SyncService extends ChangeNotifier {
           )
           .timeout(const Duration(seconds: 20));
       if (resp.statusCode >= 300) {
-        throw Exception('Fallo la subida a Supabase Storage: ${resp.statusCode}');
+        throw ErrorSubidaArchivo(resp.statusCode);
       }
 
       pathSubido = solicitud['path'] as String;
