@@ -499,7 +499,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
                       runSpacing: 6,
                       crossAxisAlignment: WrapCrossAlignment.center,
                       children: [
-                        Text('${m['codigo']}', style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w700)),
+                        Text('${m['codigo']}', style: const TextStyle(fontFamily: 'Barlow', fontSize: 26, fontWeight: FontWeight.w700)),
                         EstadoEquipo(estado: m['estado'], grande: true),
                       ],
                     ),

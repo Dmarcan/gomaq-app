@@ -121,6 +121,27 @@ WidgetStateProperty<BorderSide?> _bordeFoco(Color color, {BorderSide? normal}) =
       (estados) => estados.contains(WidgetState.focused) ? BorderSide(color: color, width: 2.5) : normal,
     );
 
+/// Inter para el texto corrido (con cifras tabulares, para que las columnas de montos y horómetros
+/// queden alineadas) y Barlow para títulos. Los archivos van dentro de la app (assets/fonts).
+TextTheme _textoGomaq(TextTheme base) {
+  const tabulares = [FontFeature.tabularFigures()];
+  TextStyle? titulo(TextStyle? s) => s?.copyWith(fontFamily: 'Barlow', fontWeight: FontWeight.w600, letterSpacing: 0.2);
+  TextStyle? cuerpo(TextStyle? s) => s?.copyWith(fontFeatures: tabulares);
+  final conInter = base.apply(fontFamily: 'Inter');
+  return conInter.copyWith(
+    displayLarge: titulo(conInter.displayLarge),
+    displayMedium: titulo(conInter.displayMedium),
+    displaySmall: titulo(conInter.displaySmall),
+    headlineLarge: titulo(conInter.headlineLarge),
+    headlineMedium: titulo(conInter.headlineMedium),
+    headlineSmall: titulo(conInter.headlineSmall),
+    titleLarge: titulo(conInter.titleLarge),
+    bodyLarge: cuerpo(conInter.bodyLarge),
+    bodyMedium: cuerpo(conInter.bodyMedium),
+    bodySmall: cuerpo(conInter.bodySmall),
+  );
+}
+
 ThemeData construirTemaGomaq() {
   final colorScheme = ColorScheme.fromSeed(
     seedColor: GomaqColors.primario,
@@ -128,10 +149,17 @@ ThemeData construirTemaGomaq() {
     // que ser el naranja de acción, que sí cumple contraste sobre blanco
     primary: GomaqColors.accion,
     brightness: Brightness.light,
+  ).copyWith(
+    // chips, botones segmentados y barras de navegación se tiñen con estos: sin esto salían en el
+    // tono que Material deriva de la semilla, no en uno de la marca
+    secondaryContainer: const Color(0xFFFFE6D8),
+    onSecondaryContainer: const Color(0xFF3D1A0A),
+    surfaceTint: Colors.transparent,
   );
 
-  return ThemeData(
+  final base = ThemeData(
     useMaterial3: true,
+    fontFamily: 'Inter',
     colorScheme: colorScheme,
     scaffoldBackgroundColor: Colors.white,
     focusColor: GomaqColors.accion.withValues(alpha: 0.18),
@@ -188,4 +216,5 @@ ThemeData construirTemaGomaq() {
       side: BorderSide.none,
     ),
   );
+  return base.copyWith(textTheme: _textoGomaq(base.textTheme));
 }

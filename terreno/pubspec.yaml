@@ -75,6 +75,27 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # Tipografía de GOMAQ (licencia OFL, ver assets/fonts/OFL-*.txt): Inter para el texto y las cifras de
+  # las tablas, Barlow para títulos y cifras grandes. Van dentro de la app: terreno trabaja sin conexión.
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.ttf
+          weight: 700
+    - family: Barlow
+      fonts:
+        - asset: assets/fonts/Barlow-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Barlow-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Barlow-Bold.ttf
+          weight: 700
+
   assets:
     - assets/logo_gomaq_sobre_oscuro.png
     - assets/logo_gomaq_sobre_claro.png

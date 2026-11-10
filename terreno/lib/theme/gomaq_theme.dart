@@ -87,16 +87,44 @@ class GomaqColors {
   }
 }
 
+/// Inter para el texto corrido (con cifras tabulares, para alinear horómetros y cantidades) y Barlow
+/// para títulos. Los archivos van dentro de la app (assets/fonts): la app trabaja sin conexión.
+TextTheme _textoGomaq(TextTheme base) {
+  const tabulares = [FontFeature.tabularFigures()];
+  TextStyle? titulo(TextStyle? s) => s?.copyWith(fontFamily: 'Barlow', fontWeight: FontWeight.w600, letterSpacing: 0.2);
+  TextStyle? cuerpo(TextStyle? s) => s?.copyWith(fontFeatures: tabulares);
+  final conInter = base.apply(fontFamily: 'Inter');
+  return conInter.copyWith(
+    displayLarge: titulo(conInter.displayLarge),
+    displayMedium: titulo(conInter.displayMedium),
+    displaySmall: titulo(conInter.displaySmall),
+    headlineLarge: titulo(conInter.headlineLarge),
+    headlineMedium: titulo(conInter.headlineMedium),
+    headlineSmall: titulo(conInter.headlineSmall),
+    titleLarge: titulo(conInter.titleLarge),
+    bodyLarge: cuerpo(conInter.bodyLarge),
+    bodyMedium: cuerpo(conInter.bodyMedium),
+    bodySmall: cuerpo(conInter.bodySmall),
+  );
+}
+
 ThemeData construirTemaGomaq() {
   final colorScheme = ColorScheme.fromSeed(
     seedColor: GomaqColors.primario,
     primary: GomaqColors.primario,
     brightness: Brightness.dark,
     surface: GomaqColors.fondoOscuro,
+  ).copyWith(
+    // chips y controles segmentados salían en el tono que Material deriva de la semilla; aquí van
+    // en el marrón oscuro de la marca
+    secondaryContainer: const Color(0xFF3D2318),
+    onSecondaryContainer: const Color(0xFFFFE6D8),
+    surfaceTint: Colors.transparent,
   );
 
-  return ThemeData(
+  final base = ThemeData(
     useMaterial3: true,
+    fontFamily: 'Inter',
     colorScheme: colorScheme,
     scaffoldBackgroundColor: GomaqColors.fondoOscuro,
     appBarTheme: const AppBarTheme(
@@ -108,7 +136,8 @@ ThemeData construirTemaGomaq() {
       titleTextStyle: TextStyle(
         color: GomaqColors.textoPrimario,
         fontSize: 18,
-        fontWeight: FontWeight.bold,
+        fontWeight: FontWeight.w600,
+        fontFamily: 'Barlow',
         letterSpacing: 0.5,
       ),
     ),
@@ -178,4 +207,5 @@ ThemeData construirTemaGomaq() {
       iconColor: GomaqColors.textoSecundario,
     ),
   );
+  return base.copyWith(textTheme: _textoGomaq(base.textTheme));
 }

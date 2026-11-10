@@ -117,7 +117,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(numero, style: TextStyle(fontSize: 26, fontWeight: FontWeight.bold, color: colorTexto ?? color)),
+          Text(numero, style: TextStyle(fontFamily: 'Barlow', fontSize: 26, fontWeight: FontWeight.bold, color: colorTexto ?? color)),
           const SizedBox(height: 4),
           Text(etiqueta, style: const TextStyle(fontSize: 12, color: Colors.black54)),
         ],

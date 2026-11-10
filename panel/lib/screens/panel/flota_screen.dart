@@ -464,7 +464,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('${n ?? '-'}', style: TextStyle(fontSize: 24, fontWeight: FontWeight.w700, color: colorNumero)),
+                Text('${n ?? '-'}', style: TextStyle(fontFamily: 'Barlow', fontSize: 24, fontWeight: FontWeight.w700, color: colorNumero)),
                 Text(etiqueta, style: const TextStyle(fontSize: 12, color: Colors.black54)),
               ],
             ),
