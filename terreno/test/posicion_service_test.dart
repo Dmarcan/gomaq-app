@@ -8,6 +8,12 @@ void main() {
     expect(PosicionService.ordenSeguida, isNull);
   });
 
+  test('detener el seguimiento limpia el aviso de llegada', () async {
+    PosicionService.llegada.value = 7;
+    await PosicionService.detenerSeguimiento();
+    expect(PosicionService.llegada.value, isNull);
+  });
+
   test('una orden aun no sincronizada (id negativo) no inicia seguimiento', () async {
     await PosicionService.iniciarSeguimiento(-3);
     expect(PosicionService.ordenSeguida, isNull);

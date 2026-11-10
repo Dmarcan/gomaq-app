@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:io' show Platform;
 
+import 'package:flutter/foundation.dart' show ValueNotifier;
 import 'package:geolocator/geolocator.dart';
+import '../utils/envio_posicion.dart';
 import '../utils/navegacion.dart';
 import 'api_client.dart';
 
@@ -104,9 +106,6 @@ class PosicionService {
 
   // ---- seguimiento en segundo plano ----
 
-  /// Cada cuanto se envia como maximo la posicion durante el viaje.
-  static const _entreEnvios = Duration(seconds: 60);
-
   /// Tope de seguridad: si por algun motivo nadie detiene el seguimiento, se apaga solo.
   static const _duracionMaxima = Duration(hours: 6);
 
@@ -114,16 +113,27 @@ class PosicionService {
   static Timer? _topeTimer;
   static int? _ordenSeguida;
   static DateTime? _ultimoEnvio;
+  static ({double lat, double lng})? _ultimaEnviada;
+  static DetectorLlegada? _detector;
+
+  /// Id de la OT cuyo destino el mecanico ya alcanzo (se detecta en el telefono, con el destino de su
+  /// propia OT: no se envia nada). Solo avisa; no cambia el estado de la OT. Una vez por OT.
+  static final ValueNotifier<int?> llegada = ValueNotifier<int?>(null);
 
   /// Id de la OT que se esta siguiendo, o null.
   static int? get ordenSeguida => _ordenSeguida;
 
   /// Empieza a enviar la posicion de [ordenId] mientras va en camino. Llamarlo con la app visible
   /// (Android no deja arrancar un servicio de ubicacion desde segundo plano). Si ya se sigue esa OT
-  /// no hace nada; si se sigue otra, cambia. Nunca lanza: sin permiso o sin GPS no pasa nada.
-  static Future<void> iniciarSeguimiento(int ordenId) async {
+  /// no hace nada (salvo tomar el destino si antes no lo tenia); si se sigue otra, cambia. Con el
+  /// destino ([destinoLat] y [destinoLng]) tambien detecta la llegada. Nunca lanza: sin permiso o sin
+  /// GPS no pasa nada.
+  static Future<void> iniciarSeguimiento(int ordenId, {double? destinoLat, double? destinoLng}) async {
     if (ordenId < 0) return;
-    if (_ordenSeguida == ordenId && _suscripcion != null) return;
+    if (_ordenSeguida == ordenId && _suscripcion != null) {
+      _detector ??= _crearDetector(destinoLat, destinoLng);
+      return;
+    }
     await detenerSeguimiento();
     try {
       if (!await Geolocator.isLocationServiceEnabled()) return;
@@ -134,8 +144,10 @@ class PosicionService {
       final LocationSettings ajustes = Platform.isAndroid
           ? AndroidSettings(
               accuracy: LocationAccuracy.high,
-              distanceFilter: 25,
-              intervalDuration: _entreEnvios,
+              // sin filtro de distancia: llega una posicion por intervalo aunque este quieto, y la
+              // regla de envio (utils/envio_posicion.dart) decide cuando mandarla (latido cada 5 min)
+              distanceFilter: 0,
+              intervalDuration: entreEnvios,
               foregroundNotificationConfig: const ForegroundNotificationConfig(
                 notificationTitle: 'GOMAQ: en camino',
                 notificationText: 'Enviando tu ubicacion mientras vas al destino.',
@@ -147,6 +159,7 @@ class PosicionService {
           : const LocationSettings(accuracy: LocationAccuracy.high, distanceFilter: 25);
 
       _ordenSeguida = ordenId;
+      _detector = _crearDetector(destinoLat, destinoLng);
       _suscripcion = Geolocator.getPositionStream(locationSettings: ajustes).listen(
         (p) => _alLlegarPosicion(ordenId, p),
         onError: (_) {},
@@ -158,6 +171,13 @@ class PosicionService {
     }
   }
 
+  /// Detector de llegada solo si el destino es una coordenada usable (una OT que ya estaba en el
+  /// telefono antes de guardar el destino no lo tiene: simplemente no hay aviso).
+  static DetectorLlegada? _crearDetector(double? lat, double? lng) {
+    if (lat == null || lng == null || !coordenadaValida(lat, lng)) return null;
+    return DetectorLlegada(destinoLat: lat, destinoLng: lng);
+  }
+
   /// Apaga el servicio y la notificacion. Seguro de llamar aunque no haya nada corriendo.
   static Future<void> detenerSeguimiento() async {
     _topeTimer?.cancel();
@@ -166,6 +186,9 @@ class PosicionService {
     _suscripcion = null;
     _ordenSeguida = null;
     _ultimoEnvio = null;
+    _ultimaEnviada = null;
+    _detector = null;
+    llegada.value = null;
     try {
       await s?.cancel();
     } catch (_) {}
@@ -173,9 +196,24 @@ class PosicionService {
 
   static Future<void> _alLlegarPosicion(int ordenId, Position p) async {
     final ahora = DateTime.now();
-    final ultimo = _ultimoEnvio;
-    if (ultimo != null && ahora.difference(ultimo) < _entreEnvios) return;
+    // la llegada se evalua con cada posicion que entrega el telefono, se envie o no
+    final detector = _detector;
+    if (detector != null && _ordenSeguida == ordenId) {
+      if (detector.evaluar(lat: p.latitude, lng: p.longitude, precisionM: p.accuracy, ahora: ahora)) {
+        llegada.value = ordenId;
+      }
+    }
+    if (!debeEnviarPosicion(
+      ultimoEnvio: _ultimoEnvio,
+      ultimaEnviada: _ultimaEnviada,
+      lat: p.latitude,
+      lng: p.longitude,
+      ahora: ahora,
+    )) {
+      return;
+    }
     _ultimoEnvio = ahora;
+    _ultimaEnviada = (lat: p.latitude, lng: p.longitude);
     final cuerpo = cuerpoPosicion(
       latitud: p.latitude,
       longitud: p.longitude,

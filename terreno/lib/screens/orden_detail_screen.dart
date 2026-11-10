@@ -94,8 +94,18 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
     // la cantidad parte en 1: lo comun es poner una unidad
     _cantidadInsumoCtrl.text = '1';
     _sincronizador.addListener(_alCambiarSync);
+    PosicionService.llegada.addListener(_alDetectarLlegada);
     _actualizarEstadoSync();
     _cargar();
+  }
+
+  /// El telefono detecto que llego al destino (con el destino de esta misma OT): se avisa una vez.
+  /// No cambia el estado: la tarjeta de abajo deja confirmarlo con un toque.
+  void _alDetectarLlegada() {
+    if (!mounted || PosicionService.llegada.value != _id || _orden?.estado != 'en_camino') return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Parece que llegaste al destino. Confirma abajo para iniciar el trabajo.')),
+    );
   }
 
   void _alCambiarSync() {
@@ -129,7 +139,8 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
   /// Aqui la app esta a la vista, que es cuando Android deja arrancarlo.
   void _sincronizarEnvioPosicion() {
     if (_orden?.estado == 'en_camino') {
-      PosicionService.iniciarSeguimiento(_id).then((_) => _refrescarEstadoUbicacion());
+      PosicionService.iniciarSeguimiento(_id, destinoLat: _orden?.destinoLat, destinoLng: _orden?.destinoLng)
+          .then((_) => _refrescarEstadoUbicacion());
     } else if (PosicionService.ordenSeguida == _id) {
       PosicionService.detenerSeguimiento();
     }
@@ -144,6 +155,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    PosicionService.llegada.removeListener(_alDetectarLlegada);
     _sincronizador.removeListener(_alCambiarSync);
     _diagnosticoCtrl.dispose();
     _observacionFinalCtrl.dispose();
@@ -318,6 +330,61 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
     }
   }
 
+  /// "Parece que llegaste": la detecta el telefono cerca del destino. Solo avisa; el mecanico confirma
+  /// con LLEGUE o la descarta (no vuelve a aparecer para esta OT). El estado no cambia solo.
+  Widget _tarjetaLlegada(OrdenTrabajo orden) {
+    return ValueListenableBuilder<int?>(
+      valueListenable: PosicionService.llegada,
+      builder: (context, id, _) {
+        if (id != _id || orden.estado != 'en_camino') return const SizedBox.shrink();
+        return Semantics(
+          liveRegion: true,
+          child: Card(
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: const BorderSide(color: GomaqColors.estadoPositivo, width: 2),
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: const [
+                      Icon(Icons.flag_circle_outlined, size: 20, color: GomaqColors.estadoPositivo),
+                      SizedBox(width: 6),
+                      Expanded(child: Text('Parece que llegaste', style: TextStyle(fontWeight: FontWeight.bold))),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  const Text(
+                    'Estás cerca del destino. Si ya estás en el lugar, confirma para iniciar el trabajo.',
+                    style: TextStyle(color: GomaqColors.textoSecundario, fontSize: 13),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 8,
+                    children: [
+                      FilledButton.icon(
+                        onPressed: _iniciarTrabajo,
+                        icon: const Icon(Icons.play_circle_outline),
+                        label: const Text('Llegué · Iniciar trabajo'),
+                      ),
+                      TextButton(
+                        onPressed: () => PosicionService.llegada.value = null,
+                        child: const Text('Todavía no'),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
   /// Tarjeta "Como llegar" con la ubicacion que el cliente marco al registrarse. Sin ella no se muestra
   /// un boton que no lleva a ninguna parte: se avisa que hay que pedir la direccion a la oficina.
   Widget _tarjetaComoLlegar(OrdenTrabajo orden) {
@@ -449,7 +516,11 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
               onPressed: () async {
                 if (estado == EstadoUbicacion.permisoDenegado) {
                   // todavía se puede pedir con el diálogo normal de Android, sin ir a Ajustes
-                  await PosicionService.iniciarSeguimiento(_id);
+                  await PosicionService.iniciarSeguimiento(
+                    _id,
+                    destinoLat: _orden?.destinoLat,
+                    destinoLng: _orden?.destinoLng,
+                  );
                 } else {
                   await PosicionService.abrirAjustes(estado);
                 }
@@ -1472,6 +1543,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
           _cabecera(orden),
 
           // ya aceptado el trabajo y hasta llegar: la ruta al cliente
+          if (orden.estado == 'en_camino') _tarjetaLlegada(orden),
           if (orden.estado == 'aceptada' || orden.estado == 'en_camino') _tarjetaComoLlegar(orden),
 
           // Flujo guiado: antes de iniciar solo se documenta el estado inicial;
