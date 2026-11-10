@@ -139,18 +139,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             padding: const EdgeInsets.fromLTRB(20, 28, 20, 20),
             child: Row(
               children: [
-                Container(
-                  width: 36,
-                  height: 36,
-                  decoration: BoxDecoration(
-                    color: GomaqColors.primario,
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: const Icon(Icons.business, color: Colors.white, size: 20),
-                ),
+                Image.asset('assets/logo_gomaq_sobre_oscuro.png', width: 96, semanticLabel: 'GOMAQ'),
                 const SizedBox(width: 10),
-                const Text('GOMAQ Panel',
-                    style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 16)),
+                const Text('Panel',
+                    style: TextStyle(color: Colors.white70, fontWeight: FontWeight.w500, fontSize: 14)),
               ],
             ),
           ),

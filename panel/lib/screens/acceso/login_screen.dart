@@ -63,14 +63,8 @@ class _LoginScreenState extends State<LoginScreen> {
                   child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Container(
-                    width: 64,
-                    height: 64,
-                    decoration: BoxDecoration(color: GomaqColors.primario, borderRadius: BorderRadius.circular(14)),
-                    child: const Icon(Icons.business, color: Colors.white, size: 32),
-                  ),
-                  const SizedBox(height: 12),
-                  const Text('GOMAQ', style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
+                  Image.asset('assets/logo_gomaq_sobre_claro.png', width: 200, semanticLabel: 'GOMAQ'),
+                  const SizedBox(height: 16),
                   Text('Ingreso para clientes y personal de GOMAQ', textAlign: TextAlign.center, style: TextStyle(fontSize: 14, color: Colors.grey.shade700)),
                   const SizedBox(height: 32),
                   if (context.watch<AuthService>().mensajeSesion != null)

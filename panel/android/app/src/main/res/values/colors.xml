@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Naranja del logo de GOMAQ: fondo del icono -->
+    <color name="ic_launcher_fondo">#F58634</color>
+</resources>
