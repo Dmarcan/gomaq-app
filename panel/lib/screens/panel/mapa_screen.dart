@@ -95,6 +95,8 @@ class _MapaScreenState extends State<MapaScreen> {
   bool _mostrarFurgones = true;
   final _busqueda = TextEditingController();
   final _mapaCtrl = MapController();
+  // zoom actual del mapa: decide qué iconos cercanos se juntan en uno
+  double _zoom = 10;
   String _consulta = '';
   // hora de la última carga lograda: si el refresco automático falla, la persona lo nota por la edad
   DateTime? _cargadoAt;
@@ -144,7 +146,7 @@ class _MapaScreenState extends State<MapaScreen> {
     if (!widget.conMapa || datos == null) return;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
-      final puntos = _marcadores(filtrarDatos(datos, _consulta)).map((m) => m.point).toList();
+      final puntos = _marcadores(filtrarDatos(datos, _consulta), agrupar: false).map((m) => m.point).toList();
       if (puntos.isEmpty) return;
       try {
         _mapaCtrl.fitCamera(CameraFit.coordinates(coordinates: puntos, padding: const EdgeInsets.all(56), maxZoom: 15));
@@ -403,7 +405,8 @@ class _MapaScreenState extends State<MapaScreen> {
         child: Text('${marcadores.length} iconos en el mapa'),
       );
     }
-    final puntos = marcadores.map((m) => m.point).toList();
+    // el encuadre inicial usa todos los puntos, no los iconos ya juntados
+    final puntos = _marcadores(d, agrupar: false).map((m) => m.point).toList();
     return Semantics(
       container: true,
       label: 'Mapa con ${marcadores.length} iconos. Cada icono es un botón que abre su ficha.',
@@ -417,6 +420,8 @@ class _MapaScreenState extends State<MapaScreen> {
             initialCameraFit: puntos.isEmpty
                 ? null
                 : CameraFit.coordinates(coordinates: puntos, padding: const EdgeInsets.all(56), maxZoom: 15),
+            onMapReady: _alCambiarZoom,
+            onPositionChanged: (_, _) => _alCambiarZoom(),
           ),
           children: [
             widget.capaImagenes(),
@@ -466,11 +471,52 @@ class _MapaScreenState extends State<MapaScreen> {
     );
   }
 
-  List<Marker> _marcadores(DatosMapa d) {
+  /// Lee el zoom del mapa y, si cambió lo bastante, rehace los iconos (se juntan o se separan).
+  void _alCambiarZoom() {
+    if (!mounted) return;
+    final zoom = _mapaCtrl.camera.zoom;
+    if ((zoom - _zoom).abs() < 0.25) return;
+    // fuera del ciclo de dibujo: el mapa avisa también mientras se arma
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _zoom = zoom);
+    });
+  }
+
+  /// Acerca el mapa a un conjunto de puntos (al tocar un icono de "N equipos cercanos").
+  void _acercarA(List<List<EquipoMapa>> grupos) {
+    final puntos = [for (final g in grupos) LatLng(g.first.ubicacion!.latitud, g.first.ubicacion!.longitud)];
+    try {
+      _mapaCtrl.fitCamera(CameraFit.coordinates(coordinates: puntos, padding: const EdgeInsets.all(72), maxZoom: 18));
+    } catch (_) {}
+  }
+
+  List<Marker> _marcadores(DatosMapa d, {bool agrupar = true}) {
     final ahora = DateTime.now();
     final marcas = <Marker>[];
     if (_mostrarArrendados) {
-      for (final grupo in agruparPorPunto(d.equipos.where((e) => e.arrendado).toList())) {
+      final grupos = agruparPorPunto(d.equipos.where((e) => e.arrendado).toList());
+      final cumulos = agrupar
+          ? agruparCercanos(grupos, _zoom, fijo: _equipoSeleccionado)
+          : [for (final g in grupos) [g]];
+      for (final cumulo in cumulos) {
+        if (cumulo.length > 1) {
+          // varios puntos que a este zoom se tocarían: un solo icono que al tocarlo acerca el mapa
+          final centro = centroGrupos(cumulo);
+          final total = cumulo.fold<int>(0, (n, g) => n + g.length);
+          marcas.add(
+            _marcador(
+              LatLng(centro.latitud, centro.longitud),
+              GomaqColors.primario,
+              Icons.construction,
+              total,
+              '$total equipos arrendados cercanos, toca para acercar el mapa',
+              () => _acercarA(cumulo),
+              clave: 'cumulo:${cumulo.map((g) => g.first.id).join(',')}',
+            ),
+          );
+          continue;
+        }
+        final grupo = cumulo.first;
         final u = grupo.first.ubicacion!;
         marcas.add(
           _marcador(

@@ -209,6 +209,83 @@ List<List<EquipoMapa>> agruparPorPunto(List<EquipoMapa> equipos) {
   return grupos.values.toList();
 }
 
+/// Posición de un punto en píxeles del mapa del mundo (Web Mercator) a un zoom dado.
+({double x, double y}) _pixelesMundo(Coordenada c, double zoom) {
+  final escala = 256 * math.pow(2, zoom);
+  final x = (c.longitud + 180) / 360 * escala;
+  final sen = math.sin(c.latitud.clamp(-85.05, 85.05) * math.pi / 180);
+  final y = (0.5 - math.log((1 + sen) / (1 - sen)) / (4 * math.pi)) * escala;
+  return (x: x, y: y);
+}
+
+/// Junta los puntos que a este zoom quedarían a menos de [pixeles] unos de otros (se tocarían en
+/// pantalla). Cada resultado es una lista de grupos: con uno solo se dibuja el icono de siempre, con
+/// varios, un icono de "N equipos cercanos". Los grupos que [fijo] marca (el seleccionado) nunca se
+/// funden: no deben desaparecer bajo otro icono. Es determinista: no depende del orden de entrada.
+List<List<List<EquipoMapa>>> agruparCercanos(
+  List<List<EquipoMapa>> grupos,
+  double zoom, {
+  double pixeles = 44,
+  bool Function(List<EquipoMapa> grupo)? fijo,
+}) {
+  final ordenados = [...grupos]
+    ..sort((a, b) {
+      final ua = a.first.ubicacion!;
+      final ub = b.first.ubicacion!;
+      final c = ua.latitud.compareTo(ub.latitud);
+      return c != 0 ? c : ua.longitud.compareTo(ub.longitud);
+    });
+  final cumulos = <_Cumulo>[];
+  for (final g in ordenados) {
+    final p = _pixelesMundo(g.first.ubicacion!, zoom);
+    final esFijo = fijo != null && fijo(g);
+    _Cumulo? destino;
+    if (!esFijo) {
+      for (final c in cumulos) {
+        if (c.fijo) continue;
+        final dx = c.x - p.x;
+        final dy = c.y - p.y;
+        if (math.sqrt(dx * dx + dy * dy) <= pixeles) {
+          destino = c;
+          break;
+        }
+      }
+    }
+    if (destino == null) {
+      cumulos.add(_Cumulo(p.x, p.y, esFijo)..grupos.add(g));
+    } else {
+      destino.agregar(g, p.x, p.y);
+    }
+  }
+  return [for (final c in cumulos) c.grupos];
+}
+
+class _Cumulo {
+  double x;
+  double y;
+  final bool fijo;
+  final List<List<EquipoMapa>> grupos = [];
+  _Cumulo(this.x, this.y, this.fijo);
+
+  void agregar(List<EquipoMapa> g, double gx, double gy) {
+    final n = grupos.length;
+    x = (x * n + gx) / (n + 1);
+    y = (y * n + gy) / (n + 1);
+    grupos.add(g);
+  }
+}
+
+/// Centro de un conjunto de grupos (promedio de sus puntos).
+Coordenada centroGrupos(List<List<EquipoMapa>> grupos) {
+  var lat = 0.0;
+  var lng = 0.0;
+  for (final g in grupos) {
+    lat += g.first.ubicacion!.latitud;
+    lng += g.first.ubicacion!.longitud;
+  }
+  return Coordenada(lat / grupos.length, lng / grupos.length);
+}
+
 /// "hace 3 min" desde [desde] hasta [ahora]. Menos de un minuto: "hace un momento".
 String haceCuanto(DateTime desde, DateTime ahora) {
   final d = ahora.difference(desde);
