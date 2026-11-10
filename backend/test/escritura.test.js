@@ -73,6 +73,7 @@ before(async () => {
     app.use('/api/usuarios', require('../src/routes/usuarios'));
     app.use('/api/auth', require('../src/routes/auth'));
     app.use('/api/rentabilidad', require('../src/routes/rentabilidad'));
+    app.use('/api/clientes', require('../src/routes/clientes'));
     app.use('/api/maquinarias', require('../src/routes/maquinarias'));
     app.use('/api/maquinarias', require('../src/routes/guias'));
     // la subida de la factura no toca Supabase de verdad: se anotan los archivos que se suben y borran
@@ -824,6 +825,40 @@ describe('cliente de la orden de trabajo', () => {
         if (!requiereBase(t)) return;
         const r = await pedir('POST', '/api/ordenes-trabajo', 'administrativo', { motivo: 'prueba' });
         assert.equal(r.status, 400);
+    });
+});
+
+describe('ficha del cliente', () => {
+    test('edita correo y telefono sin tocar la cuenta de portal, y valida lo que llega', async (t) => {
+        if (!requiereBase(t)) return;
+        const nombre = `Ficha ${crypto.randomUUID().slice(0, 6)}`;
+        const id = (await pool.query("INSERT INTO clientes (nombre) VALUES ($1) RETURNING id", [nombre])).rows[0].id;
+        const cuenta = (await pool.query(
+            `INSERT INTO usuarios (nombre, email, password_hash, rol, cliente_id)
+             VALUES ('Cuenta ficha', $1, 'x', 'cliente', $2) RETURNING id, email`,
+            [`ficha-${crypto.randomUUID().slice(0, 6)}@portal.test`, id]
+        )).rows[0];
+        const ok = await pedir('PATCH', `/api/clientes/${id}`, 'administrativo', { email: ' Contacto@Empresa.CL ', telefono: '+56 9 1111 2222' });
+        assert.equal(ok.status, 200);
+        assert.equal(ok.body.email, 'contacto@empresa.cl');
+        assert.equal(ok.body.telefono, '+56 9 1111 2222');
+        assert.equal(ok.body.nombre, nombre, 'lo que no viene no cambia');
+        const despues = (await pool.query('SELECT email FROM usuarios WHERE id = $1', [cuenta.id])).rows[0];
+        assert.equal(despues.email, cuenta.email, 'el correo de inicio de sesion no cambia');
+        // vaciar el correo lo deja en null
+        const vacio = await pedir('PATCH', `/api/clientes/${id}`, 'administrativo', { email: '' });
+        assert.equal(vacio.status, 200);
+        assert.equal(vacio.body.email, null);
+        // invalidos
+        for (const cuerpo of [{ email: 'no-es-correo' }, { nombre: '' }, { rut: '1-1' }, {}]) {
+            assert.equal((await pedir('PATCH', `/api/clientes/${id}`, 'administrativo', cuerpo)).status, 400, JSON.stringify(cuerpo));
+        }
+        assert.equal((await pedir('PATCH', '/api/clientes/999999999', 'administrativo', { telefono: '1' })).status, 404);
+        assert.equal((await pedir('PATCH', `/api/clientes/${id}`, 'mecanico', { telefono: '1' })).status, 403);
+        assert.equal((await pedir('PATCH', `/api/clientes/${id}`, 'cliente', { telefono: '1' })).status, 403);
+        // el listado indica si el cliente tiene cuenta de portal
+        const lista = await pedir('GET', '/api/clientes', 'administrativo');
+        assert.equal(lista.body.find((c) => c.id === id).tiene_cuenta, true);
     });
 });
 

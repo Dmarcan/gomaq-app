@@ -128,6 +128,100 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
     }
   }
 
+  /// Edita la ficha de un cliente existente. El correo de aquí es el de los avisos y las facturas: no es el
+  /// correo con que la persona inicia sesión en el portal, que no se toca.
+  Future<void> _editarCliente(Map<String, dynamic> c) async {
+    final nombreCtrl = TextEditingController(text: c['nombre']?.toString() ?? '');
+    final rutCtrl = TextEditingController(text: c['rut']?.toString() ?? '');
+    final emailCtrl = TextEditingController(text: c['email']?.toString() ?? '');
+    final telefonoCtrl = TextEditingController(text: c['telefono']?.toString() ?? '');
+    final direccionCtrl = TextEditingController(text: c['direccion']?.toString() ?? '');
+    // vacío se envía como cadena vacía: el servidor lo guarda como "sin dato"
+    String texto(TextEditingController x) => x.text.trim();
+    final tieneCuenta = c['tiene_cuenta'] == true;
+
+    final editado = await mostrarFormulario(
+      context,
+      icono: Icons.edit_outlined,
+      titulo: 'Editar cliente',
+      subtitulo: c['nombre']?.toString() ?? '',
+      textoAccion: 'Guardar cambios',
+      ancho: 520,
+      contenido: (context, redibujar) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextFormField(
+            controller: nombreCtrl,
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            decoration: decoracionCampo('Nombre o razón social', obligatorio: true),
+            validator: obligatorio('Escribe el nombre del cliente.'),
+          ),
+          separadorCampos,
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: TextFormField(
+                  controller: rutCtrl,
+                  decoration: decoracionCampo('RUT', ayuda: 'Por ejemplo 76.123.456-0.'),
+                  validator: (v) => (v == null || v.trim().isEmpty || rutEsValido(v)) ? null : 'El RUT no es válido. Revisa el dígito verificador.',
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: TextFormField(
+                  controller: telefonoCtrl,
+                  keyboardType: TextInputType.phone,
+                  decoration: decoracionCampo('Teléfono', ayuda: 'Con código de país: +56 9 1234 5678.'),
+                  validator: (v) {
+                    if (v == null || v.trim().isEmpty) return null;
+                    final digitos = v.replaceAll(RegExp(r'[\s()-]'), '');
+                    return RegExp(r'^\+?\d{8,15}$').hasMatch(digitos) ? null : 'Escribe un teléfono válido, por ejemplo +56 9 1234 5678.';
+                  },
+                ),
+              ),
+            ],
+          ),
+          separadorCampos,
+          TextFormField(
+            controller: emailCtrl,
+            keyboardType: TextInputType.emailAddress,
+            decoration: decoracionCampo('Correo para avisos y facturas', ayuda: 'No es el correo con que el cliente inicia sesión en el portal.'),
+            validator: (v) => (v == null || v.trim().isEmpty || RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v.trim())) ? null : 'Escribe un correo válido, por ejemplo nombre@empresa.cl.',
+          ),
+          separadorCampos,
+          TextFormField(
+            controller: direccionCtrl,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: decoracionCampo('Dirección'),
+          ),
+          separadorCampos,
+          LineaInfo(
+            icono: tieneCuenta ? Icons.verified_user_outlined : Icons.person_off_outlined,
+            texto: tieneCuenta
+                ? 'Este cliente tiene una cuenta en el portal. Cambiar el correo de esta ficha no cambia su acceso.'
+                : 'Este cliente todavía no tiene cuenta en el portal.',
+          ),
+        ],
+      ),
+      alGuardar: () => ApiClient.instance.patch('/api/clientes/${c['id']}', {
+        'nombre': texto(nombreCtrl),
+        'rut': texto(rutCtrl),
+        'email': texto(emailCtrl),
+        'telefono': texto(telefonoCtrl),
+        'direccion': texto(direccionCtrl),
+      }),
+    );
+    for (final x in [nombreCtrl, rutCtrl, emailCtrl, telefonoCtrl, direccionCtrl]) {
+      x.dispose();
+    }
+    if (editado && mounted) {
+      _cargar();
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cliente actualizado')));
+    }
+  }
+
   Future<void> _abrirDialogoCrear() async {
     List<dynamic> ejecutivos = [];
     try {
@@ -287,6 +381,12 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
                                       Text(ubicado ? 'Ubicación marcada' : 'Sin ubicación en el mapa'),
                                     ],
                                   ),
+                                  if (puedeEscribir)
+                                    TextButton.icon(
+                                      onPressed: () => _editarCliente(Map<String, dynamic>.from(c as Map)),
+                                      icon: const Icon(Icons.edit_outlined),
+                                      label: const Text('Editar datos'),
+                                    ),
                                   TextButton.icon(
                                     onPressed: () => _ubicarCliente(Map<String, dynamic>.from(c as Map)),
                                     icon: const Icon(Icons.place_outlined),
