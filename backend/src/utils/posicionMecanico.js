@@ -8,6 +8,7 @@
 // guardada, y un reintento o una posicion atrasada no pisa a la vigente.
 
 const { validarCoordenadas, evaluarCapturadaEn, coordenadasDeFila, etaAproximada } = require('./geo');
+const { ajustarEta, calcularQuietoDesde } = require('./etaViaje');
 
 /**
  * Valida y guarda la posicion de un mecanico para una OT que esta en camino. El llamador es
@@ -36,23 +37,37 @@ async function guardarPosicion(db, { ordenId, usuarioId, posicion, ahora = new D
     }
     const precision = Number.isFinite(p.precision_m) && p.precision_m >= 0 ? Math.round(p.precision_m) : null;
 
+    // desde cuando esta quieto: se compara con la posicion que habia guardada (el llamador tiene la
+    // fila de la OT bloqueada, asi que no hay dos posiciones de este viaje a la vez)
+    const previa = (await db.query(
+        `SELECT orden_trabajo_id, latitud, longitud, capturada_en, quieto_desde
+         FROM posiciones_mecanico WHERE usuario_id = $1`,
+        [usuarioId]
+    )).rows[0] || null;
+    const quietoDesde = calcularQuietoDesde(previa, {
+        latitud: coords.latitud, longitud: coords.longitud, capturadaEn: hora.fecha, precisionM: precision, ordenId,
+    });
+
     // upsert condicionado: pisa solo si es mas nueva, o si la fila guardada era de otra OT (un viaje anterior)
     const guardado = await db.query(
-        `INSERT INTO posiciones_mecanico (usuario_id, orden_trabajo_id, latitud, longitud, precision_m, capturada_en)
-         VALUES ($1, $2, $3, $4, $5, $6)
+        `INSERT INTO posiciones_mecanico (usuario_id, orden_trabajo_id, latitud, longitud, precision_m, capturada_en, quieto_desde)
+         VALUES ($1, $2, $3, $4, $5, $6, $7)
          ON CONFLICT (usuario_id) DO UPDATE SET
              orden_trabajo_id = EXCLUDED.orden_trabajo_id, latitud = EXCLUDED.latitud,
              longitud = EXCLUDED.longitud, precision_m = EXCLUDED.precision_m,
-             capturada_en = EXCLUDED.capturada_en, recibida_en = now()
+             capturada_en = EXCLUDED.capturada_en, quieto_desde = EXCLUDED.quieto_desde, recibida_en = now()
          WHERE posiciones_mecanico.orden_trabajo_id <> EXCLUDED.orden_trabajo_id
             OR posiciones_mecanico.capturada_en < EXCLUDED.capturada_en
          RETURNING usuario_id`,
-        [usuarioId, ordenId, coords.latitud, coords.longitud, precision, hora.fecha.toISOString()]
+        [usuarioId, ordenId, coords.latitud, coords.longitud, precision, hora.fecha.toISOString(), quietoDesde.toISOString()]
     );
     if (guardado.rowCount === 0) return { guardada: false, motivo: 'mas_vieja' };
 
     const origen = { latitud: coords.latitud, longitud: coords.longitud };
-    const eta = await actualizarEtaAproximada(db, ordenId, origen, ahora);
+    const aproximada = await actualizarEtaAproximada(db, ordenId, origen, ahora);
+    // con una ETA de rutas vigente, se ajusta a esta posicion; si no, vale la aproximada
+    const ajustada = await actualizarEtaAjustada(db, ordenId, origen, hora.fecha, ahora);
+    const eta = ajustada || aproximada;
     // origen: lo usa el llamador para pedir, ya fuera de la transaccion, una ruta real (services/rutasEta.js)
     return { guardada: true, eta, origen };
 }
@@ -82,6 +97,33 @@ async function actualizarEtaAproximada(db, ordenId, origen, ahora = new Date()) 
 }
 
 /**
+ * Si la ETA de la OT viene del servicio de rutas, la ajusta a la posicion nueva (utils/etaViaje.js) y
+ * guarda la hora en eta_ajustada_llegada_at, sin tocar eta_segundos ni eta_calculada_at (esas
+ * deciden cuando consultar de nuevo). Con una ETA aproximada no hace nada: esa ya se recalcula
+ * entera con cada posicion.
+ * @returns {Promise<{segundos:number, distancia_m:number|null, fuente:string}|null>}
+ */
+async function actualizarEtaAjustada(db, ordenId, origen, capturadaEn, ahora = new Date()) {
+    const ot = (await db.query(
+        `SELECT destino_lat, destino_lng, eta_segundos, eta_distancia_m, eta_fuente, eta_origen_lat, eta_origen_lng
+         FROM ordenes_trabajo WHERE id = $1`,
+        [ordenId]
+    )).rows[0];
+    if (!ot || ot.eta_fuente !== 'ors' || ot.eta_segundos === null) return null;
+    const destino = coordenadasDeFila(ot, 'destino_lat', 'destino_lng');
+    const origenConsulta = coordenadasDeFila(ot, 'eta_origen_lat', 'eta_origen_lng');
+    if (!destino || !origenConsulta) return null;
+    const r = ajustarEta({ etaSegundos: ot.eta_segundos, origenConsulta, destino, posicion: origen, capturadaEn, ahora });
+    if (!r) return null;
+    await db.query(
+        `UPDATE ordenes_trabajo SET eta_ajustada_llegada_at = $1, eta_ajustada_at = $2
+         WHERE id = $3 AND eta_fuente = 'ors'`,
+        [r.llegadaAt.toISOString(), capturadaEn.toISOString(), ordenId]
+    );
+    return { segundos: r.segundosRestantes, distancia_m: ot.eta_distancia_m, fuente: 'ors' };
+}
+
+/**
  * Borra la posicion y la ETA de la OT: el viaje termino o cambio de tecnico. Es lo que cumple la
  * regla de privacidad (la posicion solo vive mientras el mecanico va en camino).
  */
@@ -89,10 +131,11 @@ async function limpiarViaje(db, ordenId) {
     await db.query('DELETE FROM posiciones_mecanico WHERE orden_trabajo_id = $1', [ordenId]);
     await db.query(
         `UPDATE ordenes_trabajo SET eta_segundos = NULL, eta_distancia_m = NULL, eta_calculada_at = NULL,
-                eta_fuente = NULL, eta_origen_lat = NULL, eta_origen_lng = NULL, eta_consultas = 0
+                eta_fuente = NULL, eta_origen_lat = NULL, eta_origen_lng = NULL, eta_consultas = 0,
+                eta_ajustada_llegada_at = NULL, eta_ajustada_at = NULL, eta_intento_at = NULL
          WHERE id = $1`,
         [ordenId]
     );
 }
 
-module.exports = { guardarPosicion, actualizarEtaAproximada, limpiarViaje };
+module.exports = { guardarPosicion, actualizarEtaAproximada, actualizarEtaAjustada, limpiarViaje };

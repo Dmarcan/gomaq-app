@@ -78,6 +78,21 @@ test('furgon con posicion y ETA; sin posicion queda sin coordenadas pero listado
     assert.equal(armarFurgon({ ...base, eta_fuente: 'ors' }).eta_aproximada, false);
 });
 
+test('furgon: trae el id del equipo (para Ver equipo) y desde cuando esta quieto', () => {
+    const base = {
+        orden_trabajo_id: 12, mecanico_nombre: 'Pedro', cliente_nombre: 'Acsa', maquinaria_id: 44, maquinaria_codigo: 'GH-999',
+        latitud: '-33.4', longitud: '-70.6', posicion_at: new Date('2026-11-08T14:40:00Z'),
+        quieto_desde: new Date('2026-11-08T14:20:00Z'),
+    };
+    const f = armarFurgon(base);
+    assert.equal(f.maquinaria_id, 44);
+    assert.equal(f.quieto_desde.toISOString(), '2026-11-08T14:20:00.000Z');
+    // sin posicion no hay "quieto desde": no tiene sentido sin un punto
+    assert.equal(armarFurgon({ ...base, latitud: null, longitud: null }).quieto_desde, null);
+    // una consulta vieja sin la columna no rompe
+    assert.equal(armarFurgon({ ...base, maquinaria_id: undefined, quieto_desde: undefined }).maquinaria_id, null);
+});
+
 test('lista blanca: nada de RUT, correo, telefono, precision ni datos internos de la ETA', () => {
     const resp = armarRespuestaMapa({
         bodega: BODEGA,
@@ -95,7 +110,7 @@ test('lista blanca: nada de RUT, correo, telefono, precision ni datos internos d
     ]);
     assert.deepEqual(Object.keys(resp.furgones[0]).sort(), [
         'cliente_nombre', 'eta_aproximada', 'eta_llegada_at', 'latitud', 'longitud', 'maquinaria_codigo',
-        'mecanico_nombre', 'orden_trabajo_id', 'posicion_at', 'vehiculo',
+        'maquinaria_id', 'mecanico_nombre', 'orden_trabajo_id', 'posicion_at', 'quieto_desde', 'vehiculo',
     ]);
     assert.deepEqual(Object.keys(resp.bodega).sort(), ['id', 'latitud', 'longitud', 'nombre']);
     const texto = JSON.stringify(resp);

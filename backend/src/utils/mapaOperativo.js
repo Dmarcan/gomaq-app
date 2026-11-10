@@ -5,6 +5,7 @@
 // a mano (nunca `...fila`): una columna nueva en una consulta no llega al mapa por accidente.
 // Quedan fuera a proposito: RUT, correo y telefono de clientes y mecanicos, la precision del GPS,
 // el origen y las consultas de la ETA, el destino de la OT y cualquier historial de posiciones.
+// `quieto_desde` es solo una hora (desde cuando el furgon no se mueve), no un historial.
 // El cliente y el mecanico no tienen acceso a esta ruta.
 
 const { coordenadasDeFila } = require('./geo');
@@ -74,10 +75,13 @@ function armarFurgon(fila) {
             ? { patente: fila.vehiculo_patente, marca: fila.vehiculo_marca || null, modelo: fila.vehiculo_modelo || null }
             : null,
         cliente_nombre: fila.cliente_nombre || null,
+        maquinaria_id: fila.maquinaria_id === undefined ? null : fila.maquinaria_id,
         maquinaria_codigo: fila.maquinaria_codigo,
         latitud: pos ? pos.latitud : null,
         longitud: pos ? pos.longitud : null,
         posicion_at: pos ? (fila.posicion_at || null) : null,
+        // desde cuando no se mueve de ese punto: el panel lo usa para decir "detenido" y no "sin senal"
+        quieto_desde: pos ? (fila.quieto_desde || null) : null,
         eta_llegada_at: tieneEta ? fila.eta_llegada_at : null,
         eta_aproximada: tieneEta ? fila.eta_fuente !== 'ors' : null,
     };

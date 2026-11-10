@@ -5944,6 +5944,88 @@ describe('bloque 6 (parte 1): contratos para el dashboard, Ordenes y el portal',
             await pool.query('DELETE FROM uso_ors');
         });
 
+        test('ETA ajustada y quieto desde: la hora de llegada sigue a la posicion, y un intento fallido espera', async (t) => {
+            if (!requiereBase(t)) return;
+            const { mejorarEtaConRutas } = require('../src/services/rutasEta');
+            const { guardarPosicion } = require('../src/utils/posicionMecanico');
+            const { ErrorOrs } = require('../src/services/ors');
+            const cliente = await algunCliente();
+            const equipo = await crearEquipo(null);
+            await pool.query('DELETE FROM uso_ors');
+            const ot = (await pool.query(
+                `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, mecanico_id, estado, motivo, destino_lat, destino_lng, destino_origen)
+                 VALUES ($1, $2, $3, 'en_camino', 'eta ajustada', -38.7359, -72.5904, 'cliente') RETURNING id`,
+                [equipo.id, cliente, datos.mecanicoId])).rows[0].id;
+            datos.ordenes.push(ot);
+            const leerOt = async () => (await pool.query(
+                `SELECT eta_segundos, eta_calculada_at, eta_fuente, eta_consultas, eta_intento_at,
+                        eta_ajustada_llegada_at, eta_ajustada_at FROM ordenes_trabajo WHERE id = $1`, [ot])).rows[0];
+            const silencio = { warn() {}, error() {} };
+            const origen = { latitud: -38.70, longitud: -72.50 };
+            const mitad = { latitud: -38.718, longitud: -72.545 };
+
+            // 1) el servicio falla: el intento queda anotado y el siguiente espera (no gasta otra consulta)
+            const falla = { llamar: async () => { throw new ErrorOrs('timeout', 'sin respuesta'); }, hayLlave: () => true, log: silencio };
+            assert.equal((await mejorarEtaConRutas(pool, { ordenId: ot, usuarioId: datos.mecanicoId, origen }, falla)).motivo, 'ors_fallo');
+            const tras = await mejorarEtaConRutas(pool, { ordenId: ot, usuarioId: datos.mecanicoId, origen }, falla);
+            assert.equal(tras.consultada, false);
+            assert.equal(tras.motivo, 'muy_reciente');
+            assert.equal((await leerOt()).eta_consultas, 1);
+            assert.ok((await leerOt()).eta_intento_at);
+
+            // 2) pasado el minimo, una ruta buena se guarda y no hay ajuste todavia
+            await pool.query(`UPDATE ordenes_trabajo SET eta_intento_at = now() - interval '10 minutes' WHERE id = $1`, [ot]);
+            const buena = { llamar: async () => ({ distancia_m: 9000, segundos: 1200 }), hayLlave: () => true, log: silencio };
+            assert.equal((await mejorarEtaConRutas(pool, { ordenId: ot, usuarioId: datos.mecanicoId, origen }, buena)).guardada, true);
+            const conRuta = await leerOt();
+            assert.equal(conRuta.eta_fuente, 'ors');
+            assert.equal(conRuta.eta_ajustada_llegada_at, null);
+
+            // 3) a mitad de camino quedan mas o menos la mitad de los segundos; eta_segundos y eta_calculada_at no cambian
+            const hace2min = new Date(Date.now() - 120000);
+            const hace1min = new Date(Date.now() - 60000);
+            const ahora = new Date();
+            await guardarPosicion(pool, { ordenId: ot, usuarioId: datos.mecanicoId, posicion: { ...origen, capturada_en: hace2min.toISOString() } });
+            await guardarPosicion(pool, { ordenId: ot, usuarioId: datos.mecanicoId, posicion: { ...mitad, capturada_en: hace1min.toISOString() } });
+            const r3 = await guardarPosicion(pool, { ordenId: ot, usuarioId: datos.mecanicoId, posicion: { ...mitad, capturada_en: ahora.toISOString() } });
+            assert.equal(r3.eta.fuente, 'ors');
+            const ajustada = await leerOt();
+            assert.equal(ajustada.eta_segundos, 1200, 'eta_segundos no se toca');
+            assert.equal(new Date(ajustada.eta_calculada_at).getTime(), new Date(conRuta.eta_calculada_at).getTime());
+            const restante = (new Date(ajustada.eta_ajustada_llegada_at).getTime() - ahora.getTime()) / 1000;
+            assert.ok(restante > 300 && restante < 900, `quedaban cerca de la mitad de 1200 s: ${restante}`);
+            assert.equal(new Date(ajustada.eta_ajustada_at).getTime(), ahora.getTime());
+
+            // 4) quieto desde: la ultima vez que se movio fue al pasar de `origen` a `mitad` (hace 1 min)
+            const pos = (await pool.query('SELECT quieto_desde FROM posiciones_mecanico WHERE usuario_id = $1', [datos.mecanicoId])).rows[0];
+            assert.equal(new Date(pos.quieto_desde).getTime(), hace1min.getTime());
+
+            // 5) el portal del cliente ve la hora ajustada y cuando se actualizo, sin coordenadas
+            const portal = (await pedirConToken('/api/ordenes-trabajo/mias', tokenCliente(cliente))).body.find((x) => x.id === ot);
+            assert.equal(new Date(portal.eta_llegada_at).getTime(), new Date(ajustada.eta_ajustada_llegada_at).getTime());
+            assert.equal(new Date(portal.eta_calculada_at).getTime(), ahora.getTime(), 'Actualizada hace X sigue a la posicion');
+            assert.equal(portal.eta_aproximada, false, 'escalada desde la ruta real: no es aproximada');
+            for (const prohibida of ['eta_ajustada_llegada_at', 'eta_ajustada_at', 'eta_intento_at', 'quieto_desde', 'latitud', 'longitud']) {
+                assert.ok(!(prohibida in portal), `no debe exponer ${prohibida}`);
+            }
+
+            // el detalle de la OT (lo ve tambien el mecanico) no trae el estado interno de la ETA
+            const detalle = await pedir('GET', `/api/ordenes-trabajo/${ot}`, 'administrativo');
+            assert.equal(detalle.status, 200);
+            for (const interno of ['eta_origen_lat', 'eta_origen_lng', 'eta_consultas', 'eta_intento_at', 'eta_ajustada_llegada_at', 'eta_ajustada_at']) {
+                assert.ok(!(interno in detalle.body), `el detalle no debe traer ${interno}`);
+            }
+
+            // 6) al llegar una ruta nueva el ajuste se descarta (manda la ruta real)
+            await pool.query(`UPDATE ordenes_trabajo SET eta_intento_at = now() - interval '10 minutes', eta_calculada_at = now() - interval '10 minutes' WHERE id = $1`, [ot]);
+            const nueva = { llamar: async () => ({ distancia_m: 4000, segundos: 500 }), hayLlave: () => true, log: silencio };
+            assert.equal((await mejorarEtaConRutas(pool, { ordenId: ot, usuarioId: datos.mecanicoId, origen: mitad }, { ...nueva, ahora: new Date() })).guardada, true);
+            const despues = await leerOt();
+            assert.equal(despues.eta_ajustada_llegada_at, null);
+            assert.equal(despues.eta_ajustada_at, null);
+            await pool.query('DELETE FROM uso_ors');
+        });
+
         test('una OT finalizada no trae el vehiculo de hoy y dice si habra cobro', async (t) => {
             if (!requiereBase(t)) return;
             const cliente = await algunCliente();

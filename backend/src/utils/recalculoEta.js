@@ -21,6 +21,7 @@ const CONFIG_POR_DEFECTO = {
  * @param {object} p
  * @param {string} p.estado estado actual de la OT
  * @param {Date|null} p.ultimoCalculoAt cuando se consulto ORS por ultima vez para esta OT
+ * @param {Date|null} [p.ultimoIntentoAt] cuando se reservo la ultima consulta, haya salido bien o no
  * @param {{latitud:number, longitud:number}|null} p.posicionUltimoCalculo posicion usada en esa consulta
  * @param {{latitud:number, longitud:number}|null} p.posicionActual ultima posicion conocida del mecanico
  * @param {number} p.consultasOt consultas ya gastadas por esta OT
@@ -36,6 +37,13 @@ function decidirRecalculo(p, config = {}) {
     if (!p.posicionActual) return { recalcular: false, motivo: 'sin_posicion' };
     if (p.consultasHoy >= cfg.cupoDiario) return { recalcular: false, motivo: 'cupo_diario' };
     if (p.consultasOt >= cfg.maxPorOt) return { recalcular: false, motivo: 'tope_por_ot' };
+
+    // un intento reciente (aunque haya fallado) tambien espera: si no, con el servicio caido cada
+    // posicion nueva contaria como "primera" y gastaria las consultas de la OT en pocos minutos
+    if (p.ultimoIntentoAt) {
+        const desdeIntento = (p.ahora.getTime() - new Date(p.ultimoIntentoAt).getTime()) / 1000;
+        if (desdeIntento < cfg.minSegundos) return { recalcular: false, motivo: 'muy_reciente' };
+    }
 
     // primera consulta de la OT: no hay con que comparar, se hace de inmediato
     if (!p.ultimoCalculoAt || !p.posicionUltimoCalculo) return { recalcular: true, motivo: 'primera' };

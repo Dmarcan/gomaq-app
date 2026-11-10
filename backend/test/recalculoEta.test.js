@@ -26,6 +26,16 @@ function base(extra = {}) {
 }
 
 describe('decidirRecalculo', () => {
+    test('un intento reciente que fallo tambien espera, aunque no haya ETA de rutas previa', () => {
+        const r = decidirRecalculo(base({ ultimoCalculoAt: null, posicionUltimoCalculo: null, ultimoIntentoAt: haceSeg(60) }));
+        assert.deepStrictEqual(r, { recalcular: false, motivo: 'muy_reciente' });
+    });
+
+    test('pasado el minimo desde el intento fallido, vuelve a intentar como primera', () => {
+        const r = decidirRecalculo(base({ ultimoCalculoAt: null, posicionUltimoCalculo: null, ultimoIntentoAt: haceSeg(600) }));
+        assert.deepStrictEqual(r, { recalcular: true, motivo: 'primera' });
+    });
+
     test('en camino, paso el tiempo y el mecanico se movio: recalcula', () => {
         assert.deepStrictEqual(decidirRecalculo(base()), { recalcular: true, motivo: 'movimiento' });
     });

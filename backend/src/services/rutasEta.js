@@ -27,7 +27,7 @@ const DIA_UTC = `(now() AT TIME ZONE 'UTC')::date`;
  */
 async function reservarConsulta(db, ordenId, config = CONFIG_POR_DEFECTO) {
     const porOt = await db.query(
-        `UPDATE ordenes_trabajo SET eta_consultas = eta_consultas + 1
+        `UPDATE ordenes_trabajo SET eta_consultas = eta_consultas + 1, eta_intento_at = now()
          WHERE id = $1 AND eta_consultas < $2 RETURNING eta_consultas`,
         [ordenId, config.maxPorOt]
     );
@@ -64,7 +64,7 @@ async function mejorarEtaConRutas(db, { ordenId, usuarioId, origen }, opciones =
 
         const ot = (await db.query(
             `SELECT estado, mecanico_id, destino_lat, destino_lng, eta_fuente, eta_calculada_at,
-                    eta_origen_lat, eta_origen_lng, eta_consultas
+                    eta_origen_lat, eta_origen_lng, eta_consultas, eta_intento_at
              FROM ordenes_trabajo WHERE id = $1`,
             [ordenId]
         )).rows[0];
@@ -82,6 +82,7 @@ async function mejorarEtaConRutas(db, { ordenId, usuarioId, origen }, opciones =
         const decision = decidirRecalculo({
             estado: ot.estado,
             ultimoCalculoAt: previaEsRuta ? ot.eta_calculada_at : null,
+            ultimoIntentoAt: ot.eta_intento_at,
             posicionUltimoCalculo: previaEsRuta ? coordenadasDeFila(ot, 'eta_origen_lat', 'eta_origen_lng') : null,
             posicionActual: origen,
             consultasOt: ot.eta_consultas,
@@ -105,7 +106,8 @@ async function mejorarEtaConRutas(db, { ordenId, usuarioId, origen }, opciones =
         const guardado = await db.query(
             `UPDATE ordenes_trabajo
              SET eta_segundos = $1, eta_distancia_m = $2, eta_calculada_at = $3, eta_fuente = 'ors',
-                 eta_origen_lat = $4, eta_origen_lng = $5
+                 eta_origen_lat = $4, eta_origen_lng = $5,
+                 eta_ajustada_llegada_at = NULL, eta_ajustada_at = NULL
              WHERE id = $6 AND estado = 'en_camino' AND mecanico_id = $7
                AND (eta_fuente IS DISTINCT FROM 'ors' OR eta_calculada_at IS NULL OR eta_calculada_at <= $3)
              RETURNING id`,

@@ -158,14 +158,15 @@ test('GET /api/mapa: equipo en bodega, arrendado con guia y furgon en camino; al
          VALUES ($1, 'despacho', 'sin_documento', CURRENT_DATE, $2, -33.45, -70.65)`, [arrendado.id, cliente]);
     const ot = (await pool.query(
         `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, mecanico_id, estado, motivo,
-                eta_segundos, eta_calculada_at, eta_fuente)
-         VALUES ($1, $2, $3, 'en_camino', 'mapa', 600, now(), 'aproximada') RETURNING id`,
+                eta_segundos, eta_calculada_at, eta_fuente, eta_ajustada_llegada_at)
+         VALUES ($1, $2, $3, 'en_camino', 'mapa', 600, now(), 'ors', now() + interval '20 minutes') RETURNING id`,
         [arrendado.id, cliente, datos.mecanicoId])).rows[0].id;
     datos.ordenes.push(ot);
     await pool.query(
-        `INSERT INTO posiciones_mecanico (usuario_id, orden_trabajo_id, latitud, longitud, precision_m, capturada_en)
-         VALUES ($1, $2, -33.42, -70.61, 8, now())
-         ON CONFLICT (usuario_id) DO UPDATE SET orden_trabajo_id = $2, latitud = -33.42, longitud = -70.61, capturada_en = now()`,
+        `INSERT INTO posiciones_mecanico (usuario_id, orden_trabajo_id, latitud, longitud, precision_m, capturada_en, quieto_desde)
+         VALUES ($1, $2, -33.42, -70.61, 8, now(), now() - interval '12 minutes')
+         ON CONFLICT (usuario_id) DO UPDATE SET orden_trabajo_id = $2, latitud = -33.42, longitud = -70.61, capturada_en = now(),
+                quieto_desde = now() - interval '12 minutes'`,
         [datos.mecanicoId, ot]);
 
     const r = await pedir('GET', '/api/mapa', 'administrativo');
@@ -184,7 +185,12 @@ test('GET /api/mapa: equipo en bodega, arrendado con guia y furgon en camino; al
     assert.ok(f, 'el furgon en camino aparece');
     assert.equal(f.latitud, -33.42);
     assert.ok(f.posicion_at && f.eta_llegada_at);
-    assert.equal(f.eta_aproximada, true);
+    // la hora ajustada manda sobre calculada_at + segundos (que serian ~10 min, no 20)
+    const minutos = (new Date(f.eta_llegada_at).getTime() - Date.now()) / 60000;
+    assert.ok(minutos > 15 && minutos < 25, `usa la hora ajustada: ${minutos}`);
+    assert.equal(f.eta_aproximada, false, 'la hora escalada viene de la ruta real');
+    assert.equal(f.maquinaria_id, arrendado.id, 'trae el id del equipo para Ver equipo');
+    assert.ok(f.quieto_desde, 'trae desde cuando esta quieto');
     const texto = JSON.stringify(r.body);
     for (const prohibido of ['precision_m', 'destino_lat', 'eta_origen', 'eta_consultas', 'telefono']) {
         assert.ok(!texto.includes(prohibido), `no debe exponer ${prohibido}`);

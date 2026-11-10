@@ -26,6 +26,17 @@ const { fijarDestinoOt } = require('../utils/fijarDestinoOt');
 const { guardarPosicion, limpiarViaje } = require('../utils/posicionMecanico');
 const { mejorarEtaConRutas } = require('../services/rutasEta');
 
+// Estado interno de la ETA (origen de la ultima consulta, cupo gastado, ajuste): no sale en el listado
+// ni en el detalle de la OT, que se arman con `ot.*`. Una columna nueva de ETA no llega por accidente.
+const CAMPOS_INTERNOS_ETA = [
+    'eta_origen_lat', 'eta_origen_lng', 'eta_consultas', 'eta_intento_at', 'eta_ajustada_llegada_at', 'eta_ajustada_at',
+];
+function sinInternosEta(fila) {
+    const copia = { ...fila };
+    for (const campo of CAMPOS_INTERNOS_ETA) delete copia[campo];
+    return copia;
+}
+
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
 
@@ -221,7 +232,7 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
             sql += ` LIMIT $${paramsPagina.length - 1} OFFSET $${paramsPagina.length}`;
         }
         const result = await pool.query(sql, paramsPagina);
-        res.json(envolver(result.rows, total.rows[0].n, { limit, offset }));
+        res.json(envolver(result.rows.map(sinInternosEta), total.rows[0].n, { limit, offset }));
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar órdenes de trabajo' });
@@ -281,9 +292,12 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
                     -- hora estimada de llegada: solo mientras el tecnico va en camino, como hora absoluta. Al
                     -- cliente NUNCA le llegan coordenadas (ni la posicion del tecnico ni el destino de la OT)
                     CASE WHEN ot.estado = 'en_camino' AND ot.eta_segundos IS NOT NULL
-                         THEN ot.eta_calculada_at + make_interval(secs => ot.eta_segundos) END AS eta_llegada_at,
+                         THEN COALESCE(ot.eta_ajustada_llegada_at,
+                                       ot.eta_calculada_at + make_interval(secs => ot.eta_segundos)) END AS eta_llegada_at,
+                    -- "Actualizada hace X": la hora de la ultima posicion con que se ajusto la llegada
+                    -- (solo una hora, no la posicion) o, si no hubo ajuste, la de la ultima consulta de rutas
                     CASE WHEN ot.estado = 'en_camino' AND ot.eta_segundos IS NOT NULL
-                         THEN ot.eta_calculada_at END AS eta_calculada_at,
+                         THEN COALESCE(ot.eta_ajustada_at, ot.eta_calculada_at) END AS eta_calculada_at,
                     CASE WHEN ot.estado = 'en_camino' AND ot.eta_segundos IS NOT NULL
                          THEN ot.eta_fuente IS DISTINCT FROM 'ors' END AS eta_aproximada
              FROM ordenes_trabajo ot
@@ -347,7 +361,7 @@ router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecani
         ]);
 
         res.json({
-            ...orden,
+            ...sinInternosEta(orden),
             servicio_ids: servicios.rows.map((s) => s.servicio_id),
             tramos: tramos.rows,
         });

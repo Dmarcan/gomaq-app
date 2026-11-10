@@ -37,10 +37,11 @@ router.get('/', ...soloOficina, async (req, res) => {
             pool.query(`
                 SELECT ot.id AS orden_trabajo_id, u.nombre AS mecanico_nombre,
                        v.patente AS vehiculo_patente, v.marca AS vehiculo_marca, v.modelo AS vehiculo_modelo,
-                       c.nombre AS cliente_nombre, m.codigo AS maquinaria_codigo,
-                       p.latitud, p.longitud, p.capturada_en AS posicion_at,
+                       c.nombre AS cliente_nombre, m.id AS maquinaria_id, m.codigo AS maquinaria_codigo,
+                       p.latitud, p.longitud, p.capturada_en AS posicion_at, p.quieto_desde,
                        CASE WHEN ot.eta_segundos IS NOT NULL
-                            THEN ot.eta_calculada_at + make_interval(secs => ot.eta_segundos) END AS eta_llegada_at,
+                            THEN COALESCE(ot.eta_ajustada_llegada_at,
+                                          ot.eta_calculada_at + make_interval(secs => ot.eta_segundos)) END AS eta_llegada_at,
                        ot.eta_fuente
                 FROM ordenes_trabajo ot
                 JOIN maquinarias m ON m.id = ot.maquinaria_id
