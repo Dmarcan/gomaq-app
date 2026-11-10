@@ -72,9 +72,15 @@ class FurgonMapa {
   final String? patente;
   final String? vehiculo;
   final String? clienteNombre;
+
+  /// Id del equipo al que va (para abrir su perfil). Null con un servidor anterior al que lo envía.
+  final int? maquinariaId;
   final String maquinariaCodigo;
   final Coordenada? ubicacion;
   final DateTime? posicionAt;
+
+  /// Desde cuándo el furgón no se mueve de ese punto (solo una hora, no un historial).
+  final DateTime? quietoDesde;
   final DateTime? etaLlegadaAt;
   final bool etaAproximada;
 
@@ -84,9 +90,11 @@ class FurgonMapa {
     this.patente,
     this.vehiculo,
     this.clienteNombre,
+    this.maquinariaId,
     required this.maquinariaCodigo,
     this.ubicacion,
     this.posicionAt,
+    this.quietoDesde,
     this.etaLlegadaAt,
     this.etaAproximada = false,
   });
@@ -99,9 +107,11 @@ class FurgonMapa {
       patente: v is Map ? v['patente']?.toString() : null,
       vehiculo: v is Map ? [v['marca'], v['modelo']].where((s) => s != null && s.toString().isNotEmpty).join(' ') : null,
       clienteNombre: j['cliente_nombre']?.toString(),
+      maquinariaId: j['maquinaria_id'] is num ? (j['maquinaria_id'] as num).toInt() : null,
       maquinariaCodigo: (j['maquinaria_codigo'] ?? '').toString(),
       ubicacion: _coordenada(j['latitud'], j['longitud']),
       posicionAt: _aFecha(j['posicion_at']),
+      quietoDesde: _aFecha(j['quieto_desde']),
       etaLlegadaAt: _aFecha(j['eta_llegada_at']),
       etaAproximada: j['eta_aproximada'] == true,
     );
@@ -173,6 +183,53 @@ String haceCuanto(DateTime desde, DateTime ahora) {
 /// Una posición con más de 15 minutos se muestra en gris: el técnico puede ir en Maps o Waze
 /// sin que la app haya podido enviar una más nueva.
 bool posicionAntigua(DateTime desde, DateTime ahora) => ahora.difference(desde) > const Duration(minutes: 15);
+
+/// Cuánto sin moverse para decir que el furgón está detenido (un semáforo o una parada corta no cuentan).
+const detenidoDesdeMinutos = 5;
+
+/// Cómo va un furgón en camino, según su última posición.
+enum EstadoViaje {
+  /// todavía no llegó ninguna posición
+  sinPosicion,
+
+  /// posición reciente y se está moviendo
+  enMovimiento,
+
+  /// posición reciente, pero lleva 5 min o más en el mismo punto
+  detenido,
+
+  /// la última posición tiene más de 15 minutos: el técnico puede ir en Maps o Waze
+  sinSenal,
+}
+
+EstadoViaje estadoViaje(FurgonMapa f, DateTime ahora) {
+  final pos = f.posicionAt;
+  if (f.ubicacion == null || pos == null) return EstadoViaje.sinPosicion;
+  if (posicionAntigua(pos, ahora)) return EstadoViaje.sinSenal;
+  final quieto = f.quietoDesde;
+  if (quieto != null && ahora.difference(quieto) >= const Duration(minutes: detenidoDesdeMinutos)) {
+    return EstadoViaje.detenido;
+  }
+  return EstadoViaje.enMovimiento;
+}
+
+String _hhmm(DateTime t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+/// Texto del estado del viaje, o null si no hay nada que decir ("en movimiento" es lo normal).
+/// "Detenido" y "sin posición" se dicen distinto a propósito: un furgón detenido en un taco no es
+/// lo mismo que uno cuya app dejó de enviar. Nunca se afirma "sin señal": se dice desde qué hora
+/// no llega una posición, que es lo único que se sabe.
+String? textoEstadoViaje(FurgonMapa f, DateTime ahora) {
+  switch (estadoViaje(f, ahora)) {
+    case EstadoViaje.detenido:
+      return 'Detenido ${haceCuanto(f.quietoDesde!, ahora)}';
+    case EstadoViaje.sinSenal:
+      return 'Sin posición desde las ${_hhmm(f.posicionAt!)}';
+    case EstadoViaje.sinPosicion:
+    case EstadoViaje.enMovimiento:
+      return null;
+  }
+}
 
 /// Minúsculas y sin tildes, para que "grua" encuentre "Grúa".
 String normalizarBusqueda(String texto) {

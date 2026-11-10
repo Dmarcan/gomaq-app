@@ -479,7 +479,7 @@ class _MapaScreenState extends State<MapaScreen> {
             vieja ? GomaqColors.grisApagado : GomaqColors.estadoPositivo,
             Icons.local_shipping,
             0,
-            'Furgón de ${f.mecanicoNombre ?? 'técnico'}${vieja ? ', posición de hace más de 15 minutos' : ''}',
+            'Furgón de ${f.mecanicoNombre ?? 'técnico'}${vieja ? ', posición de hace más de 15 minutos' : (estadoViaje(f, ahora) == EstadoViaje.detenido ? ', detenido' : '')}',
             () => _seleccionarFurgon(f),
             clave: 'furgon:${f.ordenTrabajoId}',
             seleccionado: _furgonSeleccionado(f),
@@ -544,14 +544,54 @@ class _MapaScreenState extends State<MapaScreen> {
             cuerpo.add(Text('Llegada estimada: ${_hora(f.etaLlegadaAt!)}${f.etaAproximada ? ' (aproximada)' : ''}'));
           }
           if (f.posicionAt != null) cuerpo.add(Text('Última posición: ${haceCuanto(f.posicionAt!, ahora)}'));
-          cuerpo.add(
-            Align(
-              alignment: Alignment.centerLeft,
-              child: TextButton.icon(
-                onPressed: () => context.push('/ordenes/${f.ordenTrabajoId}'),
-                icon: const Icon(Icons.assignment_outlined),
-                label: const Text('Ver OT'),
+          final estadoTexto = textoEstadoViaje(f, ahora);
+          if (estadoTexto != null) {
+            // texto y color de advertencia, nunca solo color; liveRegion para que se anuncie si cambia
+            cuerpo.add(
+              Semantics(
+                liveRegion: true,
+                child: Row(
+                  children: [
+                    const Icon(Icons.info_outline, size: 16, color: GomaqColors.advertenciaFuerte),
+                    const SizedBox(width: 4),
+                    Expanded(
+                      child: Text(
+                        estadoTexto,
+                        style: const TextStyle(color: GomaqColors.advertenciaFuerte, fontWeight: FontWeight.w600),
+                      ),
+                    ),
+                  ],
+                ),
               ),
+            );
+            if (estadoViaje(f, ahora) == EstadoViaje.sinSenal) {
+              cuerpo.add(
+                Text(
+                  'El técnico puede ir en Maps o Waze y la app no alcanzó a enviar su posición.',
+                  style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
+                ),
+              );
+            }
+          }
+          cuerpo.add(
+            Wrap(
+              children: [
+                TextButton.icon(
+                  onPressed: () => context.push('/ordenes/${f.ordenTrabajoId}'),
+                  icon: const Icon(Icons.assignment_outlined),
+                  label: const Text('Ver OT'),
+                ),
+                if (f.maquinariaId != null)
+                  Semantics(
+                    label: 'Ver equipo ${f.maquinariaCodigo}',
+                    excludeSemantics: true,
+                    child: TextButton.icon(
+                      onPressed: () => context.push('/flota/${f.maquinariaId}'),
+                      icon: const Icon(Icons.open_in_new, size: 18),
+                      label: const Text('Ver equipo'),
+                    ),
+                  ),
+              ],
             ),
           );
         }
@@ -737,8 +777,10 @@ class _MapaScreenState extends State<MapaScreen> {
               ),
               title: Text(f.mecanicoNombre ?? 'Técnico'),
               subtitle: Text(
-                '${f.clienteNombre ?? 'Cliente'} · ${f.posicionAt == null ? 'sin hora' : haceCuanto(f.posicionAt!, ahora)}',
+                '${f.clienteNombre ?? 'Cliente'} · ${f.posicionAt == null ? 'sin hora' : haceCuanto(f.posicionAt!, ahora)}'
+                '${textoEstadoViaje(f, ahora) == null ? '' : '\n${textoEstadoViaje(f, ahora)}'}',
               ),
+              isThreeLine: textoEstadoViaje(f, ahora) != null,
               onTap: () {
                 _irA(f.ubicacion);
                 _seleccionarFurgon(f);
