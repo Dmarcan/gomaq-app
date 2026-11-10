@@ -46,7 +46,7 @@ Future<void> mostrarErroresDeSync(BuildContext context, {Future<void> Function()
                   dense: true,
                   leading: const Icon(Icons.error_outline, color: GomaqColors.estadoNegativo),
                   title: Text(describirTarea(t)),
-                  subtitle: Text('${t['ultimo_error'] ?? 'Error desconocido'}', maxLines: 3, overflow: TextOverflow.ellipsis),
+                  subtitle: Text('${t['ultimo_error'] ?? 'Sin detalle del error'}', maxLines: 3, overflow: TextOverflow.ellipsis),
                   trailing: t['estado'] == 'error'
                       ? TextButton(
                           onPressed: () async {

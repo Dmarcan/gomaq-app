@@ -75,7 +75,7 @@ class _MiCuentaScreenState extends State<MiCuentaScreen> {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Datos guardados')));
       }
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo guardar los datos: ${e.message}')));
     } finally {
       if (mounted) setState(() => _guardando = false);
     }
@@ -94,7 +94,7 @@ class _MiCuentaScreenState extends State<MiCuentaScreen> {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Kilometraje actualizado')));
       }
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo actualizar el kilometraje: ${e.message}')));
     } finally {
       if (mounted) setState(() => _guardando = false);
     }
@@ -119,7 +119,7 @@ class _MiCuentaScreenState extends State<MiCuentaScreen> {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Documento subido')));
       }
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo subir el documento: ${e.message}')));
     } finally {
       if (mounted) setState(() => _guardando = false);
     }

@@ -56,7 +56,17 @@ class OrdenCard extends StatelessWidget {
                   orden.maquinariaCodigo ?? 'Sin código', subtitulo: orden.motivo),
               if (orden.clienteNombre != null) ...[
                 const SizedBox(height: 8),
-                _fila(Icons.business_outlined, orden.clienteNombre!),
+                Text.rich(
+                  TextSpan(
+                    children: [
+                      const TextSpan(text: 'Cliente: ', style: TextStyle(color: GomaqColors.textoSecundario)),
+                      TextSpan(
+                        text: orden.clienteNombre!,
+                        style: const TextStyle(color: GomaqColors.textoPrimario, fontWeight: FontWeight.w600),
+                      ),
+                    ],
+                  ),
+                ),
               ],
               const SizedBox(height: 14),
               // Un solo boton: antes "Ver detalles", "Continuar" y la tarjeta hacian lo mismo,

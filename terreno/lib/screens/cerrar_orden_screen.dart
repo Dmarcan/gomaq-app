@@ -225,7 +225,7 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
                 child: FilledButton.icon(
                   onPressed: _puedeCerrar && !_cerrando ? _confirmarYCerrar : null,
                   icon: const Icon(Icons.lock_outline),
-                  label: Text(_cerrando ? 'CERRANDO...' : 'CERRAR ORDEN DE TRABAJO'),
+                  label: Text(_cerrando ? 'CERRANDO…' : 'CERRAR ORDEN DE TRABAJO'),
                 ),
               ),
             ],

@@ -887,12 +887,14 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
             ],
             if (orden.clienteNombre != null) ...[
               const SizedBox(height: 8),
-              Row(
-                children: [
-                  const Icon(Icons.business_outlined, size: 15, color: GomaqColors.textoSecundario),
-                  const SizedBox(width: 6),
-                  Text(orden.clienteNombre!, style: const TextStyle(fontSize: 13)),
-                ],
+              Text.rich(
+                TextSpan(
+                  style: const TextStyle(fontSize: 13),
+                  children: [
+                    const TextSpan(text: 'Cliente: ', style: TextStyle(color: GomaqColors.textoSecundario)),
+                    TextSpan(text: orden.clienteNombre!),
+                  ],
+                ),
               ),
             ],
             if (orden.estado != 'finalizada') ...[

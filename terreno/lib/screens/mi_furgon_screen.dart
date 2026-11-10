@@ -129,7 +129,7 @@ class _MiFurgonScreenState extends State<MiFurgonScreen> {
         );
       }
     } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo cargar al furgón: ${e.message}')));
     } catch (_) {
       // el stock se pudo cargar pero no refrescar: se avisa sin culpar a la carga
       if (mounted) {

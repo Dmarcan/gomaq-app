@@ -403,7 +403,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
                       children: [
                         CircularProgressIndicator(),
                         SizedBox(height: 12),
-                        Text('Cargando tus órdenes...', style: TextStyle(color: GomaqColors.textoSecundario)),
+                        Text('Cargando tus órdenes…', style: TextStyle(color: GomaqColors.textoSecundario)),
                       ],
                     ),
                   )
