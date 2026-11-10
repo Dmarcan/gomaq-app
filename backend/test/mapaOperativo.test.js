@@ -93,6 +93,15 @@ test('furgon: trae el id del equipo (para Ver equipo) y desde cuando esta quieto
     assert.equal(armarFurgon({ ...base, maquinaria_id: undefined, quieto_desde: undefined }).maquinaria_id, null);
 });
 
+test('equipo con una OT abierta: la trae (id, estado, tecnico) y sin OT es null', () => {
+    const con = armarEquipo(filaEquipo({ ot_id: 2049, ot_estado: 'asignada', ot_mecanico: 'Pedro' }), { bodega: BODEGA, idsConAlerta: new Set() });
+    assert.deepEqual(con.orden_abierta, { id: 2049, estado: 'asignada', mecanico_nombre: 'Pedro' });
+    const sinTecnico = armarEquipo(filaEquipo({ ot_id: 2050, ot_estado: 'pendiente', ot_mecanico: null }), { bodega: BODEGA, idsConAlerta: new Set() });
+    assert.equal(sinTecnico.orden_abierta.mecanico_nombre, null);
+    const sin = armarEquipo(filaEquipo(), { bodega: BODEGA, idsConAlerta: new Set() });
+    assert.equal(sin.orden_abierta, null);
+});
+
 test('lista blanca: nada de RUT, correo, telefono, precision ni datos internos de la ETA', () => {
     const resp = armarRespuestaMapa({
         bodega: BODEGA,
@@ -106,7 +115,7 @@ test('lista blanca: nada de RUT, correo, telefono, precision ni datos internos d
     assert.deepEqual(Object.keys(resp).sort(), ['bodega', 'equipos', 'furgones', 'generado_at']);
     assert.deepEqual(Object.keys(resp.equipos[0]).sort(), [
         'alerta_mantencion', 'cliente', 'codigo', 'direccion', 'estado', 'id', 'latitud', 'longitud',
-        'marca', 'modelo', 'origen_ubicacion', 'situacion', 'tipo',
+        'marca', 'modelo', 'orden_abierta', 'origen_ubicacion', 'situacion', 'tipo',
     ]);
     assert.deepEqual(Object.keys(resp.furgones[0]).sort(), [
         'cliente_nombre', 'eta_aproximada', 'eta_llegada_at', 'latitud', 'longitud', 'maquinaria_codigo',

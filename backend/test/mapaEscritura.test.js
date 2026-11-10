@@ -178,6 +178,9 @@ test('GET /api/mapa: equipo en bodega, arrendado con guia y furgon en camino; al
     assert.equal(eb.latitud, -33.5);
     const ea = r.body.equipos.find((e) => e.id === arrendado.id);
     assert.equal(ea.situacion, 'arrendado');
+    assert.equal(ea.orden_abierta.id, ot, 'el equipo dice que tiene una OT abierta');
+    assert.equal(ea.orden_abierta.estado, 'en_camino');
+    assert.equal(eb.orden_abierta, null, 'un equipo sin OT abierta'); 
     assert.equal(ea.origen_ubicacion, 'guia');
     assert.equal(ea.latitud, -33.45);
     assert.ok(ea.cliente.nombre);

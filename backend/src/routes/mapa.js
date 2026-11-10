@@ -23,9 +23,18 @@ router.get('/', ...soloOficina, async (req, res) => {
             pool.query(`
                 SELECT m.id, m.codigo, m.tipo, m.marca, m.modelo, m.estado, m.cliente_id,
                        c.nombre AS cliente_nombre, c.direccion, c.latitud AS c_lat, c.longitud AS c_lng,
-                       g.tipo AS g_tipo, g.cliente_id AS g_cliente_id, g.latitud AS g_lat, g.longitud AS g_lng
+                       g.tipo AS g_tipo, g.cliente_id AS g_cliente_id, g.latitud AS g_lat, g.longitud AS g_lng,
+                       o.id AS ot_id, o.estado AS ot_estado, o.mecanico_nombre AS ot_mecanico
                 FROM maquinarias m
                 LEFT JOIN clientes c ON c.id = m.cliente_id
+                -- la OT abierta mas reciente del equipo (cualquier estado menos finalizada), para decirlo en su ficha
+                LEFT JOIN LATERAL (
+                    SELECT ot.id, ot.estado, um.nombre AS mecanico_nombre
+                    FROM ordenes_trabajo ot
+                    LEFT JOIN usuarios um ON um.id = ot.mecanico_id
+                    WHERE ot.maquinaria_id = m.id AND ot.estado <> 'finalizada'
+                    ORDER BY ot.id DESC LIMIT 1
+                ) o ON true
                 LEFT JOIN LATERAL (
                     SELECT tipo, cliente_id, latitud, longitud FROM guias
                     WHERE maquinaria_id = m.id AND fallido = false

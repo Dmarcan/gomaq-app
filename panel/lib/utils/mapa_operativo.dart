@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'ubicacion.dart';
 
 /// Datos del mapa operativo (GET /api/mapa), ya tipados. Lógica pura: sin Flutter ni red, para
@@ -10,6 +12,37 @@ Coordenada? _coordenada(dynamic lat, dynamic lng) {
   final a = _aDouble(lat);
   final b = _aDouble(lng);
   return (a == null || b == null) ? null : Coordenada(a, b);
+}
+
+/// La OT abierta de un equipo (cualquier estado menos finalizada). Solo para decirlo en su ficha.
+class OrdenAbiertaMapa {
+  final int id;
+  final String estado;
+  final String? mecanicoNombre;
+  const OrdenAbiertaMapa({required this.id, required this.estado, this.mecanicoNombre});
+
+  factory OrdenAbiertaMapa.fromJson(Map<String, dynamic> j) => OrdenAbiertaMapa(
+    id: (j['id'] as num).toInt(),
+    estado: (j['estado'] ?? '').toString(),
+    mecanicoNombre: j['mecanico_nombre']?.toString(),
+  );
+
+  String get estadoLegible => switch (estado) {
+    'pendiente' => 'Pendiente',
+    'asignada' => 'Asignada',
+    'aceptada' => 'Aceptada',
+    'en_camino' => 'En camino',
+    'en_terreno' => 'En terreno',
+    'en_reparacion' => 'En reparación',
+    _ => estado,
+  };
+
+  /// "OT-2049 · Asignada · Pedro" (sin técnico: "OT-2049 · Pendiente").
+  String get resumen => [
+    'OT-$id',
+    estadoLegible,
+    if (mecanicoNombre != null && mecanicoNombre!.isNotEmpty) mecanicoNombre!,
+  ].join(' · ');
 }
 
 /// Equipo de la flota: arrendado a un cliente o en bodega.
@@ -28,6 +61,7 @@ class EquipoMapa {
   /// 'guia', 'cliente' o 'bodega': de dónde sale el punto.
   final String? origenUbicacion;
   final bool alertaMantencion;
+  final OrdenAbiertaMapa? ordenAbierta;
 
   const EquipoMapa({
     required this.id,
@@ -42,6 +76,7 @@ class EquipoMapa {
     this.ubicacion,
     this.origenUbicacion,
     this.alertaMantencion = false,
+    this.ordenAbierta,
   });
 
   factory EquipoMapa.fromJson(Map<String, dynamic> j) {
@@ -59,6 +94,9 @@ class EquipoMapa {
       ubicacion: _coordenada(j['latitud'], j['longitud']),
       origenUbicacion: j['origen_ubicacion']?.toString(),
       alertaMantencion: j['alerta_mantencion'] == true,
+      ordenAbierta: j['orden_abierta'] is Map
+          ? OrdenAbiertaMapa.fromJson(Map<String, dynamic>.from(j['orden_abierta'] as Map))
+          : null,
     );
   }
 
@@ -183,6 +221,24 @@ String haceCuanto(DateTime desde, DateTime ahora) {
 /// Una posición con más de 15 minutos se muestra en gris: el técnico puede ir en Maps o Waze
 /// sin que la app haya podido enviar una más nueva.
 bool posicionAntigua(DateTime desde, DateTime ahora) => ahora.difference(desde) > const Duration(minutes: 15);
+
+/// Distancia en línea recta entre dos puntos, en metros (haversine).
+double distanciaMetros(Coordenada a, Coordenada b) {
+  const radioTierra = 6371000.0;
+  double rad(double g) => g * math.pi / 180;
+  final dLat = rad(b.latitud - a.latitud);
+  final dLng = rad(b.longitud - a.longitud);
+  final h = math.pow(math.sin(dLat / 2), 2) +
+      math.cos(rad(a.latitud)) * math.cos(rad(b.latitud)) * math.pow(math.sin(dLng / 2), 2);
+  return 2 * radioTierra * math.asin(math.min(1.0, math.sqrt(h)));
+}
+
+/// "850 m" o "~3,2 km": con coma decimal y sin falsa precisión. Es en línea recta, no por calle.
+String textoDistancia(double metros) {
+  if (metros < 1000) return '${(metros / 10).round() * 10} m';
+  final km = (metros / 100).round() / 10;
+  return '~${km.toStringAsFixed(1).replaceAll('.', ',')} km';
+}
 
 /// Cuánto sin moverse para decir que el furgón está detenido (un semáforo o una parada corta no cuentan).
 const detenidoDesdeMinutos = 5;

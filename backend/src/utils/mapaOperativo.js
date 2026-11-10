@@ -57,6 +57,10 @@ function armarEquipo(fila, { bodega, idsConAlerta }) {
         longitud: ubicacion ? ubicacion.longitud : null,
         origen_ubicacion: ubicacion ? ubicacion.origen : null,
         alerta_mantencion: idsConAlerta.has(fila.id),
+        // la OT abierta del equipo, solo para decirlo en su ficha: sin destino ni ETA
+        orden_abierta: fila.ot_id
+            ? { id: fila.ot_id, estado: fila.ot_estado, mecanico_nombre: fila.ot_mecanico || null }
+            : null,
     };
 }
 

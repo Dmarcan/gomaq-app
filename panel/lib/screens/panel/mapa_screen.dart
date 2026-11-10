@@ -420,11 +420,49 @@ class _MapaScreenState extends State<MapaScreen> {
           ),
           children: [
             widget.capaImagenes(),
+            // línea punteada del furgón seleccionado al equipo al que va: recta, solo orientativa
+            if (_lineaFurgon(d) case final linea?) PolylineLayer(polylines: [linea]),
             MarkerLayer(markers: marcadores),
             atribucionMapa(),
           ],
         ),
       ),
+    );
+  }
+
+  /// El equipo al que va un furgón, si está en el mapa (con ubicación).
+  EquipoMapa? _equipoDestino(FurgonMapa f, DatosMapa d) {
+    final id = f.maquinariaId;
+    if (id == null) return null;
+    return d.equipos.where((e) => e.id == id && e.ubicacion != null).firstOrNull;
+  }
+
+  /// Distancia en línea recta de un furgón con posición reciente a su equipo, o null si no se puede
+  /// decir (sin posición, posición vieja o el equipo no está en el mapa).
+  String? _distanciaAlDestino(FurgonMapa f, DatosMapa d, DateTime ahora) {
+    final destino = _equipoDestino(f, d);
+    final origen = f.ubicacion;
+    final pos = f.posicionAt;
+    if (destino == null || origen == null || pos == null || posicionAntigua(pos, ahora)) return null;
+    return textoDistancia(distanciaMetros(origen, destino.ubicacion!));
+  }
+
+  Polyline? _lineaFurgon(DatosMapa d) {
+    final s = _seleccion;
+    if (s == null || s.tipo != 'furgon') return null;
+    final f = d.furgones.where((f) => f.ordenTrabajoId == s.ordenId).firstOrNull;
+    if (f == null || f.ubicacion == null || f.posicionAt == null || posicionAntigua(f.posicionAt!, DateTime.now())) {
+      return null;
+    }
+    final destino = _equipoDestino(f, d);
+    if (destino == null) return null;
+    final a = f.ubicacion!;
+    final b = destino.ubicacion!;
+    return Polyline(
+      points: [LatLng(a.latitud, a.longitud), LatLng(b.latitud, b.longitud)],
+      strokeWidth: 3,
+      color: GomaqColors.estadoPositivo,
+      pattern: StrokePattern.dashed(segments: const [8, 6]),
     );
   }
 
@@ -544,6 +582,12 @@ class _MapaScreenState extends State<MapaScreen> {
             cuerpo.add(Text('Llegada estimada: ${_hora(f.etaLlegadaAt!)}${f.etaAproximada ? ' (aproximada)' : ''}'));
           }
           if (f.posicionAt != null) cuerpo.add(Text('Última posición: ${haceCuanto(f.posicionAt!, ahora)}'));
+          final distancia = _distanciaAlDestino(f, d, ahora);
+          if (distancia != null) {
+            cuerpo.add(
+              Text('Le quedan $distancia en línea recta (no es la ruta).', style: TextStyle(color: Colors.grey.shade700)),
+            );
+          }
           final estadoTexto = textoEstadoViaje(f, ahora);
           if (estadoTexto != null) {
             // texto y color de advertencia, nunca solo color; liveRegion para que se anuncie si cambia
@@ -620,18 +664,45 @@ class _MapaScreenState extends State<MapaScreen> {
         for (final e in equipos) {
           cuerpo.add(const Divider(height: 8));
           cuerpo.add(_filaEquipo(e));
-          cuerpo.add(
-            Align(
-              alignment: Alignment.centerLeft,
-              child: Semantics(
-                label: 'Ver equipo ${e.codigo}',
-                excludeSemantics: true,
-                child: TextButton.icon(
-                  onPressed: () => context.push('/flota/${e.id}'),
-                  icon: const Icon(Icons.open_in_new, size: 18),
-                  label: const Text('Ver equipo'),
+          final ot = e.ordenAbierta;
+          if (ot != null) {
+            // el equipo tiene una OT abierta: se dice con texto (estado y técnico), no en el mapa
+            cuerpo.add(
+              Padding(
+                padding: const EdgeInsets.only(bottom: 4),
+                child: Row(
+                  children: [
+                    const Icon(Icons.assignment_outlined, size: 16),
+                    const SizedBox(width: 4),
+                    Expanded(child: Text(ot.resumen, style: const TextStyle(fontWeight: FontWeight.w600))),
+                  ],
                 ),
               ),
+            );
+          }
+          cuerpo.add(
+            Wrap(
+              children: [
+                if (ot != null)
+                  Semantics(
+                    label: 'Ver OT ${ot.id}',
+                    excludeSemantics: true,
+                    child: TextButton.icon(
+                      onPressed: () => context.push('/ordenes/${ot.id}'),
+                      icon: const Icon(Icons.assignment_outlined, size: 18),
+                      label: const Text('Ver OT'),
+                    ),
+                  ),
+                Semantics(
+                  label: 'Ver equipo ${e.codigo}',
+                  excludeSemantics: true,
+                  child: TextButton.icon(
+                    onPressed: () => context.push('/flota/${e.id}'),
+                    icon: const Icon(Icons.open_in_new, size: 18),
+                    label: const Text('Ver equipo'),
+                  ),
+                ),
+              ],
             ),
           );
         }
