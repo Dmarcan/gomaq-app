@@ -1,3 +1,5 @@
+import 'dart:convert' show utf8;
+
 import 'package:flutter/material.dart';
 import '../../services/api_client.dart';
 import '../../theme/gomaq_theme.dart';
@@ -118,6 +120,198 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     } on ApiException catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
     }
+  }
+
+  static const _rolesInternos = {
+    'mecanico': 'Mecánico',
+    'administrativo': 'Administrativo',
+    'gerente': 'Gerente',
+  };
+
+  String _rolLegible(dynamic rol) => _rolesInternos[rol] ?? '$rol';
+
+  /// Crea una cuenta interna. La contraseña la escribe quien crea la cuenta y se la entrega a la
+  /// persona: no hay proveedor de correo para enviarla, y el sistema nunca la vuelve a mostrar.
+  Future<void> _nuevaCuenta() async {
+    final nombreCtrl = TextEditingController();
+    final correoCtrl = TextEditingController();
+    final claveCtrl = TextEditingController();
+    final repetirCtrl = TextEditingController();
+    String? rol;
+    final creada = await mostrarFormulario(
+      context,
+      icono: Icons.person_add_alt_1,
+      titulo: 'Nueva cuenta',
+      subtitulo: 'Mecánico, administrativo o gerente',
+      textoAccion: 'Crear cuenta',
+      ancho: 460,
+      contenido: (context, redibujar) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          TextFormField(
+            controller: nombreCtrl,
+            autofocus: true,
+            textCapitalization: TextCapitalization.words,
+            decoration: decoracionCampo('Nombre *'),
+            validator: (v) => (v == null || v.trim().length < 2) ? 'Escribe el nombre de la persona.' : null,
+          ),
+          separadorCampos,
+          TextFormField(
+            controller: correoCtrl,
+            keyboardType: TextInputType.emailAddress,
+            decoration: decoracionCampo('Correo *', ayuda: 'Con este correo inicia sesión.'),
+            validator: (v) {
+              final t = (v ?? '').trim();
+              return RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(t) ? null : 'Escribe un correo válido.';
+            },
+          ),
+          separadorCampos,
+          DropdownMenuFormField<String>(
+            expandedInsets: EdgeInsets.zero,
+            label: const Text('Rol *'),
+            dropdownMenuEntries: [
+              for (final e in _rolesInternos.entries) DropdownMenuEntry<String>(value: e.key, label: e.value),
+            ],
+            validator: (v) => v == null ? 'Elige el rol de la cuenta.' : null,
+            onSelected: (v) => redibujar(() => rol = v),
+          ),
+          if (rol == 'gerente' || rol == 'administrativo')
+            Padding(
+              padding: const EdgeInsets.only(top: 6),
+              child: Text(
+                rol == 'gerente'
+                    ? 'El gerente puede valorizar reparaciones, cambiar las reglas de cobro y crear o desactivar cuentas.'
+                    : 'El administrativo opera todo el panel y puede crear o desactivar cuentas.',
+                style: const TextStyle(fontSize: 12, color: GomaqColors.advertenciaFuerte),
+              ),
+            ),
+          separadorCampos,
+          TextFormField(
+            controller: claveCtrl,
+            obscureText: true,
+            decoration: decoracionCampo('Contraseña temporal *', ayuda: 'Mínimo 8 caracteres. Entrégasela en persona: el sistema no la envía ni la vuelve a mostrar.'),
+            validator: (v) {
+              final t = v ?? '';
+              if (t.length < 8) return 'Mínimo 8 caracteres.';
+              if (utf8.encode(t).length > 72) return 'Demasiado larga (máximo 72 bytes).';
+              return null;
+            },
+          ),
+          separadorCampos,
+          TextFormField(
+            controller: repetirCtrl,
+            obscureText: true,
+            decoration: decoracionCampo('Repetir contraseña *'),
+            validator: (v) => v == claveCtrl.text ? null : 'Las contraseñas no coinciden.',
+          ),
+        ],
+      ),
+      alGuardar: () => ApiClient.instance.post('/api/usuarios', {
+        'nombre': nombreCtrl.text.trim(),
+        'email': correoCtrl.text.trim(),
+        'rol': rol,
+        'password': claveCtrl.text,
+      }),
+    );
+    nombreCtrl.dispose();
+    correoCtrl.dispose();
+    claveCtrl.dispose();
+    repetirCtrl.dispose();
+    if (creada && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Cuenta creada. Entrégale la contraseña en persona: no se vuelve a mostrar.')),
+      );
+      _cargar();
+    }
+  }
+
+  /// Desactiva o reactiva una cuenta interna. Desactivada no puede iniciar sesión y su sesión
+  /// vigente se corta en la siguiente petición. Los datos y las órdenes se conservan.
+  Future<void> _cambiarEstado(Map<String, dynamic> usuario, {required bool activar}) async {
+    if (!activar) {
+      final confirmado = await mostrarConfirmacion(
+        context,
+        titulo: '¿Desactivar la cuenta de ${usuario['nombre']}?',
+        mensaje:
+            'No podrá iniciar sesión y su sesión actual se cierra. Sus órdenes y datos se conservan, y puedes reactivarla cuando quieras.',
+        textoAccion: 'Desactivar cuenta',
+        peligro: true,
+      );
+      if (!confirmado) return;
+    }
+    try {
+      final actualizado = await ApiClient.instance.patch('/api/usuarios/${usuario['id']}/estado', {'activo': activar});
+      if (!mounted) return;
+      setState(() {
+        final i = _internos.indexWhere((u) => u['id'] == usuario['id']);
+        if (i != -1) _internos[i] = {..._internos[i] as Map<String, dynamic>, 'estado_cuenta': actualizado['estado_cuenta']};
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(activar ? 'Cuenta reactivada' : 'Cuenta desactivada')),
+      );
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Error: ${e.message}')));
+    }
+  }
+
+  Widget _tarjetaCuentas() {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Semantics(
+                    header: true,
+                    child: const Text('Cuentas del equipo', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+                  ),
+                ),
+                FilledButton.icon(
+                  onPressed: _nuevaCuenta,
+                  icon: const Icon(Icons.person_add_alt_1, size: 18),
+                  label: const Text('Nueva cuenta'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Mecánicos, administrativos y gerentes. Una cuenta desactivada no puede entrar, pero conserva su historial.',
+              style: TextStyle(fontSize: 13, color: Colors.grey[700]),
+            ),
+            const SizedBox(height: 8),
+            if (_internos.isEmpty)
+              const Text('No hay cuentas internas registradas')
+            else
+              ..._internos.map((u) {
+                final activa = (u['estado_cuenta'] ?? 'activo') == 'activo';
+                return ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(activa ? Icons.person_outline : Icons.person_off_outlined),
+                  title: Text('${u['nombre']} · ${_rolLegible(u['rol'])}'),
+                  // el estado va en texto y no solo en el icono (WCAG 1.4.1)
+                  subtitle: Text(
+                    activa ? '${u['email']}' : '${u['email']} · Desactivada',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: activa ? FontWeight.normal : FontWeight.w700,
+                      color: activa ? null : GomaqColors.advertenciaFuerte,
+                    ),
+                  ),
+                  trailing: activa
+                      ? TextButton(
+                          onPressed: () => _cambiarEstado(u, activar: false),
+                          child: Text('Desactivar', style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                        )
+                      : TextButton(onPressed: () => _cambiarEstado(u, activar: true), child: const Text('Reactivar')),
+                );
+              }),
+          ],
+        ),
+      ),
+    );
   }
 
   Widget _dato(String etiqueta, String? valor) {
@@ -244,11 +438,12 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
       onRefresh: _cargar,
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
-        // +2: la tarjeta de alertas de mantencion y el titulo de las solicitudes
-        itemCount: _solicitudes.length + 2,
+        // +3: la tarjeta de cuentas, la de alertas de mantencion y el titulo de las solicitudes
+        itemCount: _solicitudes.length + 3,
         itemBuilder: (context, index) {
-          if (index == 0) return _tarjetaAlertas();
-          if (index == 1) {
+          if (index == 0) return _tarjetaCuentas();
+          if (index == 1) return _tarjetaAlertas();
+          if (index == 2) {
             return Padding(
               padding: const EdgeInsets.only(top: 24, bottom: 8),
               child: Text(
@@ -259,7 +454,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
               ),
             );
           }
-          final i = index - 2;
+          final i = index - 3;
           final s = _solicitudes[i];
           return Card(
             child: Padding(

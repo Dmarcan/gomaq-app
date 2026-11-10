@@ -51,6 +51,13 @@ before(async () => {
     if (!HABILITADO) return;
     const express = require('express');
     pool = require('../src/config/db');
+    // verifyToken revisa la cuenta en la base. Los usuarios reales se buscan ahi; los tokens de
+    // relleno de los portales (ids 98765x, que no existen) valen lo que firman, como antes.
+    require('../src/middleware/auth').usarBuscadorDeUsuarios(async (id, claims) => {
+        if (id >= 987000) return { rol: claims.rol, cliente_id: claims.cliente_id ?? null, estado_cuenta: 'activo' };
+        const r = await pool.query('SELECT rol, cliente_id, estado_cuenta FROM usuarios WHERE id = $1', [id]);
+        return r.rows[0] || null;
+    });
 
     const app = express();
     app.use(express.json());
@@ -64,6 +71,7 @@ before(async () => {
     app.use('/api/notificaciones', require('../src/routes/notificaciones'));
     app.use('/api/dashboard', require('../src/routes/dashboard'));
     app.use('/api/usuarios', require('../src/routes/usuarios'));
+    app.use('/api/auth', require('../src/routes/auth'));
     app.use('/api/rentabilidad', require('../src/routes/rentabilidad'));
     app.use('/api/maquinarias', require('../src/routes/maquinarias'));
     app.use('/api/maquinarias', require('../src/routes/guias'));
@@ -90,7 +98,9 @@ before(async () => {
     tokens.gerente = firmar(porEmail['admin@gomaq.test']);
     tokens.mecanico = firmar(porEmail['mecanico@gomaq.test']);
     tokens.mecanicoDos = firmar(porEmail['mecanico2@gomaq.test']);
-    tokens.cliente = firmar(porEmail['cliente@gomaq.test']);
+    // cliente sin empresa vinculada (el usuario de la semilla ahora si tiene cliente_id en la base, y
+    // verifyToken lo toma de ahi): un token de relleno, que el buscador de prueba da por bueno
+    tokens.cliente = jwt.sign({ id: 987600, rol: 'cliente', cliente_id: null }, process.env.JWT_SECRET, { expiresIn: '1h' });
     datos.mecanicoId = porEmail['mecanico@gomaq.test'].id;
     datos.mecanicoDosId = porEmail['mecanico2@gomaq.test'].id;
 
@@ -5942,6 +5952,84 @@ describe('bloque 6 (parte 1): contratos para el dashboard, Ordenes y el portal',
             assert.equal(s.motivo, 'sin_llave');
             assert.equal((await leer(sinLlave)).eta_consultas, 0);
             await pool.query('DELETE FROM uso_ors');
+        });
+
+        test('cuentas internas: crear desde el panel, iniciar sesion, y una cuenta desactivada pierde la sesion al instante', async (t) => {
+            if (!requiereBase(t)) return;
+            const sufijo = `${Date.now()}${Math.floor(Math.random() * 1000)}`;
+            const correo = `qa.cuentas.${sufijo}@gomaq.test`;
+            const creados = [];
+            try {
+                // el administrativo crea cuentas de los tres roles internos
+                for (const rol of ['mecanico', 'administrativo', 'gerente']) {
+                    const r = await pedir('POST', '/api/usuarios', 'administrativo', {
+                        nombre: `QA ${rol}`,
+                        email: rol === 'mecanico' ? correo.toUpperCase() : `qa.${rol}.${sufijo}@gomaq.test`,
+                        rol,
+                        password: 'clave-de-prueba-1',
+                    });
+                    assert.equal(r.status, 201, `${rol}: ${JSON.stringify(r.body)}`);
+                    assert.equal(r.body.rol, rol);
+                    assert.equal(r.body.estado_cuenta, 'activo');
+                    assert.ok(!('password_hash' in r.body) && !('password' in r.body), 'nunca devuelve la clave');
+                    creados.push(r.body.id);
+                }
+                const mecanicoNuevo = creados[0];
+                // el correo se guardo en minusculas aunque se escribio en mayusculas
+                assert.equal((await pool.query('SELECT email FROM usuarios WHERE id = $1', [mecanicoNuevo])).rows[0].email, correo);
+                // repetir el correo (con otras mayusculas) es 409
+                assert.equal((await pedir('POST', '/api/usuarios', 'gerente', { nombre: 'Otra', email: correo.replace('qa', 'QA'), rol: 'mecanico', password: 'clave-de-prueba-1' })).status, 409);
+                // cliente y clave corta no se crean por esta ruta
+                assert.equal((await pedir('POST', '/api/usuarios', 'administrativo', { nombre: 'Cli', email: `cli.${sufijo}@gomaq.test`, rol: 'cliente', password: 'clave-de-prueba-1' })).status, 400);
+                assert.equal((await pedir('POST', '/api/usuarios', 'administrativo', { nombre: 'Corta', email: `corta.${sufijo}@gomaq.test`, rol: 'mecanico', password: '1234' })).status, 400);
+                // el mecanico no puede crear cuentas ni desactivarlas
+                assert.equal((await pedir('POST', '/api/usuarios', 'mecanico', { nombre: 'X', email: `x.${sufijo}@gomaq.test`, rol: 'gerente', password: 'clave-de-prueba-1' })).status, 403);
+                assert.equal((await pedir('PATCH', `/api/usuarios/${mecanicoNuevo}/estado`, 'mecanico', { activo: false })).status, 403);
+
+                // inicia sesion con el correo escrito de cualquier forma
+                const login = await fetch(`${base}/api/auth/login`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: correo.toUpperCase(), password: 'clave-de-prueba-1' }),
+                });
+                assert.equal(login.status, 200);
+                const { token } = await login.json();
+                const conToken = (ruta) => fetch(`${base}${ruta}`, { headers: { Authorization: `Bearer ${token}` } });
+                assert.equal((await conToken('/api/ordenes-trabajo?limit=1')).status, 200, 'la sesion nueva funciona');
+
+                // no se desactiva a si mismo
+                const yo = (await pool.query(`SELECT id FROM usuarios WHERE email = 'administrativo@gomaq.test'`)).rows[0].id;
+                assert.equal((await pedir('PATCH', `/api/usuarios/${yo}/estado`, 'administrativo', { activo: false })).status, 409);
+                // activo debe ser booleano
+                assert.equal((await pedir('PATCH', `/api/usuarios/${mecanicoNuevo}/estado`, 'administrativo', { activo: 'false' })).status, 400);
+
+                // desactivada: el token que ya tenia deja de valer en la siguiente peticion, y no puede volver a entrar
+                const baja = await pedir('PATCH', `/api/usuarios/${mecanicoNuevo}/estado`, 'administrativo', { activo: false });
+                assert.equal(baja.status, 200);
+                assert.equal(baja.body.estado_cuenta, 'rechazado');
+                assert.equal((await conToken('/api/ordenes-trabajo?limit=1')).status, 401, 'la sesion vigente se corta');
+                const relogin = await fetch(`${base}/api/auth/login`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: correo, password: 'clave-de-prueba-1' }),
+                });
+                assert.equal(relogin.status, 403);
+
+                // reactivada: vuelve a funcionar con el mismo token
+                assert.equal((await pedir('PATCH', `/api/usuarios/${mecanicoNuevo}/estado`, 'gerente', { activo: true })).status, 200);
+                assert.equal((await conToken('/api/ordenes-trabajo?limit=1')).status, 200);
+
+                // un cambio de rol rige de inmediato: el token sigue diciendo mecanico pero ahora es cliente
+                await pool.query(`UPDATE usuarios SET rol = 'cliente' WHERE id = $1`, [mecanicoNuevo]);
+                assert.equal((await conToken('/api/ordenes-trabajo?limit=1')).status, 403, 'manda el rol de la base, no el del token');
+
+                // una cuenta de cliente no se desactiva por esta ruta (va por Solicitudes)
+                assert.equal((await pedir('PATCH', `/api/usuarios/${mecanicoNuevo}/estado`, 'administrativo', { activo: false })).status, 404);
+
+                // el listado trae el estado de cada cuenta
+                const lista = await pedir('GET', '/api/usuarios', 'gerente');
+                assert.ok(lista.body.every((u) => 'estado_cuenta' in u));
+            } finally {
+                if (creados.length) await pool.query('DELETE FROM usuarios WHERE id = ANY($1)', [creados]);
+            }
         });
 
         test('ETA ajustada y quieto desde: la hora de llegada sigue a la posicion, y un intento fallido espera', async (t) => {

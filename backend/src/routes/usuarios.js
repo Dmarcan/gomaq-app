@@ -2,6 +2,8 @@ const express = require('express');
 require('../utils/asyncErrores');
 const { validarIdsEnRuta, validarCuerpo } = require('../utils/validacion');
 const pool = require('../config/db');
+const bcrypt = require('bcryptjs');
+const { validarNuevaCuenta, validarCambioDeEstado, ROLES_INTERNOS } = require('../utils/cuentasInternas');
 const { verifyToken, requireRole } = require('../middleware/auth');
 
 const { SQL_CUENTAS_POR_APROBAR } = require('../utils/pendientes');
@@ -20,7 +22,7 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
     // ot_abiertas: cuantas ordenes de trabajo no finalizadas tiene asignadas cada usuario
     // (solo es relevante para mecanicos, pero se calcula igual para cualquier rol sin costo extra)
     const selectConOtAbiertas = `
-        SELECT u.id, u.nombre, u.email, u.rol,
+        SELECT u.id, u.nombre, u.email, u.rol, u.estado_cuenta,
                u.recibe_alertas_mantencion, u.telefono_whatsapp,
                COALESCE(ot.abiertas, 0) AS ot_abiertas
         FROM usuarios u
@@ -39,6 +41,61 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar usuarios' });
+    }
+});
+
+// POST /api/usuarios - crea una cuenta interna (mecanico, administrativo o gerente). Antes solo se
+// podia con el script create-user.js por SSH. La contrasena la escribe quien crea la cuenta (no hay
+// proveedor de correo para enviarla): se guarda solo como hash y no vuelve en ninguna respuesta.
+// Las cuentas de cliente se crean con el registro y se aprueban en Solicitudes.
+router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    const v = validarNuevaCuenta(req.body);
+    if (!v.ok) return res.status(400).json({ error: v.error });
+    const { nombre, email, rol, password } = v.datos;
+    try {
+        // el correo se compara sin distinguir mayusculas: el inicio de sesion tambien
+        const existe = await pool.query('SELECT 1 FROM usuarios WHERE lower(email) = $1', [email]);
+        if (existe.rows.length > 0) {
+            return res.status(409).json({ error: 'Ya existe una cuenta con ese correo' });
+        }
+        const hash = await bcrypt.hash(password, 10);
+        const result = await pool.query(
+            `INSERT INTO usuarios (nombre, email, password_hash, rol, estado_cuenta)
+             VALUES ($1, $2, $3, $4, 'activo')
+             RETURNING id, nombre, email, rol, estado_cuenta`,
+            [nombre, email, hash, rol]
+        );
+        const nueva = result.rows[0];
+        console.log(`Cuenta ${nueva.id} (${nueva.rol}) creada por el usuario ${req.user.id}`);
+        res.status(201).json(nueva);
+    } catch (err) {
+        if (err.code === '23505') return res.status(409).json({ error: 'Ya existe una cuenta con ese correo' });
+        console.error(err);
+        res.status(500).json({ error: 'Error al crear la cuenta' });
+    }
+});
+
+// PATCH /api/usuarios/:id/estado - desactiva o reactiva una cuenta interna. Una cuenta desactivada
+// no puede iniciar sesion y su sesion vigente deja de valer en la siguiente peticion (verifyToken
+// la revisa en la base). No se puede desactivar la propia cuenta.
+router.patch('/:id/estado', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    const v = validarCambioDeEstado(req.body, req.params.id, req.user.id);
+    if (!v.ok) return res.status(v.codigo).json({ error: v.error });
+    try {
+        const result = await pool.query(
+            `UPDATE usuarios SET estado_cuenta = $1
+             WHERE id = $2 AND rol = ANY($3::rol_usuario[])
+             RETURNING id, nombre, email, rol, estado_cuenta`,
+            [v.estado, req.params.id, ROLES_INTERNOS]
+        );
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Usuario interno no encontrado' });
+        }
+        console.log(`Cuenta ${result.rows[0].id} pasó a ${v.estado} por el usuario ${req.user.id}`);
+        res.json(result.rows[0]);
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al cambiar el estado de la cuenta' });
     }
 });
 

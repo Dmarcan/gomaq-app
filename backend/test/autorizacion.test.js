@@ -8,12 +8,13 @@
 // eres, pero no puedes hacer esto). La distincion importa: un 403 le confirma a quien prueba
 // que su sesion es valida, y por eso nunca debe usarse donde corresponde un 401.
 
-const { test, describe } = require('node:test');
+const { test, describe, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const jwt = require('jsonwebtoken');
 
 process.env.JWT_SECRET = process.env.JWT_SECRET || 'secreto-solo-para-pruebas';
-const { verifyToken, requireRole } = require('../src/middleware/auth');
+const { verifyToken, requireRole, usarBuscadorDeUsuarios } = require('../src/middleware/auth');
+const { creerEnElToken } = require('./_sesionDePrueba');
 
 /** Doble de `res` que registra el estado y el cuerpo en vez de escribir en un socket. */
 function respuestaFalsa() {
@@ -23,64 +24,66 @@ function respuestaFalsa() {
     return res;
 }
 
-function ejecutar(middleware, req) {
+async function ejecutar(middleware, req) {
     const res = respuestaFalsa();
     let continuo = false;
-    middleware(req, res, () => { continuo = true; });
+    await middleware(req, res, () => { continuo = true; });
     return { res, continuo };
 }
 
 const firmar = (payload, opciones = {}) =>
     jwt.sign(payload, process.env.JWT_SECRET, { expiresIn: '12h', ...opciones });
 
+creerEnElToken();
+
 describe('verifyToken', () => {
-    test('rechaza la peticion sin cabecera de autorizacion', () => {
-        const { res, continuo } = ejecutar(verifyToken, { headers: {} });
+    test('rechaza la peticion sin cabecera de autorizacion', async () => {
+        const { res, continuo } = await ejecutar(verifyToken, { headers: {} });
         assert.equal(res.codigo, 401);
         assert.equal(continuo, false, 'no debe continuar hacia la ruta');
     });
 
-    test('rechaza una cabecera que no usa el esquema Bearer', () => {
-        const { res, continuo } = ejecutar(verifyToken, {
+    test('rechaza una cabecera que no usa el esquema Bearer', async () => {
+        const { res, continuo } = await ejecutar(verifyToken, {
             headers: { authorization: 'Basic dXN1YXJpbzpjbGF2ZQ==' },
         });
         assert.equal(res.codigo, 401);
         assert.equal(continuo, false);
     });
 
-    test('rechaza un token firmado con otro secreto', () => {
+    test('rechaza un token firmado con otro secreto', async () => {
         const ajeno = jwt.sign({ id: 1, rol: 'gerente' }, 'otro-secreto');
-        const { res, continuo } = ejecutar(verifyToken, {
+        const { res, continuo } = await ejecutar(verifyToken, {
             headers: { authorization: `Bearer ${ajeno}` },
         });
         assert.equal(res.codigo, 401);
         assert.equal(continuo, false, 'un token de otro emisor no puede pasar');
     });
 
-    test('rechaza un token ya expirado', () => {
+    test('rechaza un token ya expirado', async () => {
         const vencido = jwt.sign({ id: 1, rol: 'mecanico' }, process.env.JWT_SECRET, { expiresIn: -10 });
-        const { res, continuo } = ejecutar(verifyToken, {
+        const { res, continuo } = await ejecutar(verifyToken, {
             headers: { authorization: `Bearer ${vencido}` },
         });
         assert.equal(res.codigo, 401);
         assert.equal(continuo, false);
     });
 
-    test('rechaza un token manipulado', () => {
+    test('rechaza un token manipulado', async () => {
         // se altera un caracter del cuerpo: la firma deja de calzar
         const valido = firmar({ id: 1, rol: 'mecanico' });
         const [cab, cuerpo, firma] = valido.split('.');
         const alterado = `${cab}.${cuerpo.slice(0, -1)}${cuerpo.slice(-1) === 'A' ? 'B' : 'A'}.${firma}`;
-        const { res, continuo } = ejecutar(verifyToken, {
+        const { res, continuo } = await ejecutar(verifyToken, {
             headers: { authorization: `Bearer ${alterado}` },
         });
         assert.equal(res.codigo, 401);
         assert.equal(continuo, false);
     });
 
-    test('acepta un token valido y expone la identidad a la ruta', () => {
+    test('acepta un token valido y expone la identidad a la ruta', async () => {
         const req = { headers: { authorization: `Bearer ${firmar({ id: 7, rol: 'mecanico' })}` } };
-        const { res, continuo } = ejecutar(verifyToken, req);
+        const { res, continuo } = await ejecutar(verifyToken, req);
         assert.equal(continuo, true);
         assert.equal(res.codigo, null, 'no debe responder: debe dejar seguir');
         assert.equal(req.user.id, 7);
@@ -88,50 +91,111 @@ describe('verifyToken', () => {
     });
 });
 
+describe('verifyToken revisa la cuenta en la base', () => {
+    const peticion = (id = 7, rol = 'mecanico', cliente = null) => ({
+        headers: { authorization: `Bearer ${firmar({ id, rol, cliente_id: cliente })}` },
+    });
+    let restaurar;
+    afterEach(() => { if (restaurar) restaurar(); restaurar = null; creerEnElToken(); });
+
+    test('una cuenta desactivada o pendiente responde 401 aunque el token siga vigente', async () => {
+        for (const estado of ['rechazado', 'pendiente']) {
+            restaurar = usarBuscadorDeUsuarios(async () => ({ rol: 'mecanico', cliente_id: null, estado_cuenta: estado }));
+            const { res, continuo } = await ejecutar(verifyToken, peticion());
+            assert.equal(res.codigo, 401, estado);
+            assert.equal(continuo, false);
+            restaurar();
+        }
+    });
+
+    test('un usuario que ya no existe responde 401', async () => {
+        restaurar = usarBuscadorDeUsuarios(async () => null);
+        const { res, continuo } = await ejecutar(verifyToken, peticion());
+        assert.equal(res.codigo, 401);
+        assert.equal(continuo, false);
+    });
+
+    test('el rol y el cliente salen de la base, no del token: un cambio rige de inmediato', async () => {
+        restaurar = usarBuscadorDeUsuarios(async () => ({ rol: 'mecanico', cliente_id: 5, estado_cuenta: 'activo' }));
+        const req = peticion(7, 'gerente', 99); // el token dice gerente y cliente 99
+        const { continuo } = await ejecutar(verifyToken, req);
+        assert.equal(continuo, true);
+        assert.equal(req.user.rol, 'mecanico', 'manda el rol vigente');
+        assert.equal(req.user.cliente_id, 5, 'manda el cliente vigente');
+        assert.equal((await ejecutar(requireRole('gerente'), req)).res.codigo, 403, 'ya no pasa como gerente');
+    });
+
+    test('si la base no responde contesta 503 y no 401: una caida no cierra sesiones', async () => {
+        restaurar = usarBuscadorDeUsuarios(async () => { throw new Error('conexion rechazada'); });
+        const silenciar = console.error;
+        console.error = () => {};
+        try {
+            const { res, continuo } = await ejecutar(verifyToken, peticion());
+            assert.equal(res.codigo, 503);
+            assert.equal(continuo, false);
+            assert.ok(!JSON.stringify(res.cuerpo).includes('conexion rechazada'), 'no filtra el detalle del error');
+        } finally {
+            console.error = silenciar;
+        }
+    });
+
+    test('un id que no es entero no llega a la base', async () => {
+        let consultas = 0;
+        restaurar = usarBuscadorDeUsuarios(async () => { consultas++; return { rol: 'gerente', cliente_id: null, estado_cuenta: 'activo' }; });
+        for (const id of ['1 OR 1=1', null, 1.5, undefined]) {
+            const req = { headers: { authorization: `Bearer ${firmar({ id, rol: 'gerente' })}` } };
+            const { res, continuo } = await ejecutar(verifyToken, req);
+            assert.equal(res.codigo, 401);
+            assert.equal(continuo, false);
+        }
+        assert.equal(consultas, 0);
+    });
+});
+
 describe('requireRole', () => {
-    test('deja pasar al rol habilitado', () => {
-        const { res, continuo } = ejecutar(requireRole('administrativo'), {
+    test('deja pasar al rol habilitado', async () => {
+        const { res, continuo } = await ejecutar(requireRole('administrativo'), {
             user: { id: 4, rol: 'administrativo' },
         });
         assert.equal(continuo, true);
         assert.equal(res.codigo, null);
     });
 
-    test('deja pasar a cualquiera de los roles enumerados', () => {
+    test('deja pasar a cualquiera de los roles enumerados', async () => {
         for (const rol of ['gerente', 'administrativo', 'mecanico']) {
-            const { continuo } = ejecutar(requireRole('gerente', 'administrativo', 'mecanico'), {
+            const { continuo } = await ejecutar(requireRole('gerente', 'administrativo', 'mecanico'), {
                 user: { id: 1, rol },
             });
             assert.equal(continuo, true, `el rol ${rol} deberia estar habilitado`);
         }
     });
 
-    test('rechaza con 403 al rol no habilitado', () => {
-        const { res, continuo } = ejecutar(requireRole('administrativo', 'gerente'), {
+    test('rechaza con 403 al rol no habilitado', async () => {
+        const { res, continuo } = await ejecutar(requireRole('administrativo', 'gerente'), {
             user: { id: 2, rol: 'mecanico' },
         });
         assert.equal(res.codigo, 403);
         assert.equal(continuo, false);
     });
 
-    test('rechaza al cliente en un modulo interno', () => {
-        const { res, continuo } = ejecutar(requireRole('administrativo', 'gerente'), {
+    test('rechaza al cliente en un modulo interno', async () => {
+        const { res, continuo } = await ejecutar(requireRole('administrativo', 'gerente'), {
             user: { id: 3, rol: 'cliente' },
         });
         assert.equal(res.codigo, 403);
         assert.equal(continuo, false);
     });
 
-    test('rechaza cuando no hay usuario en la peticion', () => {
+    test('rechaza cuando no hay usuario en la peticion', async () => {
         // ocurriria si una ruta montara requireRole sin verifyToken delante:
         // el control no debe asumir que alguien ya autentico
-        const { res, continuo } = ejecutar(requireRole('gerente'), {});
+        const { res, continuo } = await ejecutar(requireRole('gerente'), {});
         assert.equal(res.codigo, 403);
         assert.equal(continuo, false);
     });
 
-    test('un rol inventado no atraviesa el control', () => {
-        const { res, continuo } = ejecutar(requireRole('gerente'), {
+    test('un rol inventado no atraviesa el control', async () => {
+        const { res, continuo } = await ejecutar(requireRole('gerente'), {
             user: { id: 9, rol: 'superadministrador' },
         });
         assert.equal(res.codigo, 403);
@@ -140,25 +204,25 @@ describe('requireRole', () => {
 });
 
 describe('encadenamiento de ambos controles', () => {
-    test('un token valido de mecanico no habilita una ruta de administrativo', () => {
+    test('un token valido de mecanico no habilita una ruta de administrativo', async () => {
         const req = { headers: { authorization: `Bearer ${firmar({ id: 2, rol: 'mecanico' })}` } };
-        const paso1 = ejecutar(verifyToken, req);
+        const paso1 = await ejecutar(verifyToken, req);
         assert.equal(paso1.continuo, true, 'la autenticacion si debe pasar');
 
-        const paso2 = ejecutar(requireRole('administrativo'), req);
+        const paso2 = await ejecutar(requireRole('administrativo'), req);
         assert.equal(paso2.res.codigo, 403, 'la autorizacion debe detenerlo');
         assert.equal(paso2.continuo, false);
     });
 
-    test('el rol viaja en el token y no en la peticion', () => {
+    test('el rol viaja en el token y no en la peticion', async () => {
         // si el rol se leyera de la cabecera o del cuerpo, bastaria con declararse gerente
         const req = {
             headers: { authorization: `Bearer ${firmar({ id: 2, rol: 'mecanico' })}`, rol: 'gerente' },
             body: { rol: 'gerente' },
         };
-        ejecutar(verifyToken, req);
+        await ejecutar(verifyToken, req);
         assert.equal(req.user.rol, 'mecanico', 'debe primar el rol firmado en el token');
-        const { res } = ejecutar(requireRole('gerente'), req);
+        const { res } = await ejecutar(requireRole('gerente'), req);
         assert.equal(res.codigo, 403);
     });
 });

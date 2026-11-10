@@ -14,6 +14,10 @@ const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const jwt = require('jsonwebtoken');
 const express = require('express');
+const { creerEnElToken } = require('./_sesionDePrueba');
+
+// sin base de datos: la cuenta del token se da por buena (verifyToken la revisa en la base en cada peticion)
+creerEnElToken();
 
 let servidor;
 let base;

@@ -10,6 +10,10 @@ process.env.SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'clave-so
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const jwt = require('jsonwebtoken');
+const { creerEnElToken } = require('./_sesionDePrueba');
+
+// sin base de datos: la cuenta del token se da por buena (verifyToken la revisa en la base en cada peticion)
+creerEnElToken();
 const express = require('express');
 const { detectarTipoArchivo } = require('../src/utils/firmaArchivo');
 const { verificarFirma } = require('../src/middleware/upload');
