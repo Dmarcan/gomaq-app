@@ -11,5 +11,5 @@ Future<void> confirmarCerrarSesion(BuildContext context, AuthService auth) async
     mensaje: 'Tendrás que ingresar de nuevo con tu correo y contraseña.',
     textoAccion: 'Cerrar sesión',
   );
-  if (confirmado) await auth.logout();
+  if (confirmado) await auth.cerrarSesion();
 }

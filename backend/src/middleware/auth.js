@@ -1,6 +1,11 @@
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
+const { esTokenDeSesion, hashToken, estadoSesion, REFRESCO_USO_MINUTOS } = require('../utils/sesiones');
 
+// Hay dos clases de token. El login entrega un token opaco ("gs1_...") cuyo hash vive en la tabla
+// sesiones (migracion 036): se puede revocar y vence por tiempo absoluto o por inactividad. Los JWT
+// firmados de 12 h que ya estan en los telefonos y navegadores siguen valiendo hasta que venzan.
+//
 // La sesion es un token firmado (12 h), pero la firma sola no basta: un usuario dado de baja o con
 // el rol cambiado seguiria operando hasta que venza. Por eso cada peticion revisa en la base que la
 // cuenta siga activa y toma de ahi el rol y el cliente (lo firmado en el token es solo el id).
@@ -21,6 +26,42 @@ async function buscarEnBase(id) {
 
 let buscarUsuario = buscarEnBase;
 
+async function buscarSesion(hash) {
+    const r = await pool.query(
+        `SELECT s.id, s.usuario_id, s.expira_at, s.ultimo_uso_at, s.inactividad_min, s.revocada_at,
+                u.rol, u.cliente_id, u.estado_cuenta
+         FROM sesiones s JOIN usuarios u ON u.id = s.usuario_id
+         WHERE s.token_hash = $1`,
+        [hash]
+    );
+    return r.rows[0] || null;
+}
+
+/** Valida un token de sesion guardado en la base. Una sola consulta (sesion y cuenta juntas). */
+async function verificarSesion(token, req, res, next) {
+    let fila;
+    try {
+        fila = await buscarSesion(hashToken(token));
+    } catch (err) {
+        console.error('No se pudo verificar la sesión:', err && err.message);
+        return res.status(503).json({ error: 'No se pudo verificar tu sesión. Reintenta en un momento' });
+    }
+    if (!fila || estadoSesion(fila) !== 'ok') {
+        return res.status(401).json({ error: 'Tu sesión expiró. Vuelve a iniciar sesión' });
+    }
+    if (fila.estado_cuenta !== 'activo') {
+        return res.status(401).json({ error: 'Tu cuenta no está activa. Vuelve a iniciar sesión o contacta a GOMAQ' });
+    }
+    // marca de uso, como maximo cada pocos minutos y sin esperar el resultado
+    pool.query(
+        `UPDATE sesiones SET ultimo_uso_at = now()
+         WHERE id = $1 AND ultimo_uso_at < now() - make_interval(mins => $2)`,
+        [fila.id, REFRESCO_USO_MINUTOS]
+    ).catch(() => {});
+    req.user = { id: fila.usuario_id, rol: fila.rol, cliente_id: fila.cliente_id ?? null, sid: fila.id };
+    return next();
+}
+
 /**
  * Cambia como se busca al usuario. Solo para pruebas que montan rutas sin base de datos o con
  * tokens de usuarios que no existen; devuelve una funcion que restaura el comportamiento real.
@@ -38,6 +79,7 @@ async function verifyToken(req, res, next) {
         return res.status(401).json({ error: 'Debes iniciar sesión' });
     }
     const token = header.slice('Bearer '.length);
+    if (esTokenDeSesion(token)) return verificarSesion(token, req, res, next);
     let claims;
     try {
         claims = jwt.verify(token, process.env.JWT_SECRET);

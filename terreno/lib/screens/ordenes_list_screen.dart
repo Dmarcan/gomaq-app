@@ -161,7 +161,7 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
         ],
       ),
     );
-    if (confirmado == true) await auth.logout();
+    if (confirmado == true) await auth.cerrarSesion();
   }
 
   /// Orden nueva de cualquier equipo de la flota, sin esperar a que la oficina la cree. Nace con

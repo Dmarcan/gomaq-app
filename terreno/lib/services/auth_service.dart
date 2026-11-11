@@ -31,6 +31,7 @@ class AuthService extends ChangeNotifier {
     final data = await ApiClient.instance.post('/api/auth/login', {
       'email': email,
       'password': password,
+      'app': 'terreno',
     });
     // esta app es exclusiva del rol mecanico: cualquier otro rol veria pantallas
     // que le fallan (y podria encolar cambios que el backend siempre rechazara)
@@ -75,6 +76,17 @@ class AuthService extends ChangeNotifier {
 
     await db.guardarSesion('usuario_id', usuarioId);
     await db.guardarSesion('usuario_nombre', (usuario['nombre'] ?? '').toString());
+  }
+
+  /// Cierre de sesión pedido por el mecánico: avisa al servidor (mejor esfuerzo, 3 s) y después borra lo
+  /// local. Sin señal igual se cierra; el servidor vence la sesión por inactividad. No toca la cola.
+  Future<void> cerrarSesion() async {
+    try {
+      await ApiClient.instance.post('/api/auth/logout', {}).timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // sin señal o servidor lento: se cierra igual
+    }
+    await logout();
   }
 
   Future<void> logout() async {

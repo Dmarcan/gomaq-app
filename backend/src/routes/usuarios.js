@@ -372,10 +372,19 @@ router.patch('/:id/estado', verifyToken, requireRole('administrativo', 'gerente'
     const v = validarCambioDeEstado(req.body, req.params.id, req.user.id);
     if (!v.ok) return res.status(v.codigo).json({ error: v.error });
     try {
+        // cambiar el estado cierra sus sesiones en la misma sentencia: reactivar una cuenta no revive las que
+        // tenia abiertas, ni siquiera si algo falla a medias
         const result = await pool.query(
-            `UPDATE usuarios SET estado_cuenta = $1
-             WHERE id = $2 AND rol = ANY($3::rol_usuario[]) AND estado_cuenta <> 'pendiente'
-             RETURNING id, nombre, email, rol, estado_cuenta`,
+            `WITH cambio AS (
+                 UPDATE usuarios SET estado_cuenta = $1
+                 WHERE id = $2 AND rol = ANY($3::rol_usuario[]) AND estado_cuenta <> 'pendiente'
+                 RETURNING id, nombre, email, rol, estado_cuenta
+             ), cerradas AS (
+                 UPDATE sesiones SET revocada_at = now(), motivo = 'estado'
+                 WHERE usuario_id IN (SELECT id FROM cambio) AND revocada_at IS NULL
+                 RETURNING id
+             )
+             SELECT * FROM cambio`,
             [v.estado, req.params.id, ROLES_INTERNOS]
         );
         if (result.rows.length === 0) {
@@ -405,10 +414,18 @@ router.post('/:id/password', verifyToken, requireRole('administrativo', 'gerente
     if (!v.ok) return res.status(400).json({ error: v.error });
     try {
         const hash = await bcrypt.hash(v.password, 10);
+        // la clave nueva y el cierre de las sesiones de esa cuenta van en una sola sentencia
         const result = await pool.query(
-            `UPDATE usuarios SET password_hash = $1, password_cambiada_at = now()
-             WHERE id = $2 AND rol = ANY($3::rol_usuario[])
-             RETURNING id, nombre, email, rol`,
+            `WITH cambio AS (
+                 UPDATE usuarios SET password_hash = $1, password_cambiada_at = now()
+                 WHERE id = $2 AND rol = ANY($3::rol_usuario[])
+                 RETURNING id, nombre, email, rol
+             ), cerradas AS (
+                 UPDATE sesiones SET revocada_at = now(), motivo = 'clave'
+                 WHERE usuario_id IN (SELECT id FROM cambio) AND revocada_at IS NULL
+                 RETURNING id
+             )
+             SELECT * FROM cambio`,
             [hash, req.params.id, ROLES_INTERNOS]
         );
         if (result.rows.length === 0) {

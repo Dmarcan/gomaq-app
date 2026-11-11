@@ -12,6 +12,7 @@ const {
     validarConfirmacion, hmacCodigo, evaluarCanje, canjePermitido, correoDisponible,
 } = require('../utils/codigosCuenta');
 const { crearCodigo, enviarCodigoPorCorreo } = require('../services/codigosCuenta');
+const { crearSesion, revocarSesiones } = require('../services/sesiones');
 
 const router = express.Router();
 
@@ -26,6 +27,16 @@ function emitirToken(usuario) {
         process.env.JWT_SECRET,
         { expiresIn: '12h' }
     );
+}
+
+/**
+ * Abre la sesion del login y devuelve el token. Con SESIONES_EN_BASE=0 vuelve al JWT de 12 h (interruptor
+ * para deshacer el cambio sin desplegar de nuevo).
+ */
+async function emitirSesion(usuario, req) {
+    if (process.env.SESIONES_EN_BASE === '0') return emitirToken(usuario);
+    const s = await crearSesion(pool, usuario.id, { app: req.body && req.body.app, userAgent: req.headers['user-agent'] });
+    return s.token;
 }
 
 router.post('/login', limiteLogin, async (req, res) => {
@@ -72,7 +83,7 @@ router.post('/login', limiteLogin, async (req, res) => {
         }
 
         res.json({
-            token: emitirToken(usuario),
+            token: await emitirSesion(usuario, req),
             usuario: {
                 id: usuario.id,
                 nombre: usuario.nombre,
@@ -200,6 +211,7 @@ router.post('/codigo/confirmar', limiteCodigo, async (req, res) => {
              WHERE id = $2`,
             [hash, valido.usuario_id, valido.proposito]
         );
+        await revocarSesiones(client, valido.usuario_id, { motivo: 'clave' });
         await client.query('UPDATE codigos_cuenta SET usado_at = now() WHERE id = $1', [valido.id]);
         await client.query(
             `UPDATE codigos_cuenta SET revocado_at = now()
@@ -215,6 +227,31 @@ router.post('/codigo/confirmar', limiteCodigo, async (req, res) => {
         res.status(500).json({ error: 'No se pudo confirmar el código' });
     } finally {
         if (client) client.release();
+    }
+});
+
+// POST /api/auth/logout - cierra la sesion actual en el servidor (el cliente igual borra su token). Con un
+// token antiguo (JWT) no hay nada que revocar y responde igual.
+router.post('/logout', verifyToken, async (req, res) => {
+    try {
+        if (req.user.sid) {
+            await pool.query(`UPDATE sesiones SET revocada_at = now(), motivo = 'logout' WHERE id = $1 AND revocada_at IS NULL`, [req.user.sid]);
+        }
+        res.status(204).end();
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'No se pudo cerrar la sesión' });
+    }
+});
+
+// POST /api/auth/logout-todas - cierra todas las sesiones de la cuenta, incluida esta.
+router.post('/logout-todas', verifyToken, async (req, res) => {
+    try {
+        await revocarSesiones(pool, req.user.id, { motivo: 'logout_todas' });
+        res.status(204).end();
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'No se pudo cerrar las sesiones' });
     }
 });
 
@@ -237,13 +274,29 @@ router.post('/cambiar-password', limiteLogin, verifyToken, async (req, res) => {
             return res.status(400).json({ error: 'La contraseña actual no es correcta' });
         }
         const hash = await bcrypt.hash(nueva, 10);
+        // la clave nueva y el cierre de las otras sesiones van en UNA sentencia: o ocurren las dos o ninguna
         const u = await pool.query(
-            `UPDATE usuarios SET password_hash = $1, password_cambiada_at = now()
-             WHERE id = $2
-             RETURNING id, rol, cliente_id, password_cambiada_at`,
-            [hash, req.user.id]
+            `WITH cambio AS (
+                 UPDATE usuarios SET password_hash = $1, password_cambiada_at = now()
+                 WHERE id = $2
+                 RETURNING id, rol, cliente_id, password_cambiada_at
+             ), cerradas AS (
+                 UPDATE sesiones SET revocada_at = now(), motivo = 'clave'
+                 WHERE usuario_id = $2 AND revocada_at IS NULL AND ($3::bigint IS NULL OR id <> $3::bigint)
+                 RETURNING id
+             )
+             SELECT * FROM cambio`,
+            [hash, req.user.id, req.user.sid || null]
         );
-        res.json({ ok: true, token: emitirToken(u.rows[0]) });
+        // la sesion actual sigue; las demas de la cuenta se cierran. Un token antiguo (JWT) ya no vale tras
+        // el cambio de clave, asi que ese caso recibe una sesion nueva.
+        let token;
+        if (req.user.sid) {
+            token = req.headers.authorization.slice('Bearer '.length);
+        } else {
+            token = await emitirSesion(u.rows[0], req);
+        }
+        res.json({ ok: true, token });
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'No se pudo cambiar la contraseña' });

@@ -9,13 +9,15 @@ class AuthService extends ChangeNotifier {
     // El guard de _autenticado evita que un intento de login fallido (tambien 401)
     // dispare el mensaje de "sesion expirada".
     ApiClient.onSesionExpirada = () {
-      if (!_autenticado) return;
+      if (!_autenticado || _cerrando) return;
       _mensajeSesion = 'Tu sesión expiró, vuelve a iniciar sesión';
       logout();
     };
   }
 
   bool _autenticado = false;
+  // true mientras se avisa al servidor del cierre de sesión: un 401 en ese aviso no es una sesión vencida
+  bool _cerrando = false;
   bool _verificandoSesion = true;
   int? _id;
   String? _rol;
@@ -61,6 +63,7 @@ class AuthService extends ChangeNotifier {
     final data = await ApiClient.instance.post('/api/auth/login', {
       'email': email,
       'password': password,
+      'app': 'panel',
     });
     await ApiClient.instance.guardarToken(data['token']);
     await ApiClient.instance.guardarUsuario(jsonEncode(data['usuario']));
@@ -96,6 +99,23 @@ class AuthService extends ChangeNotifier {
     if (data is Map && data['token'] is String) {
       await ApiClient.instance.guardarToken(data['token'] as String);
     }
+  }
+
+  /// Cierre de sesión pedido por la persona: avisa al servidor para que la sesión deje de valer (con el
+  /// token guardado todavía) y después borra lo local. Si no hay red, igual se cierra aquí; el servidor la
+  /// vence por inactividad.
+  Future<void> cerrarSesion({bool todosLosDispositivos = false}) async {
+    _cerrando = true;
+    try {
+      await ApiClient.instance
+          .post(todosLosDispositivos ? '/api/auth/logout-todas' : '/api/auth/logout', {})
+          .timeout(const Duration(seconds: 3));
+    } catch (_) {
+      // sin red, sesión ya vencida o el servidor lento: se cierra igual
+    } finally {
+      _cerrando = false;
+    }
+    await logout();
   }
 
   Future<void> logout() async {

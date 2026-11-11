@@ -6073,7 +6073,7 @@ describe('bloque 6 (parte 1): contratos para el dashboard, Ordenes y el portal',
                     body: JSON.stringify({ email: correo.toUpperCase(), password: 'clave-de-prueba-1' }),
                 });
                 assert.equal(login.status, 200);
-                const { token } = await login.json();
+                let { token } = await login.json();
                 const conToken = (ruta) => fetch(`${base}${ruta}`, { headers: { Authorization: `Bearer ${token}` } });
                 assert.equal((await conToken('/api/ordenes-trabajo?limit=1')).status, 200, 'la sesion nueva funciona');
 
@@ -6094,8 +6094,15 @@ describe('bloque 6 (parte 1): contratos para el dashboard, Ordenes y el portal',
                 });
                 assert.equal(relogin.status, 403);
 
-                // reactivada: vuelve a funcionar con el mismo token
+                // reactivada: la sesion que tenia no revive (se cerro al desactivarla); entrando de nuevo, si
                 assert.equal((await pedir('PATCH', `/api/usuarios/${mecanicoNuevo}/estado`, 'gerente', { activo: true })).status, 200);
+                assert.equal((await conToken('/api/ordenes-trabajo?limit=1')).status, 401, 'reactivar no revive la sesion anterior');
+                const reentrada = await fetch(`${base}/api/auth/login`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ email: correo, password: 'clave-de-prueba-1' }),
+                });
+                assert.equal(reentrada.status, 200);
+                token = (await reentrada.json()).token;
                 assert.equal((await conToken('/api/ordenes-trabajo?limit=1')).status, 200);
 
                 // un cambio de rol rige de inmediato: el token sigue diciendo mecanico pero ahora es cliente

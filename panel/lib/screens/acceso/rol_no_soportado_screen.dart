@@ -35,7 +35,7 @@ class RolNoSoportadoScreen extends StatelessWidget {
                   ),
                   const SizedBox(height: 24),
                   OutlinedButton.icon(
-                    onPressed: () => context.read<AuthService>().logout(),
+                    onPressed: () => context.read<AuthService>().cerrarSesion(),
                     icon: const Icon(Icons.logout, size: 16),
                     label: const Text('Cerrar sesión'),
                   ),

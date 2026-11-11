@@ -425,10 +425,11 @@ describe('restablecer, recuperar y cambiar la contrasena', () => {
         }
     });
 
-    test('cambiar la clave propia corta las otras sesiones y entrega un token nuevo', async (t) => {
+    test('cambiar la clave propia corta las otras sesiones y la actual sigue con el mismo token', async (t) => {
         if (!requiereBase(t)) return;
         const login = await pedir('POST', '/api/auth/login', { cuerpo: { email, password: 'clave-por-correo-1' } });
         const tokenViejo = login.body.token;
+        const otraSesion = (await pedir('POST', '/api/auth/login', { cuerpo: { email, password: 'clave-por-correo-1' } })).body.token;
         const mala = await pedir('POST', '/api/auth/cambiar-password', { token: tokenViejo, cuerpo: { actual: 'no-es-esta', nueva: 'clave-cambiada-1' } });
         assert.equal(mala.status, 400, 'una clave actual equivocada no debe cerrar la sesion con un 401');
         const igual = await pedir('POST', '/api/auth/cambiar-password', { token: tokenViejo, cuerpo: { actual: 'clave-por-correo-1', nueva: 'clave-por-correo-1' } });
@@ -436,7 +437,8 @@ describe('restablecer, recuperar y cambiar la contrasena', () => {
 
         const r = await pedir('POST', '/api/auth/cambiar-password', { token: tokenViejo, cuerpo: { actual: 'clave-por-correo-1', nueva: 'clave-cambiada-1' } });
         assert.equal(r.status, 200);
-        assert.equal((await pedir('GET', '/api/usuarios/mi-perfil', { token: tokenViejo })).status, 401);
+        assert.equal((await pedir('GET', '/api/usuarios/mi-perfil', { token: otraSesion })).status, 401, 'las otras sesiones se cortan');
+        assert.equal(r.body.token, tokenViejo, 'la sesion actual sigue con su token');
         assert.equal((await pedir('GET', '/api/usuarios/mi-perfil', { token: r.body.token })).status, 200);
     });
 
