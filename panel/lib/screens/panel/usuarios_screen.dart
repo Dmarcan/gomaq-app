@@ -1,12 +1,12 @@
-import 'dart:convert' show utf8;
-
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../widgets/acciones_cuenta.dart';
+import '../../widgets/codigo_cuenta_admin.dart';
 import '../../widgets/dialogos.dart';
+import '../../utils/invitaciones.dart';
 import '../../utils/roles.dart';
 import '../../widgets/estado_vacio.dart';
 
@@ -22,11 +22,23 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
   List<dynamic> _internos = [];
   bool _cargando = true;
   String? _error;
+  bool _correoDisponible = false;
+  String? _motivoSinCorreo;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
+  }
+
+  /// Si el canal correo está disponible (y si no, por qué). Si falla, se ofrece solo el canal manual.
+  Future<(bool, String?)> _configCorreo() async {
+    try {
+      final c = await ApiClient.instance.get('/api/usuarios/invitaciones/config');
+      return (c['correo_disponible'] == true, c['motivo'] as String?);
+    } catch (_) {
+      return (false, 'No se pudo consultar la configuración del correo.');
+    }
   }
 
   Future<void> _cargar() async {
@@ -37,8 +49,11 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     try {
       final data = await ApiClient.instance.get('/api/usuarios/solicitudes');
       final usuarios = await ApiClient.instance.get('/api/usuarios');
+      final config = await _configCorreo();
       if (!mounted) return;
       setState(() {
+        _correoDisponible = config.$1;
+        _motivoSinCorreo = config.$2;
         _solicitudes = data;
         // los clientes no reciben el aviso de mantencion: es operativo interno
         _internos = usuarios.where((u) => u['rol'] != 'cliente').toList();
@@ -142,21 +157,21 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
 
   String _rolLegible(dynamic rol) => nombreRol(rol);
 
-  /// Crea una cuenta interna. La contraseña la escribe quien crea la cuenta y se la entrega a la
-  /// persona: no hay proveedor de correo para enviarla, y el sistema nunca la vuelve a mostrar.
+  /// Invita una cuenta interna: nombre, correo y rol. Nunca la contraseña: la persona la elige al
+  /// canjear el código, que le llega por correo o en un mensaje que se copia y se manda a mano.
   Future<void> _nuevaCuenta() async {
     final nombreCtrl = TextEditingController();
     final correoCtrl = TextEditingController();
-    final claveCtrl = TextEditingController();
-    final repetirCtrl = TextEditingController();
     String? rol;
+    String canal = _canalPorDefecto;
+    Map<String, dynamic>? respuesta;
     final creada = await mostrarFormulario(
       context,
       icono: Icons.person_add_alt_1,
-      titulo: 'Nueva cuenta',
+      titulo: 'Invitar una cuenta',
       subtitulo: 'Mecánico, administrativo o gerente',
-      textoAccion: 'Crear cuenta',
-      ancho: 460,
+      textoAccion: 'Invitar',
+      ancho: 480,
       contenido: (context, redibujar) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -171,7 +186,10 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
           TextFormField(
             controller: correoCtrl,
             keyboardType: TextInputType.emailAddress,
-            decoration: decoracionCampo('Correo *', ayuda: 'Con este correo inicia sesión.'),
+            decoration: decoracionCampo(
+              'Correo de acceso *',
+              ayuda: 'Con este correo inicia sesión. Si la persona no tiene correo real, escribe uno que identifique su cuenta y usa "Copiar mensaje".',
+            ),
             validator: (v) {
               final t = (v ?? '').trim();
               return RegExp(r'^[^\s@]+@[^\s@]+\.[^\s@]+$').hasMatch(t) ? null : 'Escribe un correo válido.';
@@ -182,7 +200,10 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
             expandedInsets: EdgeInsets.zero,
             label: const Text('Rol *'),
             dropdownMenuEntries: [
-              for (final e in rolesInternos.entries) DropdownMenuEntry<String>(value: e.key, label: e.value),
+              // solo un gerente puede crear otro gerente (el servidor también lo exige)
+              for (final e in rolesInternos.entries)
+                if (e.key != 'gerente' || context.read<AuthService>().rol == 'gerente')
+                  DropdownMenuEntry<String>(value: e.key, label: e.value),
             ],
             validator: (v) => v == null ? 'Elige el rol de la cuenta.' : null,
             onSelected: (v) => redibujar(() => rol = v),
@@ -198,95 +219,128 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
               ),
             ),
           separadorCampos,
-          TextFormField(
-            controller: claveCtrl,
-            obscureText: true,
-            decoration: decoracionCampo('Contraseña temporal *', ayuda: 'Mínimo 8 caracteres. Entrégasela en persona: el sistema no la envía ni la vuelve a mostrar.'),
-            validator: (v) {
-              final t = v ?? '';
-              if (t.length < 8) return 'Mínimo 8 caracteres.';
-              if (utf8.encode(t).length > 72) return 'Demasiado larga (máximo 72 bytes).';
-              return null;
-            },
-          ),
-          separadorCampos,
-          TextFormField(
-            controller: repetirCtrl,
-            obscureText: true,
-            decoration: decoracionCampo('Repetir contraseña *'),
-            validator: (v) => v == claveCtrl.text ? null : 'Las contraseñas no coinciden.',
+          SelectorCanalCodigo(
+            canal: canal,
+            correoDisponible: _correoDisponible,
+            motivoSinCorreo: _motivoSinCorreo,
+            alCambiar: (c) => redibujar(() => canal = c),
           ),
         ],
       ),
-      alGuardar: () => ApiClient.instance.post('/api/usuarios', {
-        'nombre': nombreCtrl.text.trim(),
-        'email': correoCtrl.text.trim(),
-        'rol': rol,
-        'password': claveCtrl.text,
-      }),
+      alGuardar: () async {
+        respuesta = Map<String, dynamic>.from(await ApiClient.instance.post('/api/usuarios/invitaciones', {
+          'nombre': nombreCtrl.text.trim(),
+          'email': correoCtrl.text.trim(),
+          'rol': rol,
+          'canal': canal,
+        }));
+      },
     );
     nombreCtrl.dispose();
     correoCtrl.dispose();
-    claveCtrl.dispose();
-    repetirCtrl.dispose();
-    if (creada && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Cuenta creada. Entrégale la contraseña en persona: no se vuelve a mostrar.')),
-      );
-      _cargar();
-    }
+    final r = respuesta;
+    if (!creada || r == null || !mounted) return;
+    _cargar();
+    final usuario = Map<String, dynamic>.from(r['usuario'] as Map);
+    await _entregarCodigo(Map<String, dynamic>.from(r['invitacion'] as Map), usuario: usuario, invitacion: true);
   }
 
-  /// Restablece la contraseña de otra cuenta (la olvidó, o la cuenta está comprometida). No hay
-  /// proveedor de correo: la escribe quien la restablece y se la entrega a la persona. Las sesiones
-  /// que esa cuenta tenía abiertas se cierran.
-  Future<void> _cambiarClave(Map<String, dynamic> usuario) async {
-    final claveCtrl = TextEditingController();
-    final repetirCtrl = TextEditingController();
+  String get _canalPorDefecto => _correoDisponible ? 'correo' : 'manual';
+
+  /// Pide el canal y genera un código nuevo: invitación (cuenta pendiente) o restablecer (cuenta activa).
+  Future<void> _nuevoCodigo(Map<String, dynamic> usuario, {required bool invitacion}) async {
+    String canal = _canalPorDefecto;
+    Map<String, dynamic>? respuesta;
     final hecho = await mostrarFormulario(
       context,
-      icono: Icons.lock_reset,
-      titulo: 'Restablecer contraseña',
+      icono: invitacion ? Icons.forward_to_inbox : Icons.lock_reset,
+      titulo: invitacion ? 'Nuevo código de invitación' : 'Restablecer contraseña',
       subtitulo: '${usuario['nombre']} · ${usuario['email']}',
-      textoAccion: 'Restablecer',
-      ancho: 440,
+      textoAccion: 'Generar código',
+      ancho: 460,
       contenido: (context, redibujar) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'Su sesión actual se cierra y entra con la contraseña nueva. Entrégasela en persona: el sistema no la envía ni la vuelve a mostrar.',
-            style: TextStyle(fontSize: 13, color: Colors.black54),
+          Text(
+            invitacion
+                ? 'El código anterior deja de servir. La persona activa su cuenta con este correo y el código nuevo.'
+                : 'La persona elige una contraseña nueva con su correo de acceso y este código. Su contraseña actual '
+                    'sigue sirviendo hasta que lo use; si la cuenta está comprometida, desactívala. '
+                    'Si no tiene un correo real, "Olvidé mi contraseña" nunca le llegará: usa "Copiar mensaje".',
+            style: const TextStyle(fontSize: 13, color: Colors.black54),
           ),
           separadorCampos,
-          TextFormField(
-            controller: claveCtrl,
-            autofocus: true,
-            obscureText: true,
-            decoration: decoracionCampo('Contraseña nueva *', ayuda: 'Mínimo 8 caracteres.'),
-            validator: (v) {
-              final t = v ?? '';
-              if (t.length < 8) return 'Mínimo 8 caracteres.';
-              if (utf8.encode(t).length > 72) return 'Demasiado larga (máximo 72 bytes).';
-              return null;
-            },
-          ),
-          separadorCampos,
-          TextFormField(
-            controller: repetirCtrl,
-            obscureText: true,
-            decoration: decoracionCampo('Repetir contraseña *'),
-            validator: (v) => v == claveCtrl.text ? null : 'Las contraseñas no coinciden.',
+          SelectorCanalCodigo(
+            canal: canal,
+            correoDisponible: _correoDisponible,
+            motivoSinCorreo: _motivoSinCorreo,
+            alCambiar: (c) => redibujar(() => canal = c),
           ),
         ],
       ),
-      alGuardar: () => ApiClient.instance.post('/api/usuarios/${usuario['id']}/password', {'password': claveCtrl.text}),
+      alGuardar: () async {
+        respuesta = Map<String, dynamic>.from(await _pedirCodigo(usuario, invitacion: invitacion, canal: canal));
+      },
     );
-    claveCtrl.dispose();
-    repetirCtrl.dispose();
-    if (hecho && mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Contraseña restablecida. Entrégasela en persona: no se vuelve a mostrar.')),
+    final r = respuesta;
+    if (!hecho || r == null || !mounted) return;
+    if (invitacion) _cargar();
+    await _entregarCodigo(r, usuario: usuario, invitacion: invitacion);
+  }
+
+  Future<dynamic> _pedirCodigo(Map<String, dynamic> usuario, {required bool invitacion, required String canal}) =>
+      ApiClient.instance.post(
+        invitacion ? '/api/usuarios/${usuario['id']}/invitacion' : '/api/usuarios/${usuario['id']}/codigo-restablecer',
+        {'canal': canal},
       );
+
+  /// Muestra el mensaje para copiar (canal manual) o avisa si el correo salió. Si el correo falló,
+  /// ofrece generar un mensaje para copiar en su lugar.
+  Future<void> _entregarCodigo(Map<String, dynamic> r, {required Map<String, dynamic> usuario, required bool invitacion}) async {
+    final mensaje = r['mensaje'];
+    if (mensaje is String) {
+      await mostrarMensajeParaCopiar(
+        context,
+        titulo: invitacion ? 'Invitación lista para enviar' : 'Código para restablecer',
+        mensaje: mensaje,
+      );
+      return;
+    }
+    if (r['enviado'] == true) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Código enviado a ${usuario['email']}')));
+      return;
+    }
+    final copiar = await mostrarConfirmacion(
+      context,
+      titulo: 'No se pudo enviar el correo',
+      mensaje: '${r['error'] ?? 'El correo no salió.'}\n\n¿Generar un mensaje para copiarlo y enviarlo a mano? El código del correo deja de servir.',
+      textoAccion: 'Copiar mensaje',
+    );
+    if (!copiar || !mounted) return;
+    try {
+      final otro = Map<String, dynamic>.from(await _pedirCodigo(usuario, invitacion: invitacion, canal: 'manual'));
+      if (mounted) await _entregarCodigo(otro, usuario: usuario, invitacion: invitacion);
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo generar el código: ${e.message}')));
+    }
+  }
+
+  /// Revoca una invitación que no se aceptó: la cuenta se borra (nunca pudo entrar).
+  Future<void> _revocarInvitacion(Map<String, dynamic> usuario) async {
+    final confirmado = await mostrarConfirmacion(
+      context,
+      titulo: '¿Revocar la invitación de ${usuario['nombre']}?',
+      mensaje: 'El código deja de servir y la cuenta se elimina. Puedes volver a invitar ese correo cuando quieras.',
+      textoAccion: 'Revocar invitación',
+      peligro: true,
+    );
+    if (!confirmado) return;
+    try {
+      await ApiClient.instance.post('/api/usuarios/${usuario['id']}/invitacion/revocar', {});
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invitación revocada')));
+      _cargar();
+    } on ApiException catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudo revocar la invitación: ${e.message}')));
     }
   }
 
@@ -349,13 +403,14 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
                 FilledButton.icon(
                   onPressed: _nuevaCuenta,
                   icon: const Icon(Icons.person_add_alt_1, size: 18),
-                  label: const Text('Nueva cuenta'),
+                  label: const Text('Invitar cuenta'),
                 ),
               ],
             ),
             const SizedBox(height: 4),
             Text(
-              'Mecánicos, administrativos y gerentes. Una cuenta desactivada no puede entrar, pero conserva su historial.',
+              'Mecánicos, administrativos y gerentes. Cada persona elige su contraseña con el código de su invitación. '
+              'Una cuenta desactivada no puede entrar, pero conserva su historial.',
               style: TextStyle(fontSize: 13, color: Colors.grey[700]),
             ),
             const SizedBox(height: 8),
@@ -364,25 +419,38 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
             else
               ..._internos.map((u) {
                 final activa = (u['estado_cuenta'] ?? 'activo') == 'activo';
+                final pendiente = u['estado_cuenta'] == 'pendiente';
+                final invitacion = u['invitacion'] is Map ? Map<String, dynamic>.from(u['invitacion'] as Map) : null;
+                final destacar = !activa && (!pendiente || invitacionRequiereAccion(invitacion));
                 return ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: Icon(activa ? Icons.person_outline : Icons.person_off_outlined),
+                  leading: Icon(activa
+                      ? Icons.person_outline
+                      : pendiente
+                          ? Icons.mark_email_unread_outlined
+                          : Icons.person_off_outlined),
                   title: Text('${u['nombre']} · ${_rolLegible(u['rol'])}'),
                   // el estado va en texto y no solo en el icono (WCAG 1.4.1)
                   subtitle: Text(
-                    activa ? '${u['email']}' : '${u['email']} · Desactivada',
+                    activa
+                        ? '${u['email']}'
+                        : pendiente
+                            ? '${u['email']} · ${textoEstadoInvitacion(invitacion)}'
+                            : '${u['email']} · Desactivada',
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: activa ? FontWeight.normal : FontWeight.w700,
-                      color: activa ? null : GomaqColors.advertenciaFuerte,
+                      color: destacar ? GomaqColors.advertenciaFuerte : null,
                     ),
                   ),
                   trailing: AccionesCuentaEquipo(
                     usuario: u,
                     esPropia: miId != null && '${u['id']}' == '$miId',
-                    onClave: () => _cambiarClave(u),
+                    onClave: () => _nuevoCodigo(u, invitacion: false),
                     onDesactivar: () => _cambiarEstado(u, activar: false),
                     onReactivar: () => _cambiarEstado(u, activar: true),
+                    onNuevaInvitacion: () => _nuevoCodigo(u, invitacion: true),
+                    onRevocar: () => _revocarInvitacion(u),
                   ),
                 );
               }),

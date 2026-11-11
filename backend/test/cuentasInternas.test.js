@@ -1,7 +1,7 @@
 const { test, describe } = require('node:test');
 const assert = require('node:assert/strict');
 
-const { validarNuevaCuenta, validarCambioDeEstado, validarCambioDePassword, validarPassword, ROLES_INTERNOS } = require('../src/utils/cuentasInternas');
+const { validarNuevaCuenta, validarNuevaInvitacion, validarCambioDeEstado, validarCambioDePassword, validarPassword, ROLES_INTERNOS } = require('../src/utils/cuentasInternas');
 
 const valido = (extra = {}) => ({ nombre: 'Juan Pérez', email: 'juan@gomaq.cl', rol: 'mecanico', password: 'una-clave-larga', ...extra });
 
@@ -85,5 +85,21 @@ describe('validarCambioDeEstado', () => {
             assert.equal(r.codigo, 400);
         }
         assert.equal(validarCambioDeEstado(undefined, 5, 9).ok, false);
+    });
+});
+
+describe('validarNuevaInvitacion', () => {
+    test('los mismos datos que una cuenta nueva, sin clave y con el canal', () => {
+        const r = validarNuevaInvitacion({ nombre: ' Ana Soto ', email: ' Ana@Gomaq.CL ', rol: 'mecanico', canal: 'manual' });
+        assert.deepEqual(r, { ok: true, datos: { nombre: 'Ana Soto', email: 'ana@gomaq.cl', rol: 'mecanico', canal: 'manual' } });
+        assert.equal(validarNuevaInvitacion({ nombre: 'Ana', email: 'ana@gomaq.cl', rol: 'gerente', canal: 'correo' }).ok, true);
+    });
+
+    test('rechaza un canal desconocido, el rol cliente y un correo invalido', () => {
+        assert.equal(validarNuevaInvitacion({ nombre: 'Ana', email: 'ana@gomaq.cl', rol: 'mecanico' }).ok, false);
+        assert.equal(validarNuevaInvitacion({ nombre: 'Ana', email: 'ana@gomaq.cl', rol: 'mecanico', canal: 'sms' }).ok, false);
+        assert.equal(validarNuevaInvitacion({ nombre: 'Ana', email: 'ana@gomaq.cl', rol: 'cliente', canal: 'manual' }).ok, false);
+        assert.equal(validarNuevaInvitacion({ nombre: 'Ana', email: 'ana', rol: 'mecanico', canal: 'manual' }).ok, false);
+        assert.equal(validarNuevaInvitacion(null).ok, false);
     });
 });

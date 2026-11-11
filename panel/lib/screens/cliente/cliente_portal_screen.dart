@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
+import '../../widgets/cambiar_mi_clave.dart';
 import '../../widgets/confirmar_cerrar_sesion.dart';
 import 'cliente_mis_equipos_screen.dart';
 import 'cliente_seguimiento_screen.dart';
@@ -50,6 +51,11 @@ class _ClientePortalScreenState extends State<ClientePortalScreen> {
             icon: const Icon(Icons.refresh),
             tooltip: 'Refrescar',
             onPressed: () => setState(() => _refreshKey = UniqueKey()),
+          ),
+          IconButton(
+            tooltip: 'Cambiar mi contraseña',
+            icon: const Icon(Icons.password),
+            onPressed: () => mostrarCambiarMiClave(context),
           ),
           IconButton(
             tooltip: 'Cerrar sesión',

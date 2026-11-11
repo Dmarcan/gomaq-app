@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'services/auth_service.dart';
+import 'screens/acceso/codigo_cuenta_screen.dart';
 import 'screens/acceso/login_screen.dart';
 import 'screens/acceso/registro_cliente_screen.dart';
 import 'screens/panel/admin_dashboard_screen.dart';
@@ -59,6 +60,9 @@ const List<ItemMenu> itemsMenu = [
   (ruta: '/notificaciones', icono: Icons.notifications, etiqueta: 'Notificaciones', grupo: 'Administración'),
 ];
 
+/// Rutas que se ven sin sesion. Con la sesion iniciada redirigen al inicio de cada rol.
+const rutasPublicas = {'/login', '/registro', '/activar', '/recuperar'};
+
 GoRouter construirRouter(AuthService auth) {
   // Sin esto, context.push('/flota/12') abre el perfil pero la barra de direcciones sigue en
   // /flota: F5 o compartir el enlace volverian a la lista. Con la opcion activa la URL sigue
@@ -74,9 +78,10 @@ GoRouter construirRouter(AuthService auth) {
       // a alguien que si tiene sesion valida
       if (auth.verificandoSesion) return null;
 
-      // pantallas publicas: el login y el registro de clientes (antes el registro se abria con
-      // Navigator.push sobre /login, asi que recargar la pagina borraba lo escrito)
-      final yendoALogin = estado.matchedLocation == '/login' || estado.matchedLocation == '/registro';
+      // pantallas publicas: el login, el registro de clientes (antes el registro se abria con
+      // Navigator.push sobre /login, asi que recargar la pagina borraba lo escrito) y el canje de los
+      // codigos de la cuenta (activar una invitacion, recuperar la contrasena)
+      final yendoALogin = rutasPublicas.contains(estado.matchedLocation);
       if (!auth.autenticado) return yendoALogin ? null : '/login';
 
       // enrutado por rol: solo los roles con interfaz web entran a sus pantallas;
@@ -94,6 +99,8 @@ GoRouter construirRouter(AuthService auth) {
     routes: [
       GoRoute(path: '/login', builder: (_, _) => const LoginScreen()),
       GoRoute(path: '/registro', builder: (_, _) => const RegistroClienteScreen()),
+      GoRoute(path: '/activar', builder: (_, _) => const CodigoCuentaScreen(modo: ModoCodigo.activar)),
+      GoRoute(path: '/recuperar', builder: (_, _) => const CodigoCuentaScreen(modo: ModoCodigo.recuperar)),
       GoRoute(
         path: '/portal',
         // la llave lleva toda la query: pedir una asistencia navega a ?pestana=seguimiento&r=... y la

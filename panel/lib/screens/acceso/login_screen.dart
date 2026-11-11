@@ -128,6 +128,14 @@ class _LoginScreenState extends State<LoginScreen> {
                     ),
                   ),
                   TextButton(
+                    onPressed: () => context.go('/recuperar'),
+                    child: const Text('¿Olvidaste tu contraseña?'),
+                  ),
+                  TextButton(
+                    onPressed: () => context.go('/activar'),
+                    child: const Text('Tengo un código de invitación'),
+                  ),
+                  TextButton(
                     onPressed: () => context.go('/registro'),
                     child: const Text('¿Eres cliente? Crea tu cuenta'),
                   ),

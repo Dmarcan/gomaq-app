@@ -55,4 +55,28 @@ const limiteRegistro = rateLimit({
     message: { error: 'Demasiadas solicitudes de cuenta desde esta conexión. Intenta más tarde.' },
 });
 
-module.exports = { limiteLogin, limiteRegistro, ipDelCliente };
+/**
+ * "Olvide mi contrasena": siempre responde lo mismo, asi que cuenta cada pedido. Ademas la ruta limita
+ * por correo, para que nadie llene de correos la bandeja de otra persona.
+ */
+const limiteRecuperar = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 5,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: clavePorCliente,
+    message: { error: 'Demasiados pedidos de código desde esta conexión. Espera unos minutos.' },
+});
+
+/** Canje de un codigo: cada codigo aguanta 5 intentos; esto frena a quien prueba muchos correos. */
+const limiteCodigo = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 10,
+    skipSuccessfulRequests: true,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: clavePorCliente,
+    message: { error: 'Demasiados intentos fallidos. Espera unos minutos y vuelve a intentarlo.' },
+});
+
+module.exports = { limiteLogin, limiteRegistro, limiteRecuperar, limiteCodigo, ipDelCliente };

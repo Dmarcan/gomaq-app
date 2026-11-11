@@ -39,7 +39,7 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
       if (!mounted) return;
       setState(() {
         _vehiculos = vehiculos;
-        _mecanicos = mecanicos;
+        _mecanicos = mecanicos.where((m) => (m['estado_cuenta'] ?? 'activo') == 'activo').toList();
       });
     } catch (e) {
       if (mounted) setState(() => _error = mensajeErrorCarga(e));

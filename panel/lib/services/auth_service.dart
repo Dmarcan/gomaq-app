@@ -73,6 +73,31 @@ class AuthService extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// "Olvidé mi contraseña": el servidor responde lo mismo exista o no la cuenta. Devuelve su mensaje.
+  Future<String> pedirCodigoRecuperar(String email) async {
+    final data = await ApiClient.instance.post('/api/auth/recuperar', {'email': email});
+    return (data is Map && data['mensaje'] is String) ? data['mensaje'] as String : 'Si el correo es de una cuenta activa, te llegará un código.';
+  }
+
+  /// Canjea un código (invitación o recuperar) con la contraseña elegida y entra con ella.
+  Future<void> canjearCodigo(String email, String codigo, String password) async {
+    await ApiClient.instance.post('/api/auth/codigo/confirmar', {
+      'email': email,
+      'codigo': codigo,
+      'password': password,
+    });
+    await login(email, password);
+  }
+
+  /// Cambia la contraseña propia. El servidor corta las otras sesiones y entrega un token nuevo para
+  /// esta, así que no hay que volver a entrar.
+  Future<void> cambiarPassword(String actual, String nueva) async {
+    final data = await ApiClient.instance.post('/api/auth/cambiar-password', {'actual': actual, 'nueva': nueva});
+    if (data is Map && data['token'] is String) {
+      await ApiClient.instance.guardarToken(data['token'] as String);
+    }
+  }
+
   Future<void> logout() async {
     await ApiClient.instance.borrarToken();
     _autenticado = false;

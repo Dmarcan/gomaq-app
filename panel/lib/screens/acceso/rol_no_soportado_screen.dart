@@ -28,7 +28,8 @@ class RolNoSoportadoScreen extends StatelessWidget {
                   const SizedBox(height: 8),
                   const Text(
                     'El trabajo de terreno se gestiona desde la aplicación móvil GOMAQ Mecánico, '
-                    'que funciona incluso sin señal. Este panel web es para el equipo administrativo.',
+                    'que funciona incluso sin señal. Este panel web es para el equipo administrativo.\n\n'
+                    'Si acabas de activar tu cuenta, ya está lista: en la app ingresa con este mismo correo y la contraseña que elegiste.',
                     textAlign: TextAlign.center,
                     style: TextStyle(color: Colors.black54),
                   ),

@@ -6038,9 +6038,12 @@ describe('bloque 6 (parte 1): contratos para el dashboard, Ordenes y el portal',
             const correo = `qa.cuentas.${sufijo}@gomaq.test`;
             const creados = [];
             try {
-                // el administrativo crea cuentas de los tres roles internos
+                // el administrativo crea mecanicos y administrativos; solo un gerente crea otro gerente
+                assert.equal((await pedir('POST', '/api/usuarios', 'administrativo', {
+                    nombre: 'QA gerente', email: `qa.gerente.no.${sufijo}@gomaq.test`, rol: 'gerente', password: 'clave-de-prueba-1',
+                })).status, 403);
                 for (const rol of ['mecanico', 'administrativo', 'gerente']) {
-                    const r = await pedir('POST', '/api/usuarios', 'administrativo', {
+                    const r = await pedir('POST', '/api/usuarios', rol === 'gerente' ? 'gerente' : 'administrativo', {
                         nombre: `QA ${rol}`,
                         email: rol === 'mecanico' ? correo.toUpperCase() : `qa.${rol}.${sufijo}@gomaq.test`,
                         rol,

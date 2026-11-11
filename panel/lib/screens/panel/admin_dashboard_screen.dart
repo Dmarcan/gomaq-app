@@ -6,6 +6,7 @@ import '../../services/auth_service.dart';
 import '../../services/pendientes_service.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../utils/pendientes.dart';
+import '../../widgets/cambiar_mi_clave.dart';
 import '../../widgets/confirmar_cerrar_sesion.dart';
 
 /// Marco del panel: barra lateral fija y el contenido de la seccion activa.
@@ -168,6 +169,11 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                       Text(_etiquetaRol(auth.rol), style: const TextStyle(color: Colors.white70, fontSize: 12)),
                     ],
                   ),
+                ),
+                IconButton(
+                  icon: const Icon(Icons.password, color: Colors.white70, size: 18),
+                  tooltip: 'Cambiar mi contraseña',
+                  onPressed: () => mostrarCambiarMiClave(context),
                 ),
                 IconButton(
                   icon: const Icon(Icons.logout, color: Colors.white70, size: 18),

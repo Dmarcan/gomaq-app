@@ -34,6 +34,29 @@ function validarCambioDePassword(body) {
  * @returns {{ok: true, datos: {nombre:string, email:string, rol:string, password:string}} | {ok: false, error: string}}
  */
 function validarNuevaCuenta(body) {
+    const datos = validarDatosCuenta(body);
+    if (!datos.ok) return datos;
+    const clave = validarPassword(body.password);
+    if (!clave.ok) return clave;
+    return { ok: true, datos: { ...datos.datos, password: body.password } };
+}
+
+/**
+ * Valida el cuerpo de POST /api/usuarios/invitaciones: los mismos datos que una cuenta nueva, sin clave
+ * (la elige la persona al activar) y con el canal por donde le llega el codigo.
+ * @returns {{ok: true, datos: {nombre:string, email:string, rol:string, canal:'correo'|'manual'}} | {ok: false, error: string}}
+ */
+function validarNuevaInvitacion(body) {
+    const datos = validarDatosCuenta(body);
+    if (!datos.ok) return datos;
+    if (body.canal !== 'correo' && body.canal !== 'manual') {
+        return { ok: false, error: 'Elige cómo enviar la invitación: correo o manual' };
+    }
+    return { ok: true, datos: { ...datos.datos, canal: body.canal } };
+}
+
+/** Nombre, correo y rol de una cuenta interna, normalizados. */
+function validarDatosCuenta(body) {
     const b = body && typeof body === 'object' ? body : {};
     const nombre = typeof b.nombre === 'string' ? b.nombre.trim() : '';
     if (nombre.length < 2 || nombre.length > MAX_NOMBRE) {
@@ -46,9 +69,7 @@ function validarNuevaCuenta(body) {
     if (typeof b.rol !== 'string' || !ROLES_INTERNOS.includes(b.rol)) {
         return { ok: false, error: `El rol debe ser uno de: ${ROLES_INTERNOS.join(', ')}` };
     }
-    const clave = validarPassword(b.password);
-    if (!clave.ok) return clave;
-    return { ok: true, datos: { nombre, email, rol: b.rol, password: b.password } };
+    return { ok: true, datos: { nombre, email, rol: b.rol } };
 }
 
 /**
@@ -72,5 +93,5 @@ function validarCambioDeEstado(body, idObjetivo, idActor) {
 
 module.exports = {
     ROLES_INTERNOS, MIN_PASSWORD, MAX_PASSWORD_BYTES,
-    validarPassword, validarCambioDePassword, validarNuevaCuenta, validarCambioDeEstado,
+    validarPassword, validarCambioDePassword, validarNuevaCuenta, validarNuevaInvitacion, validarCambioDeEstado,
 };

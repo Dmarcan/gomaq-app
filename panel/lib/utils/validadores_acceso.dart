@@ -1,3 +1,5 @@
+import 'dart:convert' show utf8;
+
 import 'rut.dart';
 
 // Validadores de los formularios de acceso. Devuelven el mensaje de error o null si el valor
@@ -52,5 +54,21 @@ String? validarTelefonoOpcional(String? valor) {
   if (!RegExp(r'^[+\d][\d\s\-()]*$').hasMatch(texto)) return 'Usa solo números, por ejemplo +56 9 1234 5678.';
   final digitos = texto.replaceAll(RegExp(r'\D'), '');
   if (digitos.length < 8 || digitos.length > 15) return 'El teléfono debe tener entre 8 y 15 dígitos.';
+  return null;
+}
+
+/// El código que llega por correo o por mensaje: 6 dígitos (se aceptan espacios y guiones).
+String? validarCodigo(String? valor) {
+  final limpio = (valor ?? '').replaceAll(RegExp(r'[\s-]'), '');
+  if (limpio.isEmpty) return 'Escribe el código.';
+  if (!RegExp(r'^\d{6}$').hasMatch(limpio)) return 'El código tiene 6 dígitos.';
+  return null;
+}
+
+/// La contraseña nueva: las reglas de siempre y, además, no más de 72 bytes (el servidor la trunca).
+String? validarPasswordNueva(String? valor) {
+  final error = validarPassword(valor);
+  if (error != null) return error;
+  if (utf8.encode(valor!).length > 72) return 'Demasiado larga (máximo 72 bytes).';
   return null;
 }
