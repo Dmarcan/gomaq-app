@@ -28,6 +28,11 @@ export default defineRailway(() => {
       // ya existian en Railway sin estar declaradas: un `apply` las habria borrado
       NOTIFICACIONES_EN_PROCESO: preserve(),
       ORS_API_KEY: preserve(),
+      // correo de invitacion y recuperar contrasena (se envian desde la API, no por el worker);
+      // son referencias a las del servicio gomaq-worker
+      RESEND_API_KEY: preserve(),
+      CORREO_REMITENTE: preserve(),
+      CORREO_CONTACTO: preserve(),
     },
   });
   // Worker de notificaciones: mismo repo, sin HTTP (sin healthcheck ni dominio) y siempre activo.
