@@ -40,6 +40,13 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
   bool _verPassword = false;
   String? _error;
   bool _enviado = false;
+  // verificación del correo: si el servidor envió un código, se pide antes de la confirmación final
+  bool _pedirCodigo = false;
+  bool _correoVerificado = false;
+  bool _verificando = false;
+  final _codigoCtrl = TextEditingController();
+  String? _errorCodigo;
+  String? _avisoCodigo;
   // ubicación de la empresa marcada con "Usar mi ubicación actual"; opcional
   Coordenada? _ubicacion;
 
@@ -72,7 +79,7 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
       _error = null;
     });
     try {
-      await ApiClient.instance.post('/api/registro-cliente', {
+      final respuesta = await ApiClient.instance.post('/api/registro-cliente', {
         'nombre_contacto': _nombreCtrl.text.trim(),
         'nombre_empresa': _empresaCtrl.text.trim(),
         'email': _emailCtrl.text.trim(),
@@ -85,7 +92,12 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
         'latitud': _ubicacion?.latitud,
         'longitud': _ubicacion?.longitud,
       });
-      if (mounted) setState(() => _enviado = true);
+      if (mounted) {
+        setState(() {
+          _enviado = true;
+          _pedirCodigo = respuesta is Map && respuesta['verificacion'] == 'enviada';
+        });
+      }
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } catch (_) {
@@ -94,6 +106,47 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
       setState(() => _error = 'No se pudo conectar al servidor. Revisa tu conexión e intenta de nuevo.');
     } finally {
       if (mounted) setState(() => _enviando = false);
+    }
+  }
+
+  Future<void> _verificarCodigo() async {
+    final codigo = _codigoCtrl.text.replaceAll(RegExp(r'\D'), '');
+    if (codigo.length != 6) {
+      setState(() => _errorCodigo = 'Escribe los 6 dígitos del código.');
+      return;
+    }
+    setState(() {
+      _verificando = true;
+      _errorCodigo = null;
+      _avisoCodigo = null;
+    });
+    try {
+      await ApiClient.instance.post('/api/registro-cliente/verificar', {'email': _emailCtrl.text.trim(), 'codigo': codigo});
+      if (mounted) setState(() => _correoVerificado = true);
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _errorCodigo = e.message);
+    } catch (_) {
+      if (mounted) setState(() => _errorCodigo = 'No se pudo conectar al servidor. Revisa tu conexión e intenta de nuevo.');
+    } finally {
+      if (mounted) setState(() => _verificando = false);
+    }
+  }
+
+  Future<void> _reenviarCodigo() async {
+    setState(() {
+      _verificando = true;
+      _errorCodigo = null;
+      _avisoCodigo = null;
+    });
+    try {
+      await ApiClient.instance.post('/api/registro-cliente/reenviar-codigo', {'email': _emailCtrl.text.trim()});
+      if (mounted) setState(() => _avisoCodigo = 'Si no pasó el último minuto, espera un poco: te enviamos un código nuevo (revisa también el spam).');
+    } on ApiException catch (e) {
+      if (mounted) setState(() => _errorCodigo = e.message);
+    } catch (_) {
+      if (mounted) setState(() => _errorCodigo = 'No se pudo conectar al servidor. Revisa tu conexión e intenta de nuevo.');
+    } finally {
+      if (mounted) setState(() => _verificando = false);
     }
   }
 
@@ -118,12 +171,74 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
             child: SizedBox(
               width: 420,
               child: SingleChildScrollView(
-                child: _enviado ? _construirConfirmacion() : _construirFormulario(),
+                child: !_enviado
+                    ? _construirFormulario()
+                    : (_pedirCodigo && !_correoVerificado)
+                        ? _construirVerificacion()
+                        : _construirConfirmacion(),
               ),
             ),
           ),
         ),
       ),
+    );
+  }
+
+  /// Paso opcional tras enviar la solicitud: el código de 6 dígitos que llegó al correo escrito.
+  Widget _construirVerificacion() {
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Icon(Icons.mark_email_unread_outlined, color: GomaqColors.estadoPositivo, size: 56),
+        const SizedBox(height: 16),
+        Semantics(
+          header: true,
+          child: const Text('Confirma tu correo',
+              textAlign: TextAlign.center, style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          'Te enviamos un código de 6 dígitos a ${_emailCtrl.text.trim()}. Escríbelo aquí para confirmar que el correo es tuyo. '
+          'Tu solicitud ya quedó registrada.',
+          textAlign: TextAlign.center,
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _codigoCtrl,
+          keyboardType: TextInputType.number,
+          maxLength: 7,
+          autofocus: true,
+          autofillHints: const [AutofillHints.oneTimeCode],
+          onSubmitted: (_) => _verificarCodigo(),
+          decoration: const InputDecoration(labelText: 'Código de 6 dígitos', border: OutlineInputBorder(), counterText: ''),
+        ),
+        if (_errorCodigo != null)
+          Semantics(
+            liveRegion: true,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(_errorCodigo!, style: const TextStyle(color: GomaqColors.estadoNegativo)),
+            ),
+          ),
+        if (_avisoCodigo != null)
+          Semantics(
+            liveRegion: true,
+            child: Padding(padding: const EdgeInsets.only(top: 8), child: Text(_avisoCodigo!)),
+          ),
+        const SizedBox(height: 16),
+        FilledButton(
+          onPressed: _verificando ? null : _verificarCodigo,
+          child: _verificando
+              ? const SizedBox(height: 18, width: 18, child: CircularProgressIndicator(strokeWidth: 2))
+              : const Text('Confirmar correo'),
+        ),
+        TextButton(onPressed: _verificando ? null : _reenviarCodigo, child: const Text('Enviar un código nuevo')),
+        TextButton(
+          onPressed: _verificando ? null : () => setState(() => _pedirCodigo = false),
+          child: const Text('Confirmarlo después'),
+        ),
+      ],
     );
   }
 
@@ -135,8 +250,8 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
         const SizedBox(height: 16),
         const Text('Solicitud de cuenta enviada', style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
         const SizedBox(height: 8),
-        const Text(
-          'GOMAQ revisará tu solicitud en horario hábil. Cuando esté aprobada podrás ingresar '
+        Text(
+          '${_correoVerificado ? 'Tu correo quedó confirmado. ' : ''}GOMAQ revisará tu solicitud en horario hábil. Cuando esté aprobada podrás ingresar '
           'con este correo y esta contraseña. Si intentas entrar antes, verás que tu cuenta sigue en revisión.',
           textAlign: TextAlign.center,
         ),

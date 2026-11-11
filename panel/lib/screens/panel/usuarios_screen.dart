@@ -65,6 +65,29 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     }
   }
 
+  /// True si aprobar esta solicitud debe avisar que el correo no está verificado (solo cuando el servidor
+  /// puede verificar correos: si el envío no está configurado, todas quedan sin verificar y no se avisa).
+  bool _faltaVerificar(Map<String, dynamic> solicitud) =>
+      solicitud['correo_verificado'] != true && solicitud['correo_verificacion_disponible'] == true;
+
+  static const _avisoSinVerificar = 'Ojo: el cliente aún no confirmó que el correo es suyo. ';
+
+  Widget _estadoCorreo(Map<String, dynamic> s) {
+    final verificado = s['correo_verificado'] == true;
+    final color = verificado ? GomaqColors.estadoPositivo : GomaqColors.advertenciaFuerte;
+    return Padding(
+      padding: const EdgeInsets.only(top: 2, bottom: 2),
+      child: Row(
+        children: [
+          Icon(verificado ? Icons.verified_outlined : Icons.help_outline, size: 16, color: color),
+          const SizedBox(width: 6),
+          Text(verificado ? 'Correo verificado' : 'Correo sin verificar',
+              style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600, color: color)),
+        ],
+      ),
+    );
+  }
+
   Future<void> _vincularExistente(Map<String, dynamic> solicitud) async {
     List<dynamic> clientes = [];
     try {
@@ -86,8 +109,8 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
       contenido: (context, redibujar) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text(
-            'La cuenta se activa y queda ligada a este cliente: solo verá sus equipos y sus órdenes.',
+          Text(
+            '${_faltaVerificar(solicitud) ? _avisoSinVerificar : ''}La cuenta se activa y queda ligada a este cliente: solo verá sus equipos y sus órdenes.',
             style: TextStyle(fontSize: 13, color: Colors.black54),
           ),
           separadorCampos,
@@ -105,7 +128,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
           ),
         ],
       ),
-      alGuardar: () => ApiClient.instance.post('/api/usuarios/solicitudes/${solicitud['id']}/aprobar', {'cliente_id': clienteId}),
+      alGuardar: () => ApiClient.instance.post('/api/usuarios/solicitudes/${solicitud['id']}/aprobar', {'cliente_id': clienteId, if (_faltaVerificar(solicitud)) 'confirmar_sin_verificar': true}),
     );
     if (vinculada && mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cuenta activada')));
@@ -113,10 +136,11 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     }
   }
 
-  Future<void> _aprobar(int solicitudId, {int? clienteId}) async {
+  Future<void> _aprobar(int solicitudId, {int? clienteId, bool sinVerificar = false}) async {
     try {
       await ApiClient.instance.post('/api/usuarios/solicitudes/$solicitudId/aprobar', {
         if (clienteId != null) 'cliente_id': clienteId,
+        if (sinVerificar) 'confirmar_sin_verificar': true,
       });
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cuenta activada')));
       _cargar();
@@ -131,11 +155,11 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     final confirmado = await mostrarConfirmacion(
       context,
       titulo: '¿Crear un cliente nuevo?',
-      mensaje: 'Se creará el cliente $empresa y se activará la cuenta de ${solicitud['nombre_contacto']}, que podrá ingresar al portal.',
+      mensaje: '${_faltaVerificar(solicitud) ? _avisoSinVerificar : ''}Se creará el cliente $empresa y se activará la cuenta de ${solicitud['nombre_contacto']}, que podrá ingresar al portal.',
       textoAccion: 'Crear cliente',
     );
     if (!confirmado) return;
-    await _aprobar(solicitud['id']);
+    await _aprobar(solicitud['id'], sinVerificar: _faltaVerificar(solicitud));
   }
 
   Future<void> _rechazar(int solicitudId) async {
@@ -614,6 +638,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
                   const SizedBox(height: 8),
                   _dato('Contacto', s['nombre_contacto']),
                   _dato('Correo', s['email']),
+                  _estadoCorreo(s),
                   _dato('RUT empresa', s['rut_empresa']),
                   _dato('WhatsApp', s['telefono_whatsapp']),
                   _dato('Horario de trabajo', s['horario_trabajo']),

@@ -21,21 +21,22 @@ const TIMEOUT_CORREO_MS = 10000;
  * @param {import('pg').PoolClient} client
  * @returns {Promise<{id:number, codigo:string, expiraAt:Date}>}
  */
-async function crearCodigo(client, { proposito, usuarioId, email, canal, creadoPor = null }) {
+async function crearCodigo(client, { proposito, usuarioId = null, solicitudClienteId = null, email, canal, creadoPor = null }) {
     const minutos = vigenciaMinutos(proposito, { generadoPorAdmin: creadoPor !== null });
     const codigo = generarCodigo();
     const hmac = hmacCodigo({ secreto: process.env.JWT_SECRET, proposito, email, codigo });
     await client.query(
         `UPDATE codigos_cuenta SET revocado_at = now()
-         WHERE usuario_id = $1 AND proposito = $2 AND usado_at IS NULL AND revocado_at IS NULL
+         WHERE usuario_id IS NOT DISTINCT FROM $1 AND solicitud_cliente_id IS NOT DISTINCT FROM $4
+           AND proposito = $2 AND usado_at IS NULL AND revocado_at IS NULL
            AND ($3::boolean OR creado_por IS NULL)`,
-        [usuarioId, proposito, creadoPor !== null]
+        [usuarioId, proposito, creadoPor !== null, solicitudClienteId]
     );
     const r = await client.query(
-        `INSERT INTO codigos_cuenta (proposito, usuario_id, email, codigo_hmac, expira_at, canal, creado_por)
-         VALUES ($1, $2, $3, $4, now() + make_interval(mins => $5), $6, $7)
+        `INSERT INTO codigos_cuenta (proposito, usuario_id, solicitud_cliente_id, email, codigo_hmac, expira_at, canal, creado_por)
+         VALUES ($1, $2, $8, $3, $4, now() + make_interval(mins => $5), $6, $7)
          RETURNING id, expira_at`,
-        [proposito, usuarioId, email, hmac, minutos, canal, creadoPor]
+        [proposito, usuarioId, email, hmac, minutos, canal, creadoPor, solicitudClienteId]
     );
     return { id: r.rows[0].id, codigo, expiraAt: r.rows[0].expira_at };
 }

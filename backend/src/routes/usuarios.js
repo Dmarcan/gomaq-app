@@ -427,10 +427,13 @@ router.get('/solicitudes', verifyToken, requireRole('administrativo', 'gerente')
     try {
         const result = await pool.query(
             `SELECT id, nombre_contacto, nombre_empresa, email, rut_empresa, telefono_whatsapp, horario_trabajo,
-                    horario_colacion, direccion, latitud, longitud, estado, created_at
+                    horario_colacion, direccion, latitud, longitud, estado, created_at,
+                    (correo_verificado_at IS NOT NULL) AS correo_verificado
              FROM solicitudes_cliente WHERE ${SQL_CUENTAS_POR_APROBAR} ORDER BY created_at ASC`
         );
-        res.json(result.rows);
+        // el panel solo pide confirmar "sin verificar" cuando el envio de correos esta configurado
+        const disponible = correoDisponible().disponible;
+        res.json(result.rows.map((f) => ({ ...f, correo_verificacion_disponible: disponible })));
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar solicitudes' });
@@ -459,6 +462,16 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
             return res.status(404).json({ error: 'Solicitud de cuenta no encontrada o ya procesada' });
         }
         const s = solicitudResult.rows[0];
+
+        // si el envio de correos esta configurado, aprobar sin que el cliente haya confirmado su correo
+        // pide una confirmacion explicita (puede ser un correo ajeno o mal escrito)
+        if (!s.correo_verificado_at && correoDisponible().disponible && req.body.confirmar_sin_verificar !== true) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({
+                codigo: 'correo_sin_verificar',
+                error: 'El cliente aún no confirmó su correo. Confirma que quieres aprobar la cuenta sin verificarlo.',
+            });
+        }
 
         // el UNIQUE de usuarios.email es exacto: una cuenta con el mismo correo en otra capitalizacion
         // no lo dispara, y el login (que no distingue mayusculas) dejaria dos cuentas ambiguas

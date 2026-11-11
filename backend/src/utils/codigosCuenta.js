@@ -155,6 +155,18 @@ function textoCodigo({ proposito, nombre, email, codigo, venceAt, url }) {
             'No compartas este código. Si no esperabas este mensaje, ignóralo.',
         ].join('\n');
     }
+    if (proposito === 'verificar_correo') {
+        return [
+            saludo,
+            '',
+            'Para terminar tu registro en GOMAQ, confirma que este correo es tuyo:',
+            '1. Vuelve a la pantalla de registro de GOMAQ.',
+            `2. Escribe este código: ${codigoAgrupado}`,
+            '',
+            vence,
+            'No compartas este código. Si no pediste una cuenta en GOMAQ, ignora este mensaje.',
+        ].join('\n');
+    }
     return [
         saludo,
         '',
@@ -171,7 +183,9 @@ function textoCodigo({ proposito, nombre, email, codigo, venceAt, url }) {
 
 /** Asunto del correo segun el proposito. */
 function asuntoCodigo(proposito) {
-    return proposito === 'invitacion' ? 'Activa tu cuenta de GOMAQ' : 'Código para cambiar tu contraseña de GOMAQ';
+    if (proposito === 'invitacion') return 'Activa tu cuenta de GOMAQ';
+    if (proposito === 'verificar_correo') return 'Confirma tu correo en GOMAQ';
+    return 'Código para cambiar tu contraseña de GOMAQ';
 }
 
 /** Valida el cuerpo de POST /api/auth/codigo/confirmar. */
