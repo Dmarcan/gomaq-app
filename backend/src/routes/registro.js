@@ -7,6 +7,7 @@ const { limiteRegistro } = require('../middleware/limites');
 const { validarCoordenadas } = require('../utils/geo');
 const { rutValido, MENSAJE_RUT_INVALIDO } = require('../utils/rut');
 const { normalizarCorreo } = require('../utils/correo');
+const { validarPassword } = require('../utils/cuentasInternas');
 
 const router = express.Router();
 
@@ -26,9 +27,9 @@ router.post('/', limiteRegistro, async (req, res) => {
     if (!nombre_contacto || !email || !password) {
         return res.status(400).json({ error: 'Nombre de contacto, correo y contraseña son obligatorios' });
     }
-    if (typeof password !== 'string' || password.length < 8) {
-        return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
-    }
+    // mismas reglas que las cuentas internas: minimo 8 caracteres y maximo 72 bytes (bcrypt trunca en silencio)
+    const clave = validarPassword(password);
+    if (!clave.ok) return res.status(400).json({ error: clave.error });
     if (typeof rut_empresa === 'string' && rut_empresa.trim() && !rutValido(rut_empresa)) {
         return res.status(400).json({ error: MENSAJE_RUT_INVALIDO });
     }

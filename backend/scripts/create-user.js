@@ -9,6 +9,7 @@ require('dotenv').config();
 const readline = require('readline');
 const bcrypt = require('bcryptjs');
 const pool = require('../src/config/db');
+const { validarNuevaCuenta } = require('../src/utils/cuentasInternas');
 
 /** Lee una contrasena sin ecoarla en la terminal. */
 function pedirPassword(mensaje) {
@@ -45,13 +46,17 @@ async function main() {
     }
 
     const password = await pedirPassword('Contrasena: ');
-    if (!password || password.length < 8) {
-        console.error('La contrasena debe tener al menos 8 caracteres');
-        process.exit(1);
-    }
     const repetida = await pedirPassword('Repetir contrasena: ');
     if (password !== repetida) {
         console.error('Las contrasenas no coinciden');
+        process.exit(1);
+    }
+
+    // mismas reglas que el panel (utils/cuentasInternas.js): correo en minusculas y con formato valido,
+    // clave de 8 a 72 bytes. Para rol=cliente se valida con un rol interno solo por reutilizar la regla.
+    const v = validarNuevaCuenta({ nombre, email, rol: rol === 'cliente' ? 'gerente' : rol, password });
+    if (!v.ok) {
+        console.error(v.error);
         process.exit(1);
     }
 
@@ -59,7 +64,7 @@ async function main() {
     try {
         const result = await pool.query(
             'INSERT INTO usuarios (nombre, email, password_hash, rol, cliente_id) VALUES ($1, $2, $3, $4, $5) RETURNING id, nombre, email, rol, cliente_id',
-            [nombre, email, hash, rol, rol === 'cliente' ? clienteId : null]
+            [v.datos.nombre, v.datos.email, hash, rol, rol === 'cliente' ? clienteId : null]
         );
         console.log('Usuario creado:', result.rows[0]);
     } catch (err) {
