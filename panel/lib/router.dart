@@ -13,6 +13,7 @@ import 'screens/panel/maquinaria_perfil_screen.dart';
 import 'screens/panel/guias_screen.dart';
 import 'screens/panel/facturacion_screen.dart';
 import 'screens/panel/orden_detalle.dart' show OrdenDetalleScreen;
+import 'screens/panel/cliente_historial_screen.dart';
 import 'screens/panel/clientes_screen.dart';
 import 'screens/panel/ordenes_screen.dart';
 import 'screens/panel/solicitudes_screen.dart';
@@ -223,6 +224,14 @@ GoRouter construirRouter(AuthService auth) {
           ),
           GoRoute(path: '/costos', builder: (_, _) => const RentabilidadScreen()),
           GoRoute(path: '/clientes', builder: (_, _) => const ClientesScreen()),
+          // historial de un cliente: lo que arrendó y facturó (se puede recargar y compartir)
+          GoRoute(
+            path: '/clientes/:id',
+            builder: (_, estado) {
+              final id = int.tryParse(estado.pathParameters['id'] ?? '');
+              return HistorialDeClienteScreen(key: ValueKey(id), id: id);
+            },
+          ),
           // Cuentas por aprobar es la segunda pestaña de Clientes, con su propia entrada en el menú
           GoRoute(path: '/cuentas', builder: (_, _) => const ClientesScreen(pestanaInicial: 'cuentas')),
           GoRoute(

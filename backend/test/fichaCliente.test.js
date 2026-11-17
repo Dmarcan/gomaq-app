@@ -33,3 +33,25 @@ test('rechaza textos demasiado largos y cuerpos sin cambios', () => {
     assert.ok(validarFichaCliente(null).error);
     assert.ok(validarFichaCliente({ id: 5, latitud: 1 }).error, 'los campos desconocidos se ignoran');
 });
+
+test('giro: texto de hasta 150, vacio es null', () => {
+    assert.equal(validarFichaCliente({ giro: ' Construccion ' }).cambios.giro, 'Construccion');
+    assert.equal(validarFichaCliente({ giro: '' }).cambios.giro, null);
+    assert.ok(validarFichaCliente({ giro: 'x'.repeat(151) }).error);
+    assert.ok(validarFichaCliente({ giro: 5 }).error);
+});
+
+test('plazo de pago: entero de 0 a 365, texto de digitos o nulo', () => {
+    const plazo = (v) => validarFichaCliente({ plazo_pago_dias: v });
+    for (const [entrada, esperado] of [[0, 0], [30, 30], [365, 365], ['45', 45], [' 7 ', 7], [null, null], ['', null], ['0', 0]]) {
+        assert.equal(plazo(entrada).cambios.plazo_pago_dias, esperado, String(entrada));
+    }
+    for (const malo of [366, -1, 1.5, '1.5', '-3', 'treinta', '1e2', NaN, Infinity, true, [30], {}, '99999']) {
+        assert.ok(plazo(malo).error, String(malo));
+    }
+});
+
+test('el plazo solo viaja si viene en el cuerpo', () => {
+    assert.deepEqual(validarFichaCliente({ nombre: 'Ana' }).cambios, { nombre: 'Ana' });
+    assert.deepEqual(validarFichaCliente({ plazo_pago_dias: 0 }), { cambios: { plazo_pago_dias: 0 } });
+});

@@ -10,6 +10,7 @@ import '../../widgets/dialogos.dart';
 import '../../utils/rut.dart';
 import '../../utils/ubicacion.dart';
 import '../../widgets/buscador_direccion.dart';
+import '../../widgets/selector_plazo_pago.dart';
 
 class ClientesScreen extends StatefulWidget {
   /// Pestaña con la que se abre: 'cuentas' (Cuentas por aprobar) llega desde el menú y el dashboard.
@@ -136,6 +137,9 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
     final emailCtrl = TextEditingController(text: c['email']?.toString() ?? '');
     final telefonoCtrl = TextEditingController(text: c['telefono']?.toString() ?? '');
     final direccionCtrl = TextEditingController(text: c['direccion']?.toString() ?? '');
+    final giroCtrl = TextEditingController(text: c['giro']?.toString() ?? '');
+    // sin valor por defecto: un cliente cargado sin plazo obliga a elegirlo la primera vez que se edita
+    int? plazo = c['plazo_pago_dias'] is int ? c['plazo_pago_dias'] as int : int.tryParse('${c['plazo_pago_dias'] ?? ''}');
     // vacío se envía como cadena vacía: el servidor lo guarda como "sin dato"
     String texto(TextEditingController x) => x.text.trim();
     final tieneCuenta = c['tiene_cuenta'] == true;
@@ -197,6 +201,14 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
             decoration: decoracionCampo('Dirección'),
           ),
           separadorCampos,
+          TextFormField(
+            controller: giroCtrl,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: decoracionCampo('Giro', ayuda: 'A qué se dedica la empresa.'),
+          ),
+          separadorCampos,
+          SelectorPlazoPago(valor: plazo, onChanged: (v) => plazo = v),
+          separadorCampos,
           LineaInfo(
             icono: tieneCuenta ? Icons.verified_user_outlined : Icons.person_off_outlined,
             texto: tieneCuenta
@@ -211,9 +223,11 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
         'email': texto(emailCtrl),
         'telefono': texto(telefonoCtrl),
         'direccion': texto(direccionCtrl),
+        'giro': texto(giroCtrl),
+        'plazo_pago_dias': plazo,
       }),
     );
-    for (final x in [nombreCtrl, rutCtrl, emailCtrl, telefonoCtrl, direccionCtrl]) {
+    for (final x in [nombreCtrl, rutCtrl, emailCtrl, telefonoCtrl, direccionCtrl, giroCtrl]) {
       x.dispose();
     }
     if (editado && mounted) {
@@ -234,6 +248,8 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
     final rutCtrl = TextEditingController();
     final emailCtrl = TextEditingController();
     final telefonoCtrl = TextEditingController();
+    final giroCtrl = TextEditingController();
+    int? plazo; // sin valor por defecto: hay que elegirlo
     int? ejecutivoId;
     String? texto(TextEditingController c) => c.text.trim().isEmpty ? null : c.text.trim();
 
@@ -289,6 +305,14 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
             validator: (v) => (v == null || v.trim().isEmpty || RegExp(r'^[^@\s]+@[^@\s]+\.[^@\s]+$').hasMatch(v.trim())) ? null : 'Escribe un correo válido, por ejemplo nombre@empresa.cl.',
           ),
           separadorCampos,
+          TextFormField(
+            controller: giroCtrl,
+            textCapitalization: TextCapitalization.sentences,
+            decoration: decoracionCampo('Giro', ayuda: 'A qué se dedica la empresa.'),
+          ),
+          separadorCampos,
+          SelectorPlazoPago(valor: plazo, onChanged: (v) => plazo = v),
+          separadorCampos,
           DropdownButtonFormField<int?>(
             initialValue: ejecutivoId,
             isExpanded: true,
@@ -307,15 +331,33 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
         'email': texto(emailCtrl),
         'telefono': texto(telefonoCtrl),
         'ejecutivo_id': ejecutivoId,
+        'giro': texto(giroCtrl),
+        'plazo_pago_dias': plazo,
       }),
     );
-    for (final c in [nombreCtrl, rutCtrl, emailCtrl, telefonoCtrl]) {
+    for (final c in [nombreCtrl, rutCtrl, emailCtrl, telefonoCtrl, giroCtrl]) {
       c.dispose();
     }
     if (creado && mounted) {
       _cargar();
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Cliente creado')));
     }
+  }
+
+  /// Plazo habitual de pago en la lista. Sin plazo se marca con icono y texto, no solo con color.
+  Widget _marcaPlazo(dynamic valor) {
+    final dias = valor is int ? valor : int.tryParse('${valor ?? ''}');
+    if (dias == null) {
+      return const Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.warning_amber_rounded, size: 18, color: GomaqColors.advertenciaFuerte),
+          SizedBox(width: 6),
+          Flexible(child: Text('Sin plazo de pago', style: TextStyle(color: GomaqColors.advertenciaFuerte, fontWeight: FontWeight.w600))),
+        ],
+      );
+    }
+    return Text('Plazo de pago: ${etiquetaPlazoPago(dias)}', style: TextStyle(color: Colors.grey.shade700));
   }
 
   @override
@@ -358,11 +400,40 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              Text(c['nombre'].toString(), style: Theme.of(context).textTheme.titleMedium),
-                              const SizedBox(height: 2),
-                              Text(
-                                '${c['email'] ?? 'sin correo'} | ${c['telefono'] ?? 'sin teléfono'}',
-                                style: TextStyle(color: Colors.grey.shade700),
+                              // toda esta parte abre el historial del cliente (Tab y Enter o Espacio también)
+                              Semantics(
+                                button: true,
+                                label: 'Ver historial de ${c['nombre']}',
+                                excludeSemantics: true,
+                                onTap: () => context.push('/clientes/${c['id']}'),
+                                child: InkWell(
+                                  borderRadius: BorderRadius.circular(8),
+                                  onTap: () => context.push('/clientes/${c['id']}'),
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 4, horizontal: 2),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(c['nombre'].toString(), style: Theme.of(context).textTheme.titleMedium),
+                                              const SizedBox(height: 2),
+                                              Text(
+                                                '${c['email'] ?? 'sin correo'} | ${c['telefono'] ?? 'sin teléfono'}',
+                                                style: TextStyle(color: Colors.grey.shade700),
+                                              ),
+                                              if (c['giro'] != null) Text('Giro: ${c['giro']}', style: TextStyle(color: Colors.grey.shade700)),
+                                              const SizedBox(height: 2),
+                                              _marcaPlazo(c['plazo_pago_dias']),
+                                            ],
+                                          ),
+                                        ),
+                                        Icon(Icons.chevron_right, color: Colors.grey.shade600),
+                                      ],
+                                    ),
+                                  ),
+                                ),
                               ),
                               const SizedBox(height: 4),
                               Wrap(
