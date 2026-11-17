@@ -408,6 +408,8 @@ void main() {
       final f = _Falso((_, _, _) => _pagina([_fila(1, 'vencida', mora: 4)]));
       await t.pumpWidget(_app(f));
       await t.pumpAndSettle();
+      await t.ensureVisible(find.text('Corregir'));
+      await t.pumpAndSettle();
       await t.tap(find.text('Corregir'));
       await t.pumpAndSettle();
       expect(t.takeException(), isNull);
@@ -438,7 +440,8 @@ void main() {
         if (contexto == null) return false;
         var dentro = false;
         contexto.visitAncestorElements((e) {
-          if (e.widget is OutlinedButton) {
+          // el botón "Exportar a Excel" de la cabecera también es un OutlinedButton: no cuenta
+          if (e.widget is OutlinedButton && e.widget.key != const ValueKey('exportar-excel')) {
             dentro = true;
             return false;
           }

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../../services/api_client.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../utils/cobranza.dart';
+import '../../utils/enlaces.dart';
 import '../../utils/formato.dart';
 import '../../utils/numeros.dart';
 import '../../widgets/campo_fecha_opcional.dart';
@@ -14,6 +15,13 @@ typedef CargarEmitidas = Future<Map<String, dynamic>> Function({required String 
 /// Cambia una factura: `PATCH /api/facturacion/:id/pago` (pago y nota de crédito) o `PATCH /api/facturacion/:id`
 /// (corrección de neto y vencimiento). `ruta` es la parte después de `/api/facturacion/:id`.
 typedef CambiarFactura = Future<void> Function(int id, String ruta, Map<String, dynamic> cuerpo);
+
+/// Exporta la facturación: `POST /api/facturacion/exportar` con `{desde, hasta, cliente_id}` opcionales.
+/// Responde `{url, filas, sin_neto, generado_en}`.
+typedef ExportarFacturas = Future<Map<String, dynamic>> Function(Map<String, dynamic> cuerpo);
+
+/// Abre la URL firmada del archivo exportado.
+typedef AbrirUrl = Future<void> Function(String url);
 
 const _tamanoPagina = 50;
 
@@ -38,12 +46,22 @@ Future<void> _cambiarPorDefecto(int id, String ruta, Map<String, dynamic> cuerpo
 /// folio o cliente y lista paginada. El estado de cada fila lleva icono y texto además del color. Solo el
 /// administrativo ([puedeEscribir]) marca pagos, anula con nota de crédito y corrige; el gerente la ve en
 /// lectura.
+Future<Map<String, dynamic>> _exportarPorDefecto(Map<String, dynamic> cuerpo) async {
+  final r = await ApiClient.instance.post('/api/facturacion/exportar', cuerpo);
+  return Map<String, dynamic>.from(r as Map);
+}
+
 class FacturasEmitidasTab extends StatefulWidget {
   /// `vencidas` o `proximas` llegan desde las tarjetas del inicio. Otro valor deja la lista completa.
   final String? filtroInicial;
   final bool puedeEscribir;
   final CargarEmitidas cargar;
   final CambiarFactura cambiar;
+  final ExportarFacturas exportar;
+  final AbrirUrl abrirUrl;
+
+  /// Si la lista está acotada a un cliente, la exportación también.
+  final int? clienteId;
 
   const FacturasEmitidasTab({
     super.key,
@@ -51,6 +69,9 @@ class FacturasEmitidasTab extends StatefulWidget {
     required this.puedeEscribir,
     this.cargar = _cargarPorDefecto,
     this.cambiar = _cambiarPorDefecto,
+    this.exportar = _exportarPorDefecto,
+    this.abrirUrl = abrirEnlace,
+    this.clienteId,
   });
 
   @override
@@ -271,6 +292,60 @@ class _FacturasEmitidasTabState extends State<FacturasEmitidasTab> {
     await _cargarLista();
   }
 
+  Future<void> _exportar() async {
+    String? desde;
+    String? hasta;
+    Map<String, dynamic>? resultado;
+    final ok = await mostrarFormulario(
+      context,
+      icono: Icons.download_outlined,
+      titulo: 'Exportar a Excel',
+      subtitulo: 'Una fila por factura, con el formato de la planilla de cobranza',
+      textoAccion: 'Exportar',
+      contenido: (context, redibujar) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const LineaInfo(
+            icono: Icons.info_outline,
+            texto: 'Las fechas filtran por la emisión de la factura. Sin fechas se exporta todo (hasta 5.000 facturas).',
+          ),
+          separadorCampos,
+          CampoFechaOpcional(etiqueta: 'Desde', valor: desde, onChanged: (v) => redibujar(() => desde = v)),
+          separadorCampos,
+          CampoFechaOpcional(etiqueta: 'Hasta', valor: hasta, onChanged: (v) => redibujar(() => hasta = v)),
+          if (widget.clienteId != null) ...[
+            separadorCampos,
+            const LineaInfo(icono: Icons.person_outline, texto: 'Solo las facturas del cliente de esta lista.'),
+          ],
+        ],
+      ),
+      alGuardar: () async {
+        resultado = await widget.exportar({
+          'desde': ?desde,
+          'hasta': ?hasta,
+          if (widget.clienteId != null) 'cliente_id': widget.clienteId,
+        });
+      },
+    );
+    final r = resultado;
+    if (!ok || !mounted || r == null) return;
+    final filas = _entero(r['filas'], 0);
+    final sinNeto = _entero(r['sin_neto'], 0);
+    var aviso = filas == 1 ? 'Se exportó 1 factura a Excel.' : 'Se exportaron $filas facturas a Excel.';
+    if (sinNeto > 0) {
+      aviso += sinNeto == 1
+          ? ' 1 factura no tiene monto neto guardado: su neto es una estimación (monto / 1,19); las exentas de IVA pueden salir mal.'
+          : ' $sinNeto facturas no tienen monto neto guardado: su neto es una estimación (monto / 1,19); las exentas de IVA pueden salir mal.';
+    }
+    final url = r['url'];
+    try {
+      if (url is String && url.isNotEmpty) await widget.abrirUrl(url);
+    } catch (_) {
+      aviso += ' No se pudo abrir la descarga automáticamente: vuelve a exportar o permite las ventanas emergentes.';
+    }
+    if (mounted) setState(() => _aviso = aviso);
+  }
+
   // ---------- presentación ----------
 
   /// Color del texto y del icono del estado: los de texto cumplen 4,5:1 sobre blanco.
@@ -416,6 +491,16 @@ class _FacturasEmitidasTabState extends State<FacturasEmitidasTab> {
                 onSelected: (_) => _elegirFiltro(filtro.id),
               ),
           ],
+        ),
+        const SizedBox(height: 12),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            key: const ValueKey('exportar-excel'),
+            onPressed: _exportar,
+            icon: const Icon(Icons.download_outlined, size: 18),
+            label: const Text('Exportar a Excel'),
+          ),
         ),
         const SizedBox(height: 12),
         TextField(
