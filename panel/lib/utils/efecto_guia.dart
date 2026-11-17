@@ -129,3 +129,51 @@ String describirEfectoGuia({
   final h = parsearHorometro(horometro);
   return h == null ? efecto : '$efecto Se registra una lectura de horómetro de ${horometroParaEnvio(horometro)} h.';
 }
+
+/// Resultado informativo de [efectoCobroGuia]: el día que marca el corte y la frase que lo explica.
+class EfectoCobroGuia {
+  const EfectoCobroGuia({required this.dia, required this.texto});
+
+  /// Despacho: primer día que se cobra (`guias.inicio_cobro`). Recepción: último día cobrado (`guias.fin_cobro`).
+  final DateTime dia;
+  final String texto;
+}
+
+/// Qué día se cobra según la fecha y hora de la guía y la hora de corte (`hora_corte_despacho`).
+///
+/// Reproduce `gomaq_inicio_cobro` (migración 022) y `gomaq_fin_cobro` (migración 028): un despacho
+/// desde la hora de corte (hora >= corte) empieza a cobrar al día siguiente; una recepción desde la
+/// hora de corte cobra ese mismo día y una anterior a la hora de corte deja como último día el anterior.
+/// Es solo informativa: el servidor es quien calcula y guarda el día. Devuelve null si [tipo] no es
+/// despacho ni recepción.
+EfectoCobroGuia? efectoCobroGuia({
+  required String tipo,
+  required DateTime fecha,
+  required int horaCorte,
+}) {
+  final base = DateTime(fecha.year, fecha.month, fecha.day);
+  final desdeElCorte = fecha.hour >= horaCorte;
+  final corte = '${_dos(horaCorte)}:00';
+  String dm(DateTime d) => '${_dos(d.day)}/${_dos(d.month)}';
+  if (tipo == 'despacho') {
+    if (desdeElCorte) {
+      final dia = DateTime(base.year, base.month, base.day + 1);
+      return EfectoCobroGuia(
+        dia: dia,
+        texto: 'Salió desde las $corte: se cobra desde el día siguiente (${dm(dia)}).',
+      );
+    }
+    return EfectoCobroGuia(dia: base, texto: 'Salió antes de las $corte: se cobra desde el mismo día (${dm(base)}).');
+  }
+  if (tipo == 'recepcion') {
+    if (desdeElCorte) {
+      return EfectoCobroGuia(dia: base, texto: 'Volvió desde las $corte: el último día cobrado es ${dm(base)}.');
+    }
+    final dia = DateTime(base.year, base.month, base.day - 1);
+    return EfectoCobroGuia(
+      dia: dia,
+      texto: 'Volvió antes de las $corte: el último día cobrado es el anterior (${dm(dia)}).',
+    );
+  }
+  return null;
+}

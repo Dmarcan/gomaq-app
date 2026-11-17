@@ -10,6 +10,7 @@ import '../../utils/formato.dart';
 import '../../utils/motivo_cambio.dart' show nuevoUuid;
 import '../../widgets/confirmar_horometro.dart';
 import '../../widgets/estado_vacio.dart';
+import '../../widgets/selector_dia_arriendo.dart';
 
 /// Mismo tope que aplica el backend (middleware/upload.js).
 const _maxArchivoBytes = 10 * 1024 * 1024;
@@ -41,6 +42,8 @@ class _GuiasScreenState extends State<GuiasScreen> {
   // código del equipo que dice el PDF cuando no está entre los que se pueden elegir
   String? _equipoFueraDeLista;
   final _horometroCtrl = TextEditingController();
+  // hora de corte del cobro (configuración del servidor); null si no se pudo leer: entonces no se muestra la frase
+  int? _horaCorte;
   DateTime _fecha = DateTime.now();
   TimeOfDay _hora = TimeOfDay.now();
   bool _fallido = false;
@@ -145,6 +148,17 @@ class _GuiasScreenState extends State<GuiasScreen> {
     }
   }
 
+  /// Solo informativa: si falla, la pantalla no muestra la frase del día que se cobra.
+  Future<void> _cargarHoraCorte() async {
+    try {
+      final config = await ApiClient.instance.get('/api/facturacion/configuracion');
+      final hora = config is Map ? config['hora_corte_despacho'] : null;
+      if (mounted && hora is num) setState(() => _horaCorte = hora.toInt());
+    } catch (_) {
+      // el servidor sigue decidiendo el día de cobro
+    }
+  }
+
   Future<void> _cargarMaquinarias() async {
     final maquinarias = (await ApiClient.instance.get('/api/maquinarias'))['items'];
     if (mounted) setState(() => _maquinarias = maquinarias);
@@ -166,6 +180,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
       await _cargarMaquinarias();
       final clientes = await ApiClient.instance.get('/api/clientes');
       if (mounted) setState(() => _clientes = clientes);
+      _cargarHoraCorte();
     } catch (e) {
       if (mounted) setState(() => _errorCarga = mensajeErrorCarga(e));
     } finally {
@@ -654,34 +669,18 @@ class _GuiasScreenState extends State<GuiasScreen> {
             ],
             if ((_archivo != null || _sinDocumento) && !_detectando) ...[
               const SizedBox(height: 20),
-              const Text('FECHA Y HORA DE SALIDA/LLEGADA', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
-              if (_huboDeteccion && !_horaDetectada)
-                const Padding(
-                  padding: EdgeInsets.only(top: 4),
-                  child: Text(
-                    'La hora no venía en el PDF: se usó la hora en que cargaste la guía. Cámbiala si fue otra, porque define si se cobra este día.',
-                    style: TextStyle(fontSize: 12, color: Color(0xFFB25000)),
-                  ),
-                ),
-              const SizedBox(height: 8),
-              Row(
-                children: [
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _elegirFecha,
-                      icon: const Icon(Icons.calendar_today, size: 16),
-                      label: Text(Formato.fecha(_fecha)),
-                    ),
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: OutlinedButton.icon(
-                      onPressed: _elegirHora,
-                      icon: const Icon(Icons.access_time, size: 16),
-                      label: Text(_hora.format(context)),
-                    ),
-                  ),
-                ],
+              SelectorDiaArriendo(
+                tipo: _tipo,
+                fecha: _fecha,
+                hora: _hora,
+                horaTexto: _hora.format(context),
+                onElegirFecha: _elegirFecha,
+                onElegirHora: _elegirHora,
+                horaCorte: _horaCorte,
+                fallido: _fallido,
+                avisoHora: (_huboDeteccion && !_horaDetectada)
+                    ? 'La hora no venía en el PDF: se usó la hora en que cargaste la guía. Cámbiala si fue otra, porque define si se cobra este día.'
+                    : null,
               ),
               const SizedBox(height: 20),
               const Text('HORÓMETRO DEL EQUIPO', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
