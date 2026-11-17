@@ -111,4 +111,4 @@ async function cargarEmitidas(db, { estado = 'todas', clienteId = null, q = null
     };
 }
 
-module.exports = { armarFilaEmitida, cargarEmitidas };
+module.exports = { armarFilaEmitida, cargarEmitidas, SQL_CLIENTE, SQL_FECHA_REF, DESDE_JOIN };

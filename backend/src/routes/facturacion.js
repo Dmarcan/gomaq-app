@@ -19,10 +19,14 @@ const { parsearFactura } = require('../utils/parsearDocumento');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 const { validarTraslado, validarNeto, resolverTraslado } = require('../utils/trasladoFactura');
 const {
-    FILTROS_ESTADO, vencimientoPropuesto, avisosPrecarga, validarFechasFactura, validarFechaPago, validarFolioNotaCredito,
+    FILTROS_ESTADO, hoySantiago, vencimientoPropuesto, avisosPrecarga, validarFechasFactura, validarFechaPago, validarFolioNotaCredito,
 } = require('../utils/cobranza');
 const { esDiaValido } = require('../utils/validacion');
 const { cargarEmitidas } = require('../utils/facturasEmitidas');
+const { crearXlsx, TIPO_XLSX } = require('../utils/xlsx');
+const {
+    NOMBRE_HOJA: NOMBRE_HOJA_EXPORTACION, MAX_FILAS: MAX_FILAS_EXPORTACION, armarHoja, cargarFilasExportacion,
+} = require('../utils/exportarFacturacion');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['facturaId', 'guiaDespachoId']);
@@ -429,6 +433,55 @@ router.get('/emitidas', verifyToken, requireRole('administrativo', 'gerente'), a
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar las facturas emitidas' });
+    }
+});
+
+// POST /api/facturacion/exportar - Excel con el formato de la hoja CLIENTES de la planilla de la administrativa (una fila
+// por factura, valores y no formulas). Cuerpo opcional: { desde, hasta, cliente_id } (desde/hasta sobre la
+// emision, o el dia de carga si no la tiene). Sube el archivo al bucket privado de documentos
+// (exportaciones/facturacion-usuario-<id>.xlsx, se sobrescribe) y responde
+// { url, filas, sin_neto, generado_en }: url firmada de 1 hora; sin_neto = facturas sin monto neto guardado, cuyo
+// neto se calculo como monto / 1,19. Tope de 5.000 filas (400 si se supera). Solo administrativo y gerente.
+router.post('/exportar', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    const cuerpo = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    const dia = (v) => (v === undefined || v === null || v === '' ? null : (typeof v === 'string' && esDiaValido(v) ? v : undefined));
+    const desde = dia(cuerpo.desde);
+    const hasta = dia(cuerpo.hasta);
+    if (desde === undefined || hasta === undefined) return res.status(400).json({ error: 'desde y hasta deben ser fechas válidas (AAAA-MM-DD)' });
+    if (desde && hasta && desde > hasta) return res.status(400).json({ error: 'desde no puede ser posterior a hasta' });
+    let clienteId = null;
+    const c = cuerpo.cliente_id;
+    if (c !== undefined && c !== null && c !== '') {
+        if (!(typeof c === 'number' || typeof c === 'string') || !/^\d{1,9}$/.test(String(c)) || Number(c) <= 0) {
+            return res.status(400).json({ error: 'cliente_id inválido' });
+        }
+        clienteId = Number(c);
+    }
+    try {
+        const { items, hoy } = await cargarFilasExportacion(pool, { desde, hasta, clienteId });
+        if (items.length > MAX_FILAS_EXPORTACION) {
+            return res.status(400).json({ error: `La exportación supera las ${MAX_FILAS_EXPORTACION} facturas: acota el rango de fechas` });
+        }
+        const generado = hoy || hoySantiago();
+        const hoja = armarHoja(items, { hoy: generado, generado });
+        const archivo = crearXlsx({ hoja: NOMBRE_HOJA_EXPORTACION, filas: hoja.matriz });
+        const ruta = `exportaciones/facturacion-usuario-${Number(req.user.id)}.xlsx`;
+        const almacen = supabase.storage.from(BUCKET_DOCUMENTOS);
+        const { error: errorSubida } = await almacen.upload(ruta, archivo, { contentType: TIPO_XLSX, upsert: true });
+        if (errorSubida) {
+            console.error('Error al subir la exportación:', errorSubida.message);
+            return res.status(500).json({ error: 'No se pudo guardar el archivo de la exportación' });
+        }
+        const { data, error: errorUrl } = await almacen.createSignedUrl(ruta, 3600);
+        if (errorUrl || !data || !data.signedUrl) {
+            console.error('Error al firmar la exportación:', errorUrl && errorUrl.message);
+            return res.status(500).json({ error: 'No se pudo generar el enlace de descarga' });
+        }
+        res.set('Cache-Control', 'no-store');
+        res.json({ url: data.signedUrl, filas: hoja.filas, sin_neto: hoja.sin_neto, generado_en: generado });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al exportar la facturación' });
     }
 });
 
