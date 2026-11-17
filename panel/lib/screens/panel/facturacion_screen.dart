@@ -5,20 +5,24 @@ import 'package:provider/provider.dart';
 import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
+import '../../utils/cobranza.dart';
 import '../../utils/numeros.dart';
 import '../../utils/formato.dart';
+import '../../widgets/campo_fecha_opcional.dart';
 import '../../widgets/dialogos.dart';
 import '../../widgets/estado_vacio.dart';
 import '../../widgets/fotos_orden.dart';
 import 'arriendos_en_curso_tab.dart';
+import 'facturas_emitidas_tab.dart';
 import 'ordenes_screen.dart' show abrirDetalleOrden;
 
 class FacturacionScreen extends StatefulWidget {
-  /// Pestaña con la que se abre: 'valorizar' llega desde el atajo del Dashboard y 'en_curso' abre
-  /// los arriendos en curso.
+  /// Pestaña con la que se abre: 'valorizar' llega desde el atajo del Dashboard, 'en_curso' abre
+  /// los arriendos en curso y 'emitidas' las facturas ya emitidas con su cobranza.
   final String? pestanaInicial;
 
-  /// 'aviso' (con pestana=en_curso) deja solo los arriendos con períodos sin facturar.
+  /// 'aviso' (con pestana=en_curso) deja solo los arriendos con períodos sin facturar; 'vencidas' o
+  /// 'proximas' (con pestana=emitidas) filtran las facturas emitidas por su estado de cobranza.
   final String? filtroInicial;
   const FacturacionScreen({super.key, this.pestanaInicial, this.filtroInicial});
 
@@ -34,14 +38,14 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
   bool _cargando = true;
   String? _error;
 
-  static const _idsPestana = ['por_facturar', 'valorizar', 'en_curso'];
+  static const _idsPestana = ['por_facturar', 'valorizar', 'en_curso', 'emitidas'];
 
-  static int _indiceDe(String? pestana) => switch (pestana) { 'valorizar' => 1, 'en_curso' => 2, _ => 0 };
+  static int _indiceDe(String? pestana) => switch (pestana) { 'valorizar' => 1, 'en_curso' => 2, 'emitidas' => 3, _ => 0 };
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 3, vsync: this, initialIndex: _indiceDe(widget.pestanaInicial));
+    _tabController = TabController(length: 4, vsync: this, initialIndex: _indiceDe(widget.pestanaInicial));
     _tabController.addListener(_pestanaCambio);
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
   }
@@ -113,18 +117,32 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
             Tab(text: 'Por facturar (${_arriendos.length + _listas.length})'),
             Tab(text: 'Pendiente de valorizar (${_pendientesValorizar.length})'),
             const Tab(text: 'Arriendos en curso'),
+            const Tab(text: 'Emitidas'),
           ],
         ),
       ),
-      body: _cargando
-          ? const Center(child: CircularProgressIndicator())
-          : _error != null
-              ? EstadoError(titulo: 'No se pudo cargar la facturación', mensaje: _error!, onReintentar: _cargar)
-              : TabBarView(
-                  controller: _tabController,
-                  children: [_construirPorFacturar(), _construirPendienteValorizar(), ArriendosEnCursoTab(filtroInicial: widget.filtroInicial)],
-                ),
+      // las dos primeras pestañas dependen de /pendientes; las otras cargan lo suyo, así que un fallo
+      // de esa consulta no deja sin pantalla a las facturas emitidas
+      body: TabBarView(
+        controller: _tabController,
+        children: [
+          _conEstadoDePendientes(_construirPorFacturar),
+          _conEstadoDePendientes(_construirPendienteValorizar),
+          ArriendosEnCursoTab(filtroInicial: widget.filtroInicial),
+          FacturasEmitidasTab(
+            key: ValueKey('emitidas|${widget.filtroInicial}'),
+            filtroInicial: widget.filtroInicial,
+            puedeEscribir: context.watch<AuthService>().esAdministrativo,
+          ),
+        ],
+      ),
     );
+  }
+
+  Widget _conEstadoDePendientes(Widget Function() construir) {
+    if (_cargando) return const Center(child: CircularProgressIndicator());
+    if (_error != null) return EstadoError(titulo: 'No se pudo cargar la facturación', mensaje: _error!, onReintentar: _cargar);
+    return construir();
   }
 
   Widget _construirPorFacturar() {
@@ -227,7 +245,14 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
 /// del correo antes de autorizar el envio.
 class FacturaPendienteDialog extends StatefulWidget {
   final Map<String, dynamic> item;
-  const FacturaPendienteDialog({super.key, required this.item});
+
+  /// Costuras para las pruebas: por defecto eligen el PDF con el selector del sistema y hablan con el servidor.
+  final Future<PlatformFile?> Function()? elegirArchivo;
+  final Future<dynamic> Function(PlatformFile archivo)? detectar;
+  final Future<dynamic> Function(String ruta, PlatformFile archivo, Map<String, String> campos)? subir;
+  final Future<dynamic> Function(int id, Map<String, dynamic> cuerpo)? corregir;
+
+  const FacturaPendienteDialog({super.key, required this.item, this.elegirArchivo, this.detectar, this.subir, this.corregir});
 
   @override
   State<FacturaPendienteDialog> createState() => _FacturaPendienteDialogState();
@@ -239,6 +264,23 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
   // parte de la factura que es traslado (solo arriendos): no cuenta como ingreso del equipo
   final _trasladoCtrl = TextEditingController();
   final _trasladoEditCtrl = TextEditingController();
+  // monto neto, partes del traslado (entrega y retiro) y fechas de la factura: se precargan desde el PDF
+  // y quien sube la factura los confirma o corrige (solo arriendos)
+  final _netoCtrl = TextEditingController();
+  final _entregaCtrl = TextEditingController();
+  final _retiroCtrl = TextEditingController();
+  final _netoEditCtrl = TextEditingController();
+  final _entregaEditCtrl = TextEditingController();
+  final _retiroEditCtrl = TextEditingController();
+  String? _emision;
+  String? _vencimiento;
+  String? _emisionEdit;
+  String? _vencimientoEdit;
+  String? _errorNeto;
+  String? _errorNetoEdicion;
+  // lo que dijo la lectura del PDF: avisos y, si el vencimiento no coincide con el plazo del cliente, las dos opciones
+  List<Map<String, dynamic>> _avisos = [];
+  List<({String dia, String texto})>? _opcionesVencimiento;
   String? _errorTraslado;
   String? _errorTrasladoEdicion;
   PlatformFile? _archivo;
@@ -282,6 +324,12 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
     _montoCtrl.dispose();
     _trasladoCtrl.dispose();
     _trasladoEditCtrl.dispose();
+    _netoCtrl.dispose();
+    _entregaCtrl.dispose();
+    _retiroCtrl.dispose();
+    _netoEditCtrl.dispose();
+    _entregaEditCtrl.dispose();
+    _retiroEditCtrl.dispose();
     _folioEditCtrl.dispose();
     _montoEditCtrl.dispose();
     _asuntoCtrl.dispose();
@@ -316,23 +364,30 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
   int _diasEntre(String desde, String hasta) =>
       DateTime.parse('${hasta}T00:00:00Z').difference(DateTime.parse('${desde}T00:00:00Z')).inDays + 1;
 
+  bool get _esArriendo => widget.item['tipo'] == 'arriendo';
+
   Future<void> _elegirArchivo() async {
-    final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
-    if (resultado == null || resultado.files.single.bytes == null) return;
-    setState(() => _archivo = resultado.files.single);
+    final PlatformFile? archivo;
+    if (widget.elegirArchivo != null) {
+      archivo = await widget.elegirArchivo!();
+    } else {
+      final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
+      archivo = resultado?.files.single;
+    }
+    if (archivo == null || archivo.bytes == null) return;
+    setState(() => _archivo = archivo);
 
     setState(() => _detectando = true);
     try {
-      final deteccion = await ApiClient.instance.postMultipart(
-        '/api/facturacion/detectar',
-        bytes: _archivo!.bytes,
-        filename: _archivo!.name,
-      );
+      final deteccion = widget.detectar != null
+          ? await widget.detectar!(archivo)
+          : await ApiClient.instance.postMultipart(
+              '/api/facturacion/detectar',
+              bytes: archivo.bytes,
+              filename: archivo.name,
+            );
       if (!mounted) return;
-      setState(() {
-        if (deteccion['monto_detectado'] != null) _montoCtrl.text = numeroParaEditar(deteccion['monto_detectado']);
-        if (deteccion['folio_detectado'] != null) _folioCtrl.text = deteccion['folio_detectado'].toString();
-      });
+      setState(() => _aplicarDeteccion(Map<String, dynamic>.from(deteccion as Map)));
     } on ApiException catch (_) {
       // deteccion best-effort: si falla, el usuario sigue llenando a mano
     } finally {
@@ -340,13 +395,68 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
     }
   }
 
-  /// Texto de error del traslado o null. Vacío vale 0; debe ser entero y no pasar del monto.
-  String? _validarTraslado(String texto, double? monto) {
+  /// Llena el formulario con lo que leyó el servidor del PDF. Todo es una propuesta: quien sube la factura
+  /// la confirma o la corrige. Neto, fechas y traslado solo se precargan en los arriendos.
+  void _aplicarDeteccion(Map<String, dynamic> d) {
+    if (d['monto_detectado'] != null) _montoCtrl.text = numeroParaEditar(d['monto_detectado']);
+    if (d['folio_detectado'] != null) _folioCtrl.text = d['folio_detectado'].toString();
+    if (!_esArriendo) return;
+    if (d['monto_neto_detectado'] != null) _netoCtrl.text = numeroParaEditar(d['monto_neto_detectado']);
+    if (d['fecha_emision_detectada'] is String) _emision = d['fecha_emision_detectada'] as String;
+    final venc = d['vencimiento'] is Map ? Map<String, dynamic>.from(d['vencimiento'] as Map) : null;
+    if (venc != null && venc['propuesta'] is String) _vencimiento = venc['propuesta'] as String;
+    // con dos fechas posibles queda elegida la del PDF y se ofrece la del plazo del cliente
+    _opcionesVencimiento = opcionesVencimiento(venc);
+    final t = d['traslado_detectado'];
+    if (t is Map) {
+      _entregaCtrl.text = _trasladoParaEditar(t['entrega']);
+      _retiroCtrl.text = _trasladoParaEditar(t['retiro']);
+      _trasladoCtrl.text = _trasladoParaEditar(t['total']);
+    }
+    _avisos = [
+      for (final a in (d['avisos'] as List? ?? const []))
+        if (a is Map && a['mensaje'] != null) Map<String, dynamic>.from(a),
+    ];
+  }
+
+  /// Si hay alguna parte del traslado, el total es su suma y no se escribe a mano.
+  void _sincronizarTotal(TextEditingController entrega, TextEditingController retiro, TextEditingController total) {
+    final suma = sumaTraslado(entrega.text, retiro.text);
+    if (suma != null) total.text = suma == 0 ? '' : '$suma';
+  }
+
+  bool _conPartes(TextEditingController entrega, TextEditingController retiro) =>
+      entrega.text.trim().isNotEmpty || retiro.text.trim().isNotEmpty;
+
+  /// Texto de error de un monto de traslado o null. Vacío vale 0; debe ser entero y no pasar del monto ni del neto.
+  String? _validarTraslado(String texto, double? monto, {double? neto}) {
     if (texto.trim().isEmpty) return null;
     final t = parsearMonto(texto);
     if (t == null || t != t.truncateToDouble() || t < 0) return 'Escribe un traslado válido, por ejemplo 140.000.';
     if (t > 0 && monto == null) return 'Para indicar un traslado, escribe primero el monto.';
     if (monto != null && t > monto) return 'El traslado no puede ser mayor que el monto.';
+    if (neto != null && t > neto) return 'El traslado no puede ser mayor que el monto neto.';
+    return null;
+  }
+
+  /// Error del traslado como se llena en el formulario: dos partes (el total es su suma) o un solo total.
+  String? _validarTrasladoCampos(TextEditingController entrega, TextEditingController retiro, TextEditingController total,
+      double? monto, double? neto) {
+    if (!_conPartes(entrega, retiro)) return _validarTraslado(total.text, monto, neto: neto);
+    for (final parte in [entrega.text, retiro.text]) {
+      final e = _validarTraslado(parte, monto, neto: neto);
+      if (e != null) return e;
+    }
+    final suma = sumaTraslado(entrega.text, retiro.text);
+    return suma == null ? null : _validarTraslado('$suma', monto, neto: neto);
+  }
+
+  /// Error del monto neto o null. Vacío vale "sin neto"; entero y no mayor que el monto.
+  String? _validarNeto(String texto, double? monto) {
+    if (texto.trim().isEmpty) return null;
+    final n = parsearMonto(texto);
+    if (n == null || n != n.truncateToDouble() || n < 0) return 'Escribe un monto neto válido, por ejemplo 210.000.';
+    if (monto != null && n > monto) return 'El monto neto no puede ser mayor que el monto.';
     return null;
   }
 
@@ -354,6 +464,22 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
   String _trasladoParaEditar(dynamic valor) {
     final n = double.tryParse('$valor');
     return n == null || n == 0 ? '' : numeroParaEditar(valor);
+  }
+
+  /// Neto, traslado y fechas del formulario como campos de la subida. Con partes (entrega y retiro) el
+  /// servidor suma el total; sin ellas, un solo monto de traslado.
+  Map<String, String> _camposCobranza() {
+    String entero(String texto) => montoParaCampo(parsearMonto(texto)!);
+    return {
+      if (_netoCtrl.text.trim().isNotEmpty) 'monto_neto': entero(_netoCtrl.text),
+      if (_conPartes(_entregaCtrl, _retiroCtrl)) ...{
+        'traslado_entrega': _entregaCtrl.text.trim().isEmpty ? '0' : entero(_entregaCtrl.text),
+        'traslado_retiro': _retiroCtrl.text.trim().isEmpty ? '0' : entero(_retiroCtrl.text),
+      } else if (_trasladoCtrl.text.trim().isNotEmpty)
+        'monto_traslado': entero(_trasladoCtrl.text),
+      'fecha_emision': ?_emision,
+      'fecha_vencimiento': ?_vencimiento,
+    };
   }
 
   Future<void> _subirFactura() async {
@@ -366,9 +492,12 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
       _errorMonto = (_montoCtrl.text.trim().isNotEmpty && (monto == null || monto != monto.truncateToDouble()))
           ? 'Escribe un monto válido, por ejemplo 249.900.'
           : null;
-      _errorTraslado = widget.item['tipo'] == 'arriendo' ? _validarTraslado(_trasladoCtrl.text, monto) : null;
+      _errorNeto = _esArriendo ? _validarNeto(_netoCtrl.text, monto) : null;
+      _errorTraslado = _esArriendo
+          ? _validarTrasladoCampos(_entregaCtrl, _retiroCtrl, _trasladoCtrl, monto, parsearMonto(_netoCtrl.text))
+          : null;
     });
-    if (_errorArchivo != null || _errorFolio != null || _errorMonto != null || _errorTraslado != null) return;
+    if (_errorArchivo != null || _errorFolio != null || _errorMonto != null || _errorNeto != null || _errorTraslado != null) return;
     if (_facturaPorPeriodo && (_propuesta == null || _hastaElegido == null)) {
       setState(() => _errorPropuesta = 'No hay un período por facturar en este arriendo.');
       return;
@@ -377,28 +506,32 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
     try {
       final esArriendo = widget.item['tipo'] == 'arriendo';
       final path = esArriendo ? '/api/facturacion/arriendo' : '/api/ordenes-trabajo/${widget.item['id']}/factura';
-      final resultado = await ApiClient.instance.postMultipart(
-        path,
-        bytes: _archivo!.bytes!,
-        filename: _archivo!.name,
-        fields: {
-          if (esArriendo && !_facturaPorPeriodo) 'guia_recepcion_id': widget.item['id'].toString(),
-          if (_facturaPorPeriodo) ...{
-            'guia_despacho_id': widget.item['guia_despacho_id'].toString(),
-            'periodo_desde': _propuesta!['desde'] as String,
-            'periodo_hasta': _hastaElegido!,
-          },
-          'folio': _folioCtrl.text.trim(),
-          if (monto != null) 'monto': montoParaCampo(monto),
-          if (esArriendo && _trasladoCtrl.text.trim().isNotEmpty) 'monto_traslado': montoParaCampo(parsearMonto(_trasladoCtrl.text)!),
+      final campos = <String, String>{
+        if (esArriendo && !_facturaPorPeriodo) 'guia_recepcion_id': widget.item['id'].toString(),
+        if (_facturaPorPeriodo) ...{
+          'guia_despacho_id': widget.item['guia_despacho_id'].toString(),
+          'periodo_desde': _propuesta!['desde'] as String,
+          'periodo_hasta': _hastaElegido!,
         },
-      );
+        'folio': _folioCtrl.text.trim(),
+        if (monto != null) 'monto': montoParaCampo(monto),
+        // los datos de cobranza van solo si tienen valor: un servidor o un PDF sin ellos no los exige
+        if (esArriendo) ..._camposCobranza(),
+      };
+      final resultado = widget.subir != null
+          ? await widget.subir!(path, _archivo!, campos)
+          : await ApiClient.instance.postMultipart(path, bytes: _archivo!.bytes!, filename: _archivo!.name, fields: campos);
       if (mounted) {
         setState(() {
           _facturaCreada = resultado;
           _folioEditCtrl.text = resultado['folio']?.toString() ?? '';
           _montoEditCtrl.text = numeroParaEditar(resultado['monto']);
           _trasladoEditCtrl.text = _trasladoParaEditar(resultado['monto_traslado']);
+          _netoEditCtrl.text = numeroParaEditar(resultado['monto_neto']);
+          _entregaEditCtrl.text = _trasladoParaEditar(resultado['traslado_entrega']);
+          _retiroEditCtrl.text = _trasladoParaEditar(resultado['traslado_retiro']);
+          _emisionEdit = resultado['fecha_emision'] is String ? resultado['fecha_emision'] as String : null;
+          _vencimientoEdit = resultado['fecha_vencimiento'] is String ? resultado['fecha_vencimiento'] as String : null;
         });
         _cargarVistaPrevia();
       }
@@ -424,19 +557,28 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
     final monto = parsearMonto(_montoEditCtrl.text);
     final montoInvalido = _montoEditCtrl.text.trim().isNotEmpty && monto == null;
     setState(() => _errorMontoEdicion = montoInvalido ? 'Escribe un monto válido, por ejemplo 249.900.' : null);
-    final esArriendo = widget.item['tipo'] == 'arriendo';
+    final esArriendo = _esArriendo;
     // el monto que quedará: el escrito o, si se dejó vacío, el que ya tenía la factura
     final montoFinal = monto ?? double.tryParse('${_facturaCreada!['monto']}');
-    final errorTraslado = esArriendo ? _validarTraslado(_trasladoEditCtrl.text, montoFinal) : null;
-    setState(() => _errorTrasladoEdicion = errorTraslado);
-    if (montoInvalido || errorTraslado != null) return;
+    final errorNeto = esArriendo ? _validarNeto(_netoEditCtrl.text, montoFinal) : null;
+    final errorTraslado = esArriendo
+        ? _validarTrasladoCampos(_entregaEditCtrl, _retiroEditCtrl, _trasladoEditCtrl, montoFinal, parsearMonto(_netoEditCtrl.text))
+        : null;
+    setState(() {
+      _errorNetoEdicion = errorNeto;
+      _errorTrasladoEdicion = errorTraslado;
+    });
+    if (montoInvalido || errorNeto != null || errorTraslado != null) return;
     setState(() => _guardandoEdicion = true);
     try {
-      final actualizada = await ApiClient.instance.patch('/api/facturacion/${_facturaCreada!['id']}', {
+      final cuerpo = <String, dynamic>{
         'folio': _folioEditCtrl.text.trim().isEmpty ? null : _folioEditCtrl.text.trim(),
         'monto': monto,
-        if (esArriendo) 'monto_traslado': _trasladoEditCtrl.text.trim().isEmpty ? 0 : parsearMonto(_trasladoEditCtrl.text),
-      });
+        if (esArriendo) ..._cuerpoCobranzaEdicion(),
+      };
+      final actualizada = widget.corregir != null
+          ? await widget.corregir!(_facturaCreada!['id'] as int, cuerpo)
+          : await ApiClient.instance.patch('/api/facturacion/${_facturaCreada!['id']}', cuerpo);
       if (mounted) {
         setState(() => _facturaCreada = actualizada);
         final textoEditado = await _recalcularTextoCorreo();
@@ -459,6 +601,26 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
     } finally {
       if (mounted) setState(() => _guardandoEdicion = false);
     }
+  }
+
+  /// Cuerpo del PATCH con lo de cobranza: un campo vacío se manda como null para borrarlo. Con partes del
+  /// traslado el servidor suma el total; sin ellas se manda el total (0 si está vacío) y se borra la división.
+  Map<String, dynamic> _cuerpoCobranzaEdicion() {
+    int? entero(String texto) => texto.trim().isEmpty ? null : parsearMonto(texto)!.toInt();
+    final conPartes = _conPartes(_entregaEditCtrl, _retiroEditCtrl);
+    return {
+      'monto_neto': entero(_netoEditCtrl.text),
+      if (conPartes) ...{
+        'traslado_entrega': entero(_entregaEditCtrl.text) ?? 0,
+        'traslado_retiro': entero(_retiroEditCtrl.text) ?? 0,
+      } else ...{
+        'traslado_entrega': null,
+        'traslado_retiro': null,
+        'monto_traslado': entero(_trasladoEditCtrl.text) ?? 0,
+      },
+      'fecha_emision': _emisionEdit,
+      'fecha_vencimiento': _vencimientoEdit,
+    };
   }
 
   /// Después de corregir folio o monto vuelve a pedir el texto por defecto. Si el administrativo no había
@@ -711,6 +873,159 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
     );
   }
 
+  /// Lo que leyó el servidor del PDF y conviene revisar (traslado dividido, varias cuotas, vencimiento
+  /// calculado con el plazo del cliente...). Se anuncia solo al lector de pantalla y nunca bloquea.
+  Widget _construirAvisos() {
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Semantics(
+        liveRegion: true,
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: GomaqColors.advertenciaFuerte.withValues(alpha: 0.07),
+            border: Border.all(color: GomaqColors.advertenciaFuerte.withValues(alpha: 0.6)),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Revisa lo que se leyó de la factura',
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700, color: GomaqColors.advertenciaFuerte)),
+              for (final aviso in _avisos)
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Padding(
+                        padding: EdgeInsets.only(top: 1),
+                        child: ExcludeSemantics(child: Icon(Icons.warning_amber_rounded, size: 16, color: GomaqColors.advertenciaFuerte)),
+                      ),
+                      const SizedBox(width: 6),
+                      Expanded(child: Text('${aviso['mensaje']}', style: const TextStyle(fontSize: 13))),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Dos campos lado a lado y, en un cuadro angosto (teléfono), uno bajo el otro.
+  Widget _dosCampos(Widget a, Widget b) {
+    return LayoutBuilder(builder: (context, caja) {
+      if (caja.maxWidth < 360) {
+        return Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [a, const SizedBox(height: 12), b]);
+      }
+      return Row(crossAxisAlignment: CrossAxisAlignment.start, children: [Expanded(child: a), const SizedBox(width: 12), Expanded(child: b)]);
+    });
+  }
+
+  /// Monto neto, traslado (entrega, retiro y total) y fechas de emisión y vencimiento de un arriendo. Sirve
+  /// para el formulario de subida y para corregir la factura ya creada. Con una parte del traslado escrita el
+  /// total es su suma (no se edita); sin partes, el total se escribe a mano.
+  Widget _camposCobranzaUi({
+    required TextEditingController neto,
+    required TextEditingController entrega,
+    required TextEditingController retiro,
+    required TextEditingController total,
+    required String? errorNeto,
+    required String? errorTraslado,
+    required String? emision,
+    required String? vencimiento,
+    required ValueChanged<String?> alEmision,
+    required ValueChanged<String?> alVencimiento,
+    required VoidCallback alEditarNeto,
+    required VoidCallback alEditarTraslado,
+    required bool conOpciones,
+  }) {
+    final conPartes = _conPartes(entrega, retiro);
+    void alCambiarParte(String _) {
+      setState(() => _sincronizarTotal(entrega, retiro, total));
+      alEditarTraslado();
+    }
+
+    final opciones = conOpciones ? _opcionesVencimiento : null;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        TextFormField(
+          controller: neto,
+          keyboardType: TextInputType.number,
+          decoration: decoracionCampo('Monto neto (opcional)', prefijo: r'$ ').copyWith(errorText: errorNeto),
+          onChanged: (_) => alEditarNeto(),
+        ),
+        const SizedBox(height: 12),
+        const TituloSeccion('Traslado incluido en el monto'),
+        _dosCampos(
+          TextFormField(
+            controller: entrega,
+            keyboardType: TextInputType.number,
+            decoration: decoracionCampo('Traslado de entrega', prefijo: r'$ '),
+            onChanged: alCambiarParte,
+          ),
+          TextFormField(
+            controller: retiro,
+            keyboardType: TextInputType.number,
+            decoration: decoracionCampo('Traslado de retiro', prefijo: r'$ '),
+            onChanged: alCambiarParte,
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextFormField(
+          controller: total,
+          readOnly: conPartes,
+          keyboardType: TextInputType.number,
+          decoration: decoracionCampo('Traslado total (opcional)', prefijo: r'$ ').copyWith(
+            errorText: errorTraslado,
+            helperText: conPartes
+                ? 'Suma de entrega y retiro.'
+                : 'Entrega y retiro del equipo. No cuenta como ingreso del equipo en la rentabilidad.',
+          ),
+          onChanged: (_) => alEditarTraslado(),
+        ),
+        const SizedBox(height: 12),
+        _dosCampos(
+          CampoFechaOpcional(
+            etiqueta: 'Fecha de emisión',
+            valor: emision,
+            onChanged: alEmision,
+            ultima: DateTime.now().add(const Duration(days: 1)),
+          ),
+          CampoFechaOpcional(etiqueta: 'Fecha de vencimiento', valor: vencimiento, onChanged: alVencimiento),
+        ),
+        if (opciones != null) ...[
+          const SizedBox(height: 8),
+          Semantics(
+            liveRegion: true,
+            child: const Text('El vencimiento de la factura no coincide con el plazo del cliente. Elige cuál guardar:',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+          ),
+          RadioGroup<String>(
+            groupValue: vencimiento,
+            onChanged: (v) => alVencimiento(v),
+            child: Column(
+              children: [
+                for (final o in opciones)
+                  RadioListTile<String>(
+                    key: ValueKey('vencimiento-${o.dia}'),
+                    value: o.dia,
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    title: Text(o.texto, style: const TextStyle(fontSize: 13)),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
   List<Widget> _construirFormulario() {
     return [
       if (_facturaPorPeriodo) _construirPeriodo(),
@@ -735,6 +1050,7 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
           ],
         ),
       ],
+      if (_avisos.isNotEmpty) _construirAvisos(),
       const SizedBox(height: 16),
       Row(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -761,16 +1077,24 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
           ),
         ],
       ),
-      if (widget.item['tipo'] == 'arriendo') ...[
+      if (_esArriendo) ...[
         const SizedBox(height: 12),
-        TextFormField(
-          controller: _trasladoCtrl,
-          keyboardType: TextInputType.number,
-          decoration: decoracionCampo('Traslado incluido en el monto (opcional)', prefijo: r'$ ')
-              .copyWith(errorText: _errorTraslado, helperText: 'Entrega y retiro del equipo. No cuenta como ingreso del equipo en la rentabilidad.'),
-          onChanged: (_) {
-            if (_errorTraslado != null) setState(() => _errorTraslado = null);
+        _camposCobranzaUi(
+          neto: _netoCtrl,
+          entrega: _entregaCtrl,
+          retiro: _retiroCtrl,
+          total: _trasladoCtrl,
+          errorNeto: _errorNeto,
+          errorTraslado: _errorTraslado,
+          emision: _emision,
+          vencimiento: _vencimiento,
+          alEmision: (v) => setState(() => _emision = v),
+          alVencimiento: (v) => setState(() => _vencimiento = v),
+          alEditarNeto: () {
+            if (_errorNeto != null) setState(() => _errorNeto = null);
           },
+          alEditarTraslado: () => setState(() => _errorTraslado = null),
+          conOpciones: true,
         ),
       ],
     ];
@@ -805,16 +1129,24 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
                 ),
               ],
             ),
-            if (widget.item['tipo'] == 'arriendo') ...[
+            if (_esArriendo) ...[
               const SizedBox(height: 10),
-              TextFormField(
-                controller: _trasladoEditCtrl,
-                keyboardType: TextInputType.number,
-                decoration: decoracionCampo('Traslado incluido en el monto (opcional)', prefijo: r'$ ')
-                    .copyWith(errorText: _errorTrasladoEdicion),
-                onChanged: (_) {
-                  if (_errorTrasladoEdicion != null) setState(() => _errorTrasladoEdicion = null);
+              _camposCobranzaUi(
+                neto: _netoEditCtrl,
+                entrega: _entregaEditCtrl,
+                retiro: _retiroEditCtrl,
+                total: _trasladoEditCtrl,
+                errorNeto: _errorNetoEdicion,
+                errorTraslado: _errorTrasladoEdicion,
+                emision: _emisionEdit,
+                vencimiento: _vencimientoEdit,
+                alEmision: (v) => setState(() => _emisionEdit = v),
+                alVencimiento: (v) => setState(() => _vencimientoEdit = v),
+                alEditarNeto: () {
+                  if (_errorNetoEdicion != null) setState(() => _errorNetoEdicion = null);
                 },
+                alEditarTraslado: () => setState(() => _errorTrasladoEdicion = null),
+                conOpciones: false,
               ),
             ],
             const SizedBox(height: 10),

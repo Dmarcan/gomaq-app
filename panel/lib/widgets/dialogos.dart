@@ -74,14 +74,14 @@ class CuadroDialogo extends StatelessWidget {
                 Container(
                   color: GomaqColors.fondoCalido,
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      for (var i = 0; i < acciones.length; i++) ...[
-                        if (i > 0) const SizedBox(width: 8),
-                        acciones[i],
-                      ],
-                    ],
+                  // Wrap y no Row: en un teléfono (375 px) dos botones con texto largo no caben en una fila
+                  // y se cortaban; así el segundo baja a la línea siguiente
+                  child: Wrap(
+                    alignment: WrapAlignment.end,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: acciones,
                   ),
                 ),
             ],

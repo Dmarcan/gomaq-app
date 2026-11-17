@@ -12,7 +12,10 @@ class DashboardScreen extends StatefulWidget {
   /// Navega a una ruta del panel. El filtro viaja como query en la URL, asi que el
   /// estado "Flota filtrada por arrendados" tambien se puede compartir y sobrevive a un F5.
   final void Function(String ruta, {Map<String, String>? filtro}) onNavegar;
-  const DashboardScreen({super.key, required this.onNavegar});
+
+  /// Costura para las pruebas: devuelve resumen, ventas por ejecutivo y OTs por mes (por defecto, el servidor).
+  final Future<List<dynamic>> Function()? cargarDatos;
+  const DashboardScreen({super.key, required this.onNavegar, this.cargarDatos});
 
   @override
   State<DashboardScreen> createState() => _DashboardScreenState();
@@ -40,11 +43,12 @@ class _DashboardScreenState extends State<DashboardScreen> {
     PendientesService.instance.cargar(forzar: true);
     try {
       // las tres consultas son independientes: en paralelo, cargan en lo que tarda la más lenta
-      final r = await Future.wait([
-        ApiClient.instance.get('/api/dashboard/resumen'),
-        ApiClient.instance.get('/api/dashboard/ventas-por-ejecutivo'),
-        ApiClient.instance.get('/api/dashboard/ots-por-mes'),
-      ]);
+      final r = await (widget.cargarDatos?.call() ??
+          Future.wait([
+            ApiClient.instance.get('/api/dashboard/resumen'),
+            ApiClient.instance.get('/api/dashboard/ventas-por-ejecutivo'),
+            ApiClient.instance.get('/api/dashboard/ots-por-mes'),
+          ]));
       if (!mounted) return;
       setState(() {
         _resumen = r[0];
@@ -106,7 +110,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  Widget _tarjetaNumero(String numero, String etiqueta, {Color? color, Color? colorTexto, VoidCallback? onTap}) {
+  Widget _tarjetaNumero(String numero, String etiqueta,
+      {Color? color, Color? colorTexto, VoidCallback? onTap, IconData? icono, String? descripcion}) {
     final contenido = Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -117,14 +122,29 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(numero, style: TextStyle(fontFamily: 'Barlow', fontSize: 26, fontWeight: FontWeight.bold, color: colorTexto ?? color)),
+          Row(
+            children: [
+              Text(numero, style: TextStyle(fontFamily: 'Barlow', fontSize: 26, fontWeight: FontWeight.bold, color: colorTexto ?? color)),
+              // el estado no va solo en color: un icono acompaña al número
+              if (icono != null) ...[
+                const SizedBox(width: 8),
+                ExcludeSemantics(child: Icon(icono, size: 22, color: colorTexto ?? color)),
+              ],
+            ],
+          ),
           const SizedBox(height: 4),
           Text(etiqueta, style: const TextStyle(fontSize: 12, color: Colors.black54)),
         ],
       ),
     );
     if (onTap == null) return Expanded(child: contenido);
-    return Expanded(child: InkWell(onTap: onTap, borderRadius: BorderRadius.circular(12), child: contenido));
+    final tocable = InkWell(onTap: onTap, borderRadius: BorderRadius.circular(12), child: contenido);
+    // con descripción, el lector de pantalla lee un solo botón con el número y a dónde lleva
+    return Expanded(
+      child: descripcion == null
+          ? tocable
+          : Semantics(button: true, label: descripcion, excludeSemantics: true, onTap: onTap, child: tocable),
+    );
   }
 
   // ---------- grafico 1: dona de estado operativo ----------
@@ -401,6 +421,30 @@ class _DashboardScreenState extends State<DashboardScreen> {
     // quedaba de ~40 px (el texto bajaba una letra por línea) y los 4 atajos se cortaban.
     final compacto = MediaQuery.sizeOf(context).width < 600;
 
+    final cobranza = _resumen!['cobranza'];
+    final tarjetaVencidas = cobranza is Map
+        ? _tarjetaNumero(
+            '${_entero(cobranza['vencidas'])}',
+            'Facturas vencidas',
+            color: GomaqColors.estadoNegativo,
+            colorTexto: GomaqColors.estadoNegativo,
+            icono: Icons.error_outline,
+            descripcion: 'Facturas vencidas: ${_entero(cobranza['vencidas'])}. Abre la lista de facturas vencidas',
+            onTap: () => widget.onNavegar('/facturacion', filtro: {'pestana': 'emitidas', 'filtro': 'vencidas'}),
+          )
+        : null;
+    final tarjetaProximas = cobranza is Map
+        ? _tarjetaNumero(
+            '${_entero(cobranza['proximas'])}',
+            'Por vencer en 7 días',
+            color: GomaqColors.estadoAdvertencia,
+            colorTexto: GomaqColors.advertenciaFuerte,
+            icono: Icons.schedule,
+            descripcion: 'Por vencer en 7 días: ${_entero(cobranza['proximas'])}. Abre la lista de facturas próximas a vencer',
+            onTap: () => widget.onNavegar('/facturacion', filtro: {'pestana': 'emitidas', 'filtro': 'proximas'}),
+          )
+        : null;
+
     final panelDona = _panelGrafico(titulo: 'ESTADO OPERATIVO', child: _donaEstadoFlota(flota));
     final panelLinea = _panelGrafico(titulo: 'ÓRDENES DE TRABAJO POR MES', child: _lineaOtsPorMes());
 
@@ -453,8 +497,19 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 colorTexto: GomaqColors.textoEstado('operativa'),
                 onTap: () => widget.onNavegar('/flota', filtro: {'disponibilidad': 'disponibles'}),
               ),
+              if (!compacto && tarjetaVencidas != null && tarjetaProximas != null) ...[
+                const SizedBox(width: 16),
+                tarjetaVencidas,
+                const SizedBox(width: 16),
+                tarjetaProximas,
+              ],
             ],
           ),
+          // en un teléfono las dos de cobranza van en su propia fila, de a dos
+          if (compacto && tarjetaVencidas != null && tarjetaProximas != null) ...[
+            const SizedBox(height: 12),
+            Row(children: [tarjetaVencidas, const SizedBox(width: 16), tarjetaProximas]),
+          ],
           const SizedBox(height: 24),
 
           // estado operativo (dona con leyenda navegable) + OTs por mes, lado a lado
