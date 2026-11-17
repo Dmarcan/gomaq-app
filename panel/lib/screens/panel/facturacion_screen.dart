@@ -14,16 +14,14 @@ import '../../widgets/estado_vacio.dart';
 import '../../widgets/fotos_orden.dart';
 import '../../widgets/zona_arrastre_pdf.dart';
 import 'arriendos_en_curso_tab.dart';
-import 'facturas_emitidas_tab.dart';
 import 'ordenes_screen.dart' show abrirDetalleOrden;
 
 class FacturacionScreen extends StatefulWidget {
-  /// Pestaña con la que se abre: 'valorizar' llega desde el atajo del Dashboard, 'en_curso' abre
-  /// los arriendos en curso y 'emitidas' las facturas ya emitidas con su cobranza.
+  /// Pestaña con la que se abre: 'valorizar' llega desde el atajo del Dashboard y 'en_curso' abre
+  /// los arriendos en curso. Las facturas ya emitidas viven aparte, en `/facturas`.
   final String? pestanaInicial;
 
-  /// 'aviso' (con pestana=en_curso) deja solo los arriendos con períodos sin facturar; 'vencidas' o
-  /// 'proximas' (con pestana=emitidas) filtran las facturas emitidas por su estado de cobranza.
+  /// 'aviso' (con pestana=en_curso) deja solo los arriendos con períodos sin facturar.
   final String? filtroInicial;
   const FacturacionScreen({super.key, this.pestanaInicial, this.filtroInicial});
 
@@ -39,14 +37,14 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
   bool _cargando = true;
   String? _error;
 
-  static const _idsPestana = ['por_facturar', 'valorizar', 'en_curso', 'emitidas'];
+  static const _idsPestana = ['por_facturar', 'valorizar', 'en_curso'];
 
-  static int _indiceDe(String? pestana) => switch (pestana) { 'valorizar' => 1, 'en_curso' => 2, 'emitidas' => 3, _ => 0 };
+  static int _indiceDe(String? pestana) => switch (pestana) { 'valorizar' => 1, 'en_curso' => 2, _ => 0 };
 
   @override
   void initState() {
     super.initState();
-    _tabController = TabController(length: 4, vsync: this, initialIndex: _indiceDe(widget.pestanaInicial));
+    _tabController = TabController(length: 3, vsync: this, initialIndex: _indiceDe(widget.pestanaInicial));
     _tabController.addListener(_pestanaCambio);
     WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
   }
@@ -118,23 +116,16 @@ class _FacturacionScreenState extends State<FacturacionScreen> with SingleTicker
             Tab(text: 'Por facturar (${_arriendos.length + _listas.length})'),
             Tab(text: 'Pendiente de valorizar (${_pendientesValorizar.length})'),
             const Tab(text: 'Arriendos en curso'),
-            const Tab(text: 'Emitidas'),
           ],
         ),
       ),
-      // las dos primeras pestañas dependen de /pendientes; las otras cargan lo suyo, así que un fallo
-      // de esa consulta no deja sin pantalla a las facturas emitidas
+      // las dos primeras pestañas dependen de /pendientes; la de arriendos en curso carga lo suyo
       body: TabBarView(
         controller: _tabController,
         children: [
           _conEstadoDePendientes(_construirPorFacturar),
           _conEstadoDePendientes(_construirPendienteValorizar),
           ArriendosEnCursoTab(filtroInicial: widget.filtroInicial),
-          FacturasEmitidasTab(
-            key: ValueKey('emitidas|${widget.filtroInicial}'),
-            filtroInicial: widget.filtroInicial,
-            puedeEscribir: context.watch<AuthService>().esAdministrativo,
-          ),
         ],
       ),
     );

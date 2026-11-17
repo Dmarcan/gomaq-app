@@ -55,7 +55,7 @@ void main() {
         .setMockMethodCallHandler(const MethodChannel('plugins.it_nomads.com/flutter_secure_storage'), (_) async => null);
   });
 
-  testWidgets('las dos tarjetas de cobranza van junto a las de arrendados y disponibles, con su número', (t) async {
+  testWidgets('las dos tarjetas de cobranza van en su propia sección COBRANZA, con su número', (t) async {
     // ancho de sobra: la tipografía de las pruebas es más ancha que la real y partiría las etiquetas
     _tamano(t, const Size(1800, 2000));
     await _montar(t, _Navegacion());
@@ -63,9 +63,14 @@ void main() {
     expect(find.text('Por vencer en 7 días'), findsOneWidget);
     expect(find.text('Equipos arrendados'), findsOneWidget);
     expect(find.text('Equipos disponibles'), findsOneWidget);
-    // en escritorio las cuatro van en la misma fila
-    final y = [for (final e in ['Facturas vencidas', 'Por vencer en 7 días', 'Equipos arrendados', 'Equipos disponibles']) t.getTopLeft(find.text(e)).dy];
-    expect(y.toSet(), hasLength(1), reason: 'misma fila: $y');
+    // título propio, y las dos tarjetas bajo él, en una fila aparte de las de equipos
+    expect(find.text('COBRANZA'), findsOneWidget);
+    final titulo = t.getTopLeft(find.text('COBRANZA')).dy;
+    final equipos = t.getTopLeft(find.text('Equipos arrendados')).dy;
+    final vencidas = t.getTopLeft(find.text('Facturas vencidas')).dy;
+    expect(titulo, greaterThan(equipos));
+    expect(vencidas, greaterThan(titulo));
+    expect(t.getTopLeft(find.text('Por vencer en 7 días')).dy, vencidas);
     // el número de cada una
     expect(find.descendant(of: find.ancestor(of: find.text('Facturas vencidas'), matching: find.byType(InkWell)), matching: find.text('4')), findsOneWidget);
     expect(find.descendant(of: find.ancestor(of: find.text('Por vencer en 7 días'), matching: find.byType(InkWell)), matching: find.text('2')), findsOneWidget);
@@ -84,17 +89,17 @@ void main() {
     expect(numeroProximas.style!.color, GomaqColors.advertenciaFuerte);
   });
 
-  testWidgets('tocar una tarjeta abre Facturación en la pestaña Emitidas con su filtro', (t) async {
+  testWidgets('tocar una tarjeta abre Facturas emitidas con su filtro', (t) async {
     _tamano(t, const Size(1200, 2000));
     final nav = _Navegacion();
     await _montar(t, nav);
     await t.tap(find.text('Facturas vencidas'));
     await t.tap(find.text('Por vencer en 7 días'));
     expect(nav.destinos, hasLength(2));
-    expect(nav.destinos[0].ruta, '/facturacion');
-    expect(nav.destinos[0].filtro, {'pestana': 'emitidas', 'filtro': 'vencidas'});
-    expect(nav.destinos[1].ruta, '/facturacion');
-    expect(nav.destinos[1].filtro, {'pestana': 'emitidas', 'filtro': 'proximas'});
+    expect(nav.destinos[0].ruta, '/facturas');
+    expect(nav.destinos[0].filtro, {'filtro': 'vencidas'});
+    expect(nav.destinos[1].ruta, '/facturas');
+    expect(nav.destinos[1].filtro, {'filtro': 'proximas'});
   });
 
   testWidgets('no se agregan al bloque Pendientes: cada número aparece una sola vez', (t) async {
@@ -108,6 +113,7 @@ void main() {
     _tamano(t, const Size(1200, 2000));
     await _montar(t, _Navegacion(), datos: _datos(cobranza: null));
     expect(find.text('Facturas vencidas'), findsNothing);
+    expect(find.text('COBRANZA'), findsNothing);
     expect(find.text('Equipos arrendados'), findsOneWidget);
   });
 
@@ -118,7 +124,7 @@ void main() {
     expect(find.descendant(of: vencida, matching: find.text('0')), findsOneWidget);
   });
 
-  testWidgets('a 375 px las de cobranza van en su propia fila, de a dos, sin desbordar', (t) async {
+  testWidgets('a 375 px la sección COBRANZA va bajo los equipos, de a dos, sin desbordar', (t) async {
     _tamano(t, const Size(375, 2400));
     await _montar(t, _Navegacion());
     expect(t.takeException(), isNull);
@@ -159,7 +165,7 @@ void main() {
     expect(enTarjeta(), isTrue, reason: 'la tarjeta es alcanzable con Tab');
     await t.sendKeyEvent(LogicalKeyboardKey.enter);
     await t.pump();
-    expect(nav.destinos.single.filtro, {'pestana': 'emitidas', 'filtro': 'vencidas'});
+    expect(nav.destinos.single.filtro, {'filtro': 'vencidas'});
     await t.sendKeyEvent(LogicalKeyboardKey.space);
     await t.pump();
     expect(nav.destinos, hasLength(2));

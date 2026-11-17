@@ -430,7 +430,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             colorTexto: GomaqColors.estadoNegativo,
             icono: Icons.error_outline,
             descripcion: 'Facturas vencidas: ${_entero(cobranza['vencidas'])}. Abre la lista de facturas vencidas',
-            onTap: () => widget.onNavegar('/facturacion', filtro: {'pestana': 'emitidas', 'filtro': 'vencidas'}),
+            onTap: () => widget.onNavegar('/facturas', filtro: {'filtro': 'vencidas'}),
           )
         : null;
     final tarjetaProximas = cobranza is Map
@@ -441,7 +441,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
             colorTexto: GomaqColors.advertenciaFuerte,
             icono: Icons.schedule,
             descripcion: 'Por vencer en 7 días: ${_entero(cobranza['proximas'])}. Abre la lista de facturas próximas a vencer',
-            onTap: () => widget.onNavegar('/facturacion', filtro: {'pestana': 'emitidas', 'filtro': 'proximas'}),
+            onTap: () => widget.onNavegar('/facturas', filtro: {'filtro': 'proximas'}),
           )
         : null;
 
@@ -497,20 +497,17 @@ class _DashboardScreenState extends State<DashboardScreen> {
                 colorTexto: GomaqColors.textoEstado('operativa'),
                 onTap: () => widget.onNavegar('/flota', filtro: {'disponibilidad': 'disponibles'}),
               ),
-              if (!compacto && tarjetaVencidas != null && tarjetaProximas != null) ...[
-                const SizedBox(width: 16),
-                tarjetaVencidas,
-                const SizedBox(width: 16),
-                tarjetaProximas,
-              ],
             ],
           ),
-          // en un teléfono las dos de cobranza van en su propia fila, de a dos
-          if (compacto && tarjetaVencidas != null && tarjetaProximas != null) ...[
-            const SizedBox(height: 12),
-            Row(children: [tarjetaVencidas, const SizedBox(width: 16), tarjetaProximas]),
-          ],
           const SizedBox(height: 24),
+
+          // la cobranza va en su propia sección: son facturas que hay que cobrar, no equipos
+          if (tarjetaVencidas != null && tarjetaProximas != null) ...[
+            _tituloSeccion('COBRANZA'),
+            const SizedBox(height: 8),
+            Row(children: [tarjetaVencidas, const SizedBox(width: 16), tarjetaProximas]),
+            const SizedBox(height: 24),
+          ],
 
           // estado operativo (dona con leyenda navegable) + OTs por mes, lado a lado
           if (compacto)

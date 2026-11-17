@@ -12,6 +12,7 @@ import 'screens/panel/flota_screen.dart';
 import 'screens/panel/maquinaria_perfil_screen.dart';
 import 'screens/panel/guias_screen.dart';
 import 'screens/panel/facturacion_screen.dart';
+import 'screens/panel/facturas_emitidas_screen.dart';
 import 'screens/panel/orden_detalle.dart' show OrdenDetalleScreen;
 import 'screens/panel/cliente_historial_screen.dart';
 import 'screens/panel/clientes_screen.dart';
@@ -53,7 +54,8 @@ const List<ItemMenu> itemsMenu = [
   (ruta: '/vehiculos', icono: Icons.local_shipping_outlined, etiqueta: 'Vehículos', grupo: 'Inventario'),
 
   (ruta: '/guias', icono: Icons.description, etiqueta: 'Guías', grupo: 'Comercial'),
-  (ruta: '/facturacion', icono: Icons.receipt_long, etiqueta: 'Facturación', grupo: 'Comercial'),
+  (ruta: '/facturacion', icono: Icons.receipt_long, etiqueta: 'Facturar', grupo: 'Comercial'),
+  (ruta: '/facturas', icono: Icons.request_quote_outlined, etiqueta: 'Facturas emitidas', grupo: 'Comercial'),
   (ruta: '/costos', icono: Icons.trending_up, etiqueta: 'Costo por equipo', grupo: 'Comercial'),
   (ruta: '/clientes', icono: Icons.people, etiqueta: 'Clientes', grupo: 'Comercial'),
   (ruta: '/cuentas', icono: Icons.how_to_reg_outlined, etiqueta: 'Cuentas por aprobar', grupo: 'Comercial'),
@@ -212,8 +214,20 @@ GoRouter construirRouter(AuthService auth) {
           GoRoute(path: '/mapa', builder: (_, _) => const MapaScreen()),
           GoRoute(path: '/vehiculos', builder: (_, _) => const VehiculosScreen()),
           GoRoute(path: '/guias', builder: (_, _) => const GuiasScreen()),
+          // lo ya emitido y su cobranza (antes era la pestaña "Emitidas" de Facturación)
+          GoRoute(
+            path: '/facturas',
+            builder: (_, estado) => FacturasEmitidasScreen(
+              key: ValueKey('facturas|${estado.uri.queryParameters['filtro']}'),
+              filtroInicial: estado.uri.queryParameters['filtro'],
+            ),
+          ),
           GoRoute(
             path: '/facturacion',
+            // los enlaces guardados a ?pestana=emitidas siguen funcionando: pasan a /facturas
+            redirect: (_, estado) => estado.uri.queryParameters['pestana'] == 'emitidas'
+                ? destinoConFiltro('/facturas', {'filtro': ?estado.uri.queryParameters['filtro']})
+                : null,
             // la key sigue solo al filtro: cambiar de pestaña actualiza la URL sin reconstruir la
             // pantalla (la pestaña nueva la toma didUpdateWidget); un filtro nuevo sí la reabre
             builder: (_, estado) => FacturacionScreen(
