@@ -3,6 +3,8 @@ import 'package:provider/provider.dart';
 import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
 import '../../utils/formato.dart';
+import '../../utils/iva.dart';
+import '../../widgets/campo_costo_iva.dart';
 import '../../utils/numeros.dart';
 import '../../utils/unidades.dart';
 import '../../widgets/dialogos.dart';
@@ -81,6 +83,8 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
     final costoCtrl = TextEditingController();
     // las que más se usan, a un toque: escribir "litro" o "Litro" o "lts" da tres unidades distintas
     const sugeridas = ['unidad', 'litro', 'kg', 'metro'];
+    // el costo se guarda siempre neto; con la casilla marcada se convierte antes de enviar
+    var incluyeIva = false;
 
     final creado = await mostrarFormulario(
       context,
@@ -120,18 +124,18 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
             ],
           ),
           separadorCampos,
-          TextFormField(
+          CampoCostoIva(
             controller: costoCtrl,
-            keyboardType: TextInputType.number,
-            decoration: decoracionCampo('Costo unitario', prefijo: r'$ ', ayuda: 'En pesos. Puedes dejarlo en blanco y cargarlo después.'),
-            validator: numeroOpcional('Escribe un monto válido, por ejemplo 18.500.', monto: true),
+            incluyeIva: incluyeIva,
+            onIvaChanged: (v) => redibujar(() => incluyeIva = v),
+            onTextoChanged: () => redibujar(() {}),
           ),
         ],
       ),
       alGuardar: () => ApiClient.instance.post('/api/insumos', {
         'nombre': nombreCtrl.text.trim(),
         'unidad_medida': unidadCtrl.text.trim(),
-        'costo_unitario': parsearMonto(costoCtrl.text),
+        'costo_unitario': costoNetoParaGuardar(parsearMonto(costoCtrl.text), incluyeIva: incluyeIva),
       }),
     );
     nombreCtrl.dispose();
