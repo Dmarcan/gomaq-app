@@ -24,7 +24,7 @@ before(async () => {
     )).rows[0].id;
     creado.equipo = (await pool.query(
         `INSERT INTO maquinarias (codigo, tipo, marca, modelo, categoria_equipo) VALUES ($1, 'Plataforma', 'MarcaX', 'M-1', 'alzahombre') RETURNING id`,
-        [`EX-${crypto.randomUUID().slice(0, 6).toUpperCase()}1232`]
+        [`EX-${crypto.randomUUID().slice(0, 6).toUpperCase()}-1232`] // con guion: el numero interno son los digitos finales, y el azar podia terminar en digito
     )).rows[0].id;
     for (const [folio, monto, neto, traslado, emision] of [['9001', 249900, 210000, 140000, '2026-05-10'], ['9002', 119000, null, 0, '2026-06-10']]) {
         const r = await pool.query(
