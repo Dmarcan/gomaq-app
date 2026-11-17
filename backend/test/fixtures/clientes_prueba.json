@@ -1,0 +1,8 @@
+{
+ "origen": "clientes ficticios solo para las pruebas",
+ "clientes": [
+  { "rut": "11111111-1", "nombre": "Prueba Carga Uno SpA", "direccion": "Calle Falsa 123", "giro": "Servicios de prueba", "ejecutivo": "Oscar", "plazo_pago_dias": 30 },
+  { "rut": "22222222-2", "nombre": "Prueba Carga Dos Ltda", "direccion": null, "giro": null, "ejecutivo": null, "plazo_pago_dias": null },
+  { "rut": "33333333-3", "nombre": "Prueba Carga Tres SA", "direccion": "Avenida Falsa 45", "giro": "Comercio", "ejecutivo": null, "plazo_pago_dias": 0 }
+ ]
+}
