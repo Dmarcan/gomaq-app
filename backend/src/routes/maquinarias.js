@@ -9,6 +9,7 @@ const { rutaArchivo } = require('../utils/rutaArchivo');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 const { calcularEstadoMantencion } = require('../utils/mantencion');
 const { ordenSql } = require('../utils/ordenFlota');
+const { leerLineaTiempo } = require('../utils/lineaTiempoEquipo');
 const { visiblePara, construirSqlDocumentos, construirSqlEquiposDelCliente, filaPublica } = require('../utils/documentosEquipo');
 
 const { columnaOtAbierta } = require('../utils/otAbiertaEquipo');
@@ -219,6 +220,24 @@ router.get('/:id/documentos', verifyToken, requireRole('gerente', 'administrativ
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar los documentos del equipo' });
+    }
+});
+
+// GET /api/maquinarias/:id/linea-tiempo - guias, ordenes de trabajo, facturas y lecturas de horometro del
+// equipo, del evento mas reciente al mas antiguo, agrupados en tramos de un mismo cliente (el que guardo
+// cada registro en su momento). Lleva montos por evento, por eso solo gerente y administrativo; no entrega
+// archivos ni URLs firmadas (el documento se abre en la pestana Documentos). Maximo 500 eventos (`hay_mas`).
+// Los totales de costos siguen saliendo de /api/rentabilidad/maquinaria/:id.
+router.get('/:id/linea-tiempo', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
+    const equipoId = /^\d+$/.test(req.params.id) ? Number(req.params.id) : NaN;
+    if (!idValido(equipoId)) return res.status(400).json({ error: 'Id de equipo inválido' });
+    try {
+        const equipo = await pool.query('SELECT id, codigo, tipo FROM maquinarias WHERE id = $1', [equipoId]);
+        if (equipo.rows.length === 0) return res.status(404).json({ error: 'Equipo no encontrado' });
+        res.json({ maquinaria: equipo.rows[0], ...(await leerLineaTiempo(pool, equipoId)) });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al consultar la línea de tiempo del equipo' });
     }
 });
 

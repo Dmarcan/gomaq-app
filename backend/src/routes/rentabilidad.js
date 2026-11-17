@@ -221,19 +221,23 @@ router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativ
         const [lineas, facturas] = await Promise.all([
             pool.query(
                 `SELECT mi.id, mi.cantidad, mi.precio_unitario, mi.descripcion, mi.facturable,
-                        mi.created_at, mi.orden_trabajo_id, i.nombre AS insumo_nombre
+                        mi.created_at, mi.orden_trabajo_id, i.nombre AS insumo_nombre,
+                        ot.cliente_id, c.nombre AS cliente_nombre
                  FROM movimientos_insumo mi
                  JOIN ordenes_trabajo ot ON ot.id = mi.orden_trabajo_id
                  LEFT JOIN insumos i ON i.id = mi.insumo_id
+                 LEFT JOIN clientes c ON c.id = ot.cliente_id
                  WHERE mi.tipo = 'salida' AND mi.anulada_at IS NULL AND ot.maquinaria_id = $1
                    AND mi.created_at BETWEEN $2 AND $3
                  ORDER BY mi.created_at DESC`,
                 [id, desde, hasta]
             ),
             pool.query(
-                `SELECT f.id, f.folio, f.monto, f.monto_traslado, f.created_at, f.orden_trabajo_id
+                `SELECT f.id, f.folio, f.monto, f.monto_traslado, f.created_at, f.orden_trabajo_id,
+                        COALESCE(f.cliente_id, ot.cliente_id) AS cliente_id, c.nombre AS cliente_nombre
                  FROM facturas f
                  LEFT JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
+                 LEFT JOIN clientes c ON c.id = COALESCE(f.cliente_id, ot.cliente_id)
                  WHERE COALESCE(f.maquinaria_id, ot.maquinaria_id) = $1
                    AND f.created_at BETWEEN $2 AND $3
                  ORDER BY f.created_at DESC`,

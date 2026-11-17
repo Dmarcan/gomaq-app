@@ -13,7 +13,9 @@ import '../../utils/formato.dart';
 import '../../utils/numeros.dart';
 import '../../widgets/asignar_cliente.dart';
 import '../../widgets/dialogos.dart';
+import '../../widgets/desglose_costos_equipo.dart';
 import '../../widgets/documentos_equipo.dart';
+import '../../widgets/linea_tiempo_equipo.dart';
 
 /// Perfil de un equipo: quién es, en qué estado está y qué hacer con él.
 ///
@@ -24,7 +26,7 @@ import '../../widgets/documentos_equipo.dart';
 class MaquinariaPerfilScreen extends StatefulWidget {
   final int maquinariaId;
 
-  /// Pestaña con que abre: 'resumen', 'ficha', 'historial', 'documentos' o 'costos'. Costos por equipo abre
+  /// Pestaña con que abre: 'resumen', 'ficha', 'historial' (la línea de tiempo), 'documentos' o 'costos'. Costos por equipo abre
   /// el perfil directo en 'costos'.
   final String pestanaInicial;
   const MaquinariaPerfilScreen({super.key, required this.maquinariaId, this.pestanaInicial = 'resumen'});
@@ -430,7 +432,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
             items: [
               (id: 'resumen', etiqueta: 'Resumen', cantidad: null),
               (id: 'ficha', etiqueta: 'Ficha técnica', cantidad: null),
-              (id: 'historial', etiqueta: 'Historial', cantidad: _historial.length),
+              (id: 'historial', etiqueta: 'Línea de tiempo', cantidad: null),
               (id: 'documentos', etiqueta: 'Documentos', cantidad: null),
               if (_rentabilidad != null) (id: 'costos', etiqueta: 'Costos', cantidad: null),
             ],
@@ -440,7 +442,10 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
           const SizedBox(height: 20),
           switch (_pestana) {
             'ficha' => _pestanaFicha(m, auth),
-            'historial' => _pestanaHistorial(),
+            'historial' => LineaTiempoEquipo(
+                maquinariaId: widget.maquinariaId,
+                onIrADocumentos: () => setState(() => _pestana = 'documentos'),
+              ),
             'documentos' => DocumentosEquipo(maquinariaId: widget.maquinariaId, filtrarPorCliente: true),
             'costos' => _pestanaCostos(),
             _ => _pestanaResumen(m, auth),
@@ -611,7 +616,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
         else ...[
           for (final ot in recientes) _filaOt(ot),
           if (_historial.length > recientes.length)
-            TextButton(onPressed: () => setState(() => _pestana = 'historial'), child: Text('Ver las ${_historial.length} órdenes')),
+            TextButton(onPressed: () => setState(() => _pestana = 'historial'), child: const Text('Ver la línea de tiempo completa')),
         ],
       ],
     );
@@ -721,13 +726,6 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
     );
   }
 
-  Widget _pestanaHistorial() {
-    if (_historial.isEmpty) {
-      return const Text('Este equipo no tiene órdenes de trabajo registradas.', style: TextStyle(color: Colors.black54));
-    }
-    return Column(children: [for (final ot in _historial) _filaOt(ot)]);
-  }
-
   Widget _pestanaCostos() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -735,6 +733,11 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
         const Text('Costo del equipo, últimos 12 meses', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700)),
         const SizedBox(height: 12),
         _bloqueCosto(),
+        DesgloseCostosEquipo(
+          maquinariaId: widget.maquinariaId,
+          rentabilidad: _rentabilidad!,
+          onIrADocumentos: () => setState(() => _pestana = 'documentos'),
+        ),
       ],
     );
   }
@@ -759,6 +762,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
             ),
             Expanded(
               child: ListTile(
+                onTap: () => context.push('/ordenes/${ot['id']}'),
                 title: Text('OT #${ot['id']} · ${ot['motivo'] ?? 'Sin motivo especificado'}'),
                 subtitle: Text(
                   // dd/mm/aaaa como en el resto del sistema (antes mostraba 2026-09-09)
