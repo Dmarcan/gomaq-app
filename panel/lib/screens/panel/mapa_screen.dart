@@ -941,36 +941,75 @@ class _MapaScreenState extends State<MapaScreen> {
 
   Widget _tarjetaBodega(BodegaMapa? bodega) {
     final ubicacion = bodega?.ubicacion;
+    if (bodega == null) {
+      return Card(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              const Icon(Icons.warehouse),
+              const SizedBox(width: 8),
+              Expanded(child: Text('No hay una bodega registrada.', style: Theme.of(context).textTheme.bodyMedium)),
+            ],
+          ),
+        ),
+      );
+    }
+    if (ubicacion == null) {
+      // falta la ubicación: tarjeta destacada con borde, icono y texto (el estado no va solo en color)
+      return Card(
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(12),
+          side: const BorderSide(color: GomaqColors.advertenciaFuerte, width: 2),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  const Icon(Icons.warning_amber_rounded, color: GomaqColors.advertenciaFuerte),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Semantics(
+                      header: true,
+                      child: Text(
+                        'La bodega no tiene ubicación',
+                        style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              FilledButton.icon(
+                onPressed: () => _editarBodega(bodega),
+                icon: const Icon(Icons.edit_location_alt_outlined),
+                label: const Text('Cargar ubicación'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+    // ubicada: una sola línea chica
     return Card(
       child: Padding(
-        padding: const EdgeInsets.all(12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+        child: Wrap(
+          crossAxisAlignment: WrapCrossAlignment.center,
+          spacing: 4,
           children: [
-            Row(
-              children: [
-                const Icon(Icons.warehouse),
-                const SizedBox(width: 8),
-                Expanded(child: Text('Ubicación de la bodega', style: Theme.of(context).textTheme.titleSmall)),
-              ],
+            const Icon(Icons.check_circle, color: GomaqColors.estadoPositivo, size: 20),
+            const SizedBox(width: 4),
+            const Text('Bodega ubicada'),
+            IconButton(
+              tooltip: 'Centrar el mapa en la bodega',
+              onPressed: () => _irA(ubicacion),
+              icon: const Icon(Icons.my_location),
             ),
-            const SizedBox(height: 4),
-            Text(
-              bodega == null
-                  ? 'No hay una bodega registrada.'
-                  : ubicacion == null
-                  ? 'Sin ubicación cargada.'
-                  : 'Ubicación cargada.',
-            ),
-            if (bodega != null)
-              Align(
-                alignment: Alignment.centerLeft,
-                child: TextButton.icon(
-                  onPressed: () => _editarBodega(bodega),
-                  icon: const Icon(Icons.edit_location_alt_outlined),
-                  label: Text(ubicacion == null ? 'Cargar ubicación' : 'Cambiar ubicación'),
-                ),
-              ),
+            TextButton(onPressed: () => _editarBodega(bodega), child: const Text('Cambiar ubicación')),
           ],
         ),
       ),

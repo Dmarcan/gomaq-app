@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
@@ -66,6 +67,9 @@ class _BuscadorDireccionState extends State<BuscadorDireccion> {
   bool _buscandoGps = false;
   String? _error;
   Coordenada? _valor;
+  // la sugerencia elegida solo ubicó la calle (no el número): se avisa hasta que se ajuste el punto
+  bool _soloCalle = false;
+  bool _arrastrando = false;
   // texto con el que se buscó por última vez: no se repite la misma consulta
   String _ultimaBusqueda = '';
 
@@ -145,6 +149,7 @@ class _BuscadorDireccionState extends State<BuscadorDireccion> {
     _texto.selection = TextSelection.collapsed(offset: _texto.text.length);
     setState(() {
       _valor = s.ubicacion;
+      _soloCalle = s.aproximada;
       _sugerencias = [];
       _error = null;
       _buscando = false;
@@ -161,8 +166,56 @@ class _BuscadorDireccionState extends State<BuscadorDireccion> {
 
   void _ajustar(LatLng punto) {
     final c = Coordenada(punto.latitude, punto.longitude);
-    setState(() => _valor = c);
+    setState(() {
+      _valor = c;
+      _soloCalle = false; // la persona ya dejó el punto donde quiso
+    });
     widget.onChanged(c);
+  }
+
+  /// Zoom actual del mapa; 17 si todavía no está montado (o no hay mapa, como en las pruebas).
+  double _zoomActual() {
+    if (!widget.conMapa) return 17;
+    try {
+      return _mapa.camera.zoom;
+    } catch (_) {
+      return 17;
+    }
+  }
+
+  /// Mueve el punto con las flechas (teclado y lector de pantalla). Cada pulsación son unos 12 px del
+  /// mapa, así el paso se adapta al zoom. [norte] y [este] valen -1, 0 o 1.
+  void _mover({int norte = 0, int este = 0}) {
+    final v = _valor;
+    if (v == null) return;
+    final gradosPorPixel = 360 / (256 * math.pow(2, _zoomActual()));
+    const pixeles = 12;
+    final lat = (v.latitud + norte * gradosPorPixel * pixeles * math.cos(v.latitud * math.pi / 180)).clamp(-85.0, 85.0);
+    final lng = (v.longitud + este * gradosPorPixel * pixeles).clamp(-180.0, 180.0);
+    _ajustar(LatLng(lat, lng));
+  }
+
+  /// Arrastre del pin: la posición del punto en pantalla se corre lo que se movió el dedo y se
+  /// convierte de nuevo a coordenada con la cámara del mapa. Solo se avisa al terminar el gesto.
+  void _arrastrar(Offset delta) {
+    final v = _valor;
+    if (v == null) return;
+    try {
+      final camara = _mapa.camera;
+      final nueva = camara.screenOffsetToLatLng(camara.latLngToScreenOffset(LatLng(v.latitud, v.longitud)) + delta);
+      setState(() {
+        _valor = Coordenada(nueva.latitude, nueva.longitude);
+        _soloCalle = false;
+      });
+    } catch (_) {
+      // el mapa todavía no está montado: el arrastre no hace nada
+    }
+  }
+
+  void _terminarArrastre() {
+    final v = _valor;
+    if (_arrastrando) setState(() => _arrastrando = false);
+    if (v != null) widget.onChanged(v);
   }
 
   void _quitar() {
@@ -171,6 +224,7 @@ class _BuscadorDireccionState extends State<BuscadorDireccion> {
     _secuencia++;
     setState(() {
       _valor = null;
+      _soloCalle = false;
       _sugerencias = [];
       _error = null;
       _ultimaBusqueda = '';
@@ -192,6 +246,7 @@ class _BuscadorDireccionState extends State<BuscadorDireccion> {
       _secuencia++;
       setState(() {
         _valor = c;
+        _soloCalle = false;
         _sugerencias = [];
       });
       widget.onChanged(c);
@@ -297,7 +352,7 @@ class _BuscadorDireccionState extends State<BuscadorDireccion> {
               // el mapa solo se ajusta tocando: se dice, y se avisa que sin tocar el punto ya es válido
               child: Semantics(
                 container: true,
-                label: 'Mapa con el punto marcado. Tocarlo mueve el punto; no hace falta si ya está bien.',
+                label: 'Mapa con el punto marcado. Tocar el mapa o arrastrar el punto lo mueve; no hace falta si ya está bien.',
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(8),
                   child: FlutterMap(
@@ -306,6 +361,10 @@ class _BuscadorDireccionState extends State<BuscadorDireccion> {
                       initialCenter: LatLng(valor.latitud, valor.longitud),
                       initialZoom: 17,
                       onTap: (_, punto) => _ajustar(punto),
+                      // mientras se arrastra el pin el mapa no se desplaza: los dos gestos compiten
+                      interactionOptions: InteractionOptions(
+                        flags: _arrastrando ? InteractiveFlag.none : InteractiveFlag.all,
+                      ),
                     ),
                     children: [
                       widget.capaImagenes(),
@@ -313,10 +372,23 @@ class _BuscadorDireccionState extends State<BuscadorDireccion> {
                         markers: [
                           Marker(
                             point: LatLng(valor.latitud, valor.longitud),
-                            width: 40,
-                            height: 40,
+                            width: 48,
+                            height: 48,
                             alignment: Alignment.topCenter,
-                            child: const Icon(Icons.location_on, color: GomaqColors.accion, size: 40),
+                            // el pin se arrastra con el dedo o el mouse; con teclado y lector de pantalla
+                            // están las flechas de abajo
+                            child: Semantics(
+                              label: 'Punto de la ubicación. Se arrastra para ajustarlo; también puedes usar las flechas bajo el mapa.',
+                              child: Listener(
+                                key: const ValueKey('pin-ubicacion'),
+                                behavior: HitTestBehavior.opaque,
+                                onPointerDown: (_) => setState(() => _arrastrando = true),
+                                onPointerMove: (e) => _arrastrar(e.delta),
+                                onPointerUp: (_) => _terminarArrastre(),
+                                onPointerCancel: (_) => _terminarArrastre(),
+                                child: const Icon(Icons.location_on, color: GomaqColors.accion, size: 48),
+                              ),
+                            ),
                           ),
                         ],
                       ),
@@ -336,11 +408,73 @@ class _BuscadorDireccionState extends State<BuscadorDireccion> {
               TextButton(onPressed: _quitar, child: const Text('Quitar')),
             ],
           ),
-          if (widget.conMapa)
+          if (_soloCalle)
+            // el aviso va bajo el mapa, visible y anunciado: dice qué pasó y qué hacer. Lleva borde e
+            // icono además del color, para que no dependa de verlo
+            Semantics(
+              container: true,
+              liveRegion: true,
+              child: Container(
+                key: const ValueKey('aviso-solo-calle'),
+                margin: const EdgeInsets.only(top: 4),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: GomaqColors.advertenciaFuerte.withValues(alpha: 0.08),
+                  border: Border.all(color: GomaqColors.advertenciaFuerte, width: 1.5),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: const Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.warning_amber_rounded, color: GomaqColors.advertenciaFuerte),
+                    SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        'Encontramos la calle, pero no el número. '
+                        'Arrastra el punto o toca el mapa para dejarlo en el lugar exacto.',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          if (widget.conMapa && !_soloCalle)
             Text(
-              'Si el punto no cae justo, toca el mapa para ajustarlo.',
+              'Si el punto no cae justo, arrástralo o toca el mapa para ajustarlo.',
               style: TextStyle(color: Colors.grey.shade700, fontSize: 12),
             ),
+          // flechas: mover el punto sin mouse ni dedo (teclado: Tab y Enter o Espacio)
+          Semantics(
+            container: true,
+            label: 'Mover el punto',
+            child: Wrap(
+              crossAxisAlignment: WrapCrossAlignment.center,
+              spacing: 4,
+              children: [
+                const Text('Mover el punto:'),
+                IconButton(
+                  tooltip: 'Mover el punto al norte',
+                  onPressed: () => _mover(norte: 1),
+                  icon: const Icon(Icons.arrow_upward),
+                ),
+                IconButton(
+                  tooltip: 'Mover el punto al sur',
+                  onPressed: () => _mover(norte: -1),
+                  icon: const Icon(Icons.arrow_downward),
+                ),
+                IconButton(
+                  tooltip: 'Mover el punto al oeste',
+                  onPressed: () => _mover(este: -1),
+                  icon: const Icon(Icons.arrow_back),
+                ),
+                IconButton(
+                  tooltip: 'Mover el punto al este',
+                  onPressed: () => _mover(este: 1),
+                  icon: const Icon(Icons.arrow_forward),
+                ),
+              ],
+            ),
+          ),
         ],
       ],
     );

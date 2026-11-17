@@ -43,7 +43,7 @@ void main() {
     expect(t.takeException(), isNull);
     expect(find.text('Mapa operativo'), findsOneWidget);
     expect(find.byIcon(Icons.refresh), findsNothing, reason: 'el encabezado del panel ya trae el botón de actualizar');
-    expect(find.text('Ubicación de la bodega'), findsOneWidget);
+    expect(find.text('Bodega ubicada'), findsOneWidget);
     expect(find.textContaining('Arrendados (2)'), findsOneWidget);
     expect(find.textContaining('En bodega (1)'), findsOneWidget);
     expect(find.widgetWithText(FilterChip, 'Furgones en camino (1)'), findsOneWidget);
@@ -66,7 +66,7 @@ void main() {
     _tamano(t, const Size(375, 812));
     await t.pumpWidget(_app(MapaScreen(cargar: () async => _datos(bodega: null), conMapa: false)));
     await t.pumpAndSettle();
-    expect(find.text('Sin ubicación cargada.'), findsOneWidget);
+    expect(find.text('La bodega no tiene ubicación'), findsOneWidget);
     expect(find.text('Cargar ubicación'), findsOneWidget);
     await t.scrollUntilVisible(find.textContaining('hasta que cargues'), 120, scrollable: find.byType(Scrollable).last);
     expect(find.textContaining('hasta que cargues la ubicación de la bodega'), findsOneWidget);
@@ -98,7 +98,7 @@ void main() {
     await t.pumpAndSettle();
     expect(guardada, const Coordenada(-33.52, -70.71));
     expect(cargas, 2, reason: 'recarga tras guardar');
-    expect(find.text('Ubicación cargada.'), findsOneWidget);
+    expect(find.text('Bodega ubicada'), findsOneWidget);
     expect(find.textContaining('-33.52'), findsNothing, reason: 'no se muestran coordenadas');
   });
 
