@@ -12,6 +12,7 @@ import '../../widgets/campo_fecha_opcional.dart';
 import '../../widgets/dialogos.dart';
 import '../../widgets/estado_vacio.dart';
 import '../../widgets/fotos_orden.dart';
+import '../../widgets/zona_arrastre_pdf.dart';
 import 'arriendos_en_curso_tab.dart';
 import 'facturas_emitidas_tab.dart';
 import 'ordenes_screen.dart' show abrirDetalleOrden;
@@ -374,7 +375,13 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
       final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
       archivo = resultado?.files.single;
     }
-    if (archivo == null || archivo.bytes == null) return;
+    if (archivo == null) return;
+    await _recibirArchivo(archivo);
+  }
+
+  /// Camino comun del clic (selector) y del arrastre.
+  Future<void> _recibirArchivo(PlatformFile archivo) async {
+    if (archivo.bytes == null) return;
     setState(() => _archivo = archivo);
 
     setState(() => _detectando = true);
@@ -1030,10 +1037,31 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
     return [
       if (_facturaPorPeriodo) _construirPeriodo(),
       const TituloSeccion('Documento PDF de la factura'),
-      OutlinedButton.icon(
-        onPressed: _elegirArchivo,
-        icon: const Icon(Icons.upload_file),
-        label: Text(_archivo?.name ?? 'Elegir PDF'),
+      ZonaArrastrePdf(
+        onArchivo: _recibirArchivo,
+        builder: (context, arrastrando) => Container(
+          width: double.infinity,
+          padding: arrastrando ? const EdgeInsets.all(12) : EdgeInsets.zero,
+          decoration: BoxDecoration(
+            color: arrastrando ? Colors.blue.shade50 : null,
+            border: arrastrando ? Border.all(color: Colors.blue.shade800, width: 3) : null,
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: arrastrando
+              ? const Text('Suelta el PDF aquí', textAlign: TextAlign.center, style: TextStyle(fontWeight: FontWeight.bold))
+              : Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 12,
+                  children: [
+                    OutlinedButton.icon(
+                      onPressed: _elegirArchivo,
+                      icon: const Icon(Icons.upload_file),
+                      label: Text(_archivo?.name ?? 'Elegir PDF'),
+                    ),
+                    if (_archivo == null) Text('o arrástralo aquí', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                  ],
+                ),
+        ),
       ),
       if (_errorArchivo != null)
         Padding(

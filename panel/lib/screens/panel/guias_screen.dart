@@ -11,6 +11,7 @@ import '../../utils/motivo_cambio.dart' show nuevoUuid;
 import '../../widgets/confirmar_horometro.dart';
 import '../../widgets/estado_vacio.dart';
 import '../../widgets/selector_dia_arriendo.dart';
+import '../../widgets/zona_arrastre_pdf.dart';
 
 /// Mismo tope que aplica el backend (middleware/upload.js).
 const _maxArchivoBytes = 10 * 1024 * 1024;
@@ -191,8 +192,14 @@ class _GuiasScreenState extends State<GuiasScreen> {
   Future<void> _elegirArchivo() async {
     final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
     if (resultado == null || resultado.files.single.bytes == null) return;
+    await _recibirArchivo(resultado.files.single);
+  }
+
+  /// Camino comun del clic (selector) y del arrastre: valida el tamano y arma la guia.
+  Future<void> _recibirArchivo(PlatformFile archivo) async {
+    if (archivo.bytes == null) return;
     // el backend rechaza sobre 10 MB; avisar aca evita subir el archivo entero para nada
-    if (resultado.files.single.bytes!.length > _maxArchivoBytes) {
+    if (archivo.bytes!.length > _maxArchivoBytes) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('El PDF supera los 10 MB')),
@@ -201,7 +208,7 @@ class _GuiasScreenState extends State<GuiasScreen> {
     }
     setState(() {
       _cambioDeDatos();
-      _archivo = resultado.files.single;
+      _archivo = archivo;
       _huboDeteccion = false;
       _horaDetectada = false;
       _equipoFueraDeLista = null;
@@ -622,22 +629,35 @@ class _GuiasScreenState extends State<GuiasScreen> {
             const SizedBox(height: 20),
             const Text('DOCUMENTO PDF', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
             const SizedBox(height: 8),
-            InkWell(
-              onTap: _elegirArchivo,
-              child: Container(
-                width: double.infinity,
-                padding: const EdgeInsets.all(32),
-                decoration: BoxDecoration(
-                  border: Border.all(color: Colors.grey.shade400, style: BorderStyle.solid),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Column(
-                  children: [
-                    const Icon(Icons.upload_file, size: 32, color: Colors.grey),
-                    const SizedBox(height: 8),
-                    Text(_archivo?.name ?? 'Haz clic para buscar el PDF de la guía', textAlign: TextAlign.center),
-                    if (_archivo == null) Text('Solo PDF · hasta 10 MB', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
-                  ],
+            ZonaArrastrePdf(
+              onArchivo: _recibirArchivo,
+              builder: (context, arrastrando) => InkWell(
+                onTap: _elegirArchivo,
+                child: Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(32),
+                  decoration: BoxDecoration(
+                    color: arrastrando ? Colors.blue.shade50 : null,
+                    border: Border.all(
+                      color: arrastrando ? Colors.blue.shade800 : Colors.grey.shade400,
+                      width: arrastrando ? 3 : 1,
+                    ),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    children: [
+                      const Icon(Icons.upload_file, size: 32, color: Colors.grey),
+                      const SizedBox(height: 8),
+                      Text(
+                        arrastrando
+                            ? 'Suelta el PDF aquí'
+                            : (_archivo?.name ?? 'Haz clic o arrastra aquí el PDF de la guía'),
+                        textAlign: TextAlign.center,
+                        style: arrastrando ? const TextStyle(fontWeight: FontWeight.bold) : null,
+                      ),
+                      if (_archivo == null) Text('Solo PDF · hasta 10 MB', style: TextStyle(fontSize: 12, color: Colors.grey.shade700)),
+                    ],
+                  ),
                 ),
               ),
             ),
