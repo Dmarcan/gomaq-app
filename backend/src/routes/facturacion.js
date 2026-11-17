@@ -16,14 +16,30 @@ const { textoPorDefecto, leerFacturaParaCorreo, hayEnvioPendiente, encolarCorreo
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
 const { detectarCliente } = require('../utils/detectarCliente');
 const { parsearFactura } = require('../utils/parsearDocumento');
-
-const { validarTraslado } = require('../utils/trasladoFactura');
+const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
+const { validarTraslado, validarNeto, resolverTraslado } = require('../utils/trasladoFactura');
+const {
+    FILTROS_ESTADO, vencimientoPropuesto, avisosPrecarga, validarFechasFactura, validarFechaPago, validarFolioNotaCredito,
+} = require('../utils/cobranza');
+const { esDiaValido } = require('../utils/validacion');
+const { cargarEmitidas } = require('../utils/facturasEmitidas');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['facturaId', 'guiaDespachoId']);
 
 // un monto 0 es un monto valido: `monto || null` lo convertia en nulo
 const montoONulo = (v) => (v === undefined || v === null || v === '' ? null : v);
+
+// las fechas de cobranza de la factura como 'YYYY-MM-DD' en la respuesta: node-pg entrega un DATE como un Date
+// a medianoche local y en JSON se correria de dia segun la zona del servidor
+const pad2 = (n) => String(n).padStart(2, '0');
+const diaDeFecha = (v) => (v instanceof Date ? `${v.getFullYear()}-${pad2(v.getMonth() + 1)}-${pad2(v.getDate())}` : v ?? null);
+const conFechasTexto = (fila) => ({
+    ...fila,
+    fecha_emision: diaDeFecha(fila.fecha_emision),
+    fecha_vencimiento: diaDeFecha(fila.fecha_vencimiento),
+    fecha_pago: diaDeFecha(fila.fecha_pago),
+});
 
 // GET /api/facturacion/pendientes - todo lo que falta facturar, agrupado por estado real:
 // arriendos con ciclo despacho+recepcion cerrado, reparaciones esperando que el Gerente
@@ -93,21 +109,40 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
     }
 });
 
-// POST /api/facturacion/detectar - lee el texto del PDF de una factura para adivinar
-// monto, folio y cliente (mejor esfuerzo, igual que /guias/detectar - nunca bloquea el flujo)
+// POST /api/facturacion/detectar - lee el texto del PDF de una factura para adivinar monto, folio, cliente,
+// neto, emision, vencimiento y traslado (mejor esfuerzo, igual que /guias/detectar - nunca bloquea el flujo).
+// Lo leido se PRECARGA: el administrativo lo confirma en el dialogo. Si el cliente tiene plazo habitual y el
+// vencimiento del PDF no coincide con emision + plazo, `vencimiento` trae las dos opciones y va un aviso.
 router.post('/detectar', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'archivo (PDF) es requerido' });
     }
     try {
         const texto = await leerTextoPdf(req.file.buffer);
-        const { monto_detectado, folio_detectado, rut_detectado } = parsearFactura(texto);
+        const leido = parsearFactura(texto);
+        const cliente = await detectarCliente(texto, leido.rut_detectado);
+        let plazo = null;
+        if (cliente) {
+            const r = await pool.query('SELECT plazo_pago_dias FROM clientes WHERE id = $1', [cliente.id]);
+            plazo = r.rows[0] && r.rows[0].plazo_pago_dias !== null ? Number(r.rows[0].plazo_pago_dias) : null;
+        }
+        const vencimiento = vencimientoPropuesto({
+            emision: leido.fecha_emision_detectada, vencimientoPdf: leido.vencimiento_detectado, plazoCliente: plazo,
+        });
 
         res.json({
-            monto_detectado,
-            folio_detectado,
-            cliente_detectado: await detectarCliente(texto, rut_detectado),
+            monto_detectado: leido.monto_detectado,
+            folio_detectado: leido.folio_detectado,
+            cliente_detectado: cliente,
             texto_legible: texto.trim().length > 0,
+            monto_neto_detectado: leido.monto_neto_detectado,
+            fecha_emision_detectada: leido.fecha_emision_detectada,
+            vencimiento_detectado: leido.vencimiento_detectado,
+            varias_cuotas: leido.varias_cuotas,
+            traslado_detectado: leido.traslado_detectado,
+            plazo_cliente_dias: plazo,
+            vencimiento,
+            avisos: avisosPrecarga(leido, vencimiento),
         });
     } catch (err) {
         console.error(err);
@@ -164,8 +199,12 @@ const esDia = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !
 // vuelve a calcular la propuesta con el despacho bloqueado y rechaza lo que no calce (huecos y
 // solapes). Compatibilidad: solo con guia_recepcion_id (panel antiguo) factura todo lo que falta
 // hasta el fin del arriendo.
+// Opcionales (038): monto_neto, monto_traslado, traslado_entrega, traslado_retiro, fecha_emision y
+// fecha_vencimiento. Si llegan las partes del traslado sin el total, el total es su suma; si llegan los
+// tres deben cuadrar. Un panel anterior que no los manda sigue funcionando igual.
 router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
     const { guia_recepcion_id, guia_despacho_id, periodo_desde, periodo_hasta, folio, monto, monto_traslado } = req.body;
+    const { monto_neto, traslado_entrega, traslado_retiro, fecha_emision, fecha_vencimiento } = req.body;
     const conPeriodo = Boolean(guia_despacho_id);
     if ((!conPeriodo && !guia_recepcion_id) || !folio || !req.file) {
         return res.status(400).json({ error: 'guia_despacho_id (o guia_recepcion_id), folio y archivo (PDF) son requeridos' });
@@ -179,8 +218,12 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
     if (monto !== undefined && monto !== null && monto !== '' && montoEnteroONulo(monto) === null) {
         return res.status(400).json({ error: 'El monto debe ser un número entero de pesos, sin puntos ni decimales, de hasta 10 dígitos' });
     }
-    const trasladoValido = validarTraslado(monto, monto_traslado);
+    const netoValido = validarNeto(monto, monto_neto);
+    if (netoValido.error) return res.status(400).json({ error: netoValido.error });
+    const trasladoValido = resolverTraslado({ monto, neto: netoValido.neto, monto_traslado, traslado_entrega, traslado_retiro });
     if (trasladoValido.error) return res.status(400).json({ error: trasladoValido.error });
+    const fechas = validarFechasFactura({ fecha_emision, fecha_vencimiento });
+    if (fechas.error) return res.status(400).json({ error: fechas.error });
     const idOrigen = Number(conPeriodo ? guia_despacho_id : guia_recepcion_id);
     if (!Number.isInteger(idOrigen) || idOrigen <= 0) {
         return res.status(400).json({ error: 'Id de guía inválido' });
@@ -244,13 +287,15 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
         const cierra = arriendo.fin !== null && hasta === arriendo.fin && arriendo.guia_recepcion_id !== null;
         const result = await client.query(
             `INSERT INTO facturas (maquinaria_id, guia_recepcion_id, guia_despacho_id, periodo_desde, periodo_hasta,
-                                   cliente_id, folio, archivo_url, monto, monto_traslado)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+                                   cliente_id, folio, archivo_url, monto, monto_traslado,
+                                   monto_neto, traslado_entrega, traslado_retiro, fecha_emision, fecha_vencimiento)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
             [arriendo.maquinaria_id, cierra ? arriendo.guia_recepcion_id : null, arriendo.guia_despacho_id, desde, hasta,
-             arriendo.cliente_id, folioValido.folio, rutaStorage, montoONulo(monto), trasladoValido.traslado]
+             arriendo.cliente_id, folioValido.folio, rutaStorage, montoONulo(monto), trasladoValido.traslado,
+             netoValido.neto, trasladoValido.entrega, trasladoValido.retiro, fechas.fecha_emision, fechas.fecha_vencimiento]
         );
         await client.query('COMMIT');
-        res.status(201).json(result.rows[0]);
+        res.status(201).json(conFechasTexto(result.rows[0]));
     } catch (err) {
         if (client) await client.query('ROLLBACK').catch(() => {});
         if (rutaStorage) {
@@ -352,11 +397,109 @@ router.get('/arriendos-en-curso', verifyToken, requireRole('administrativo', 'ge
     }
 });
 
+const ESTADOS_LISTA = Object.keys(FILTROS_ESTADO);
+
+// GET /api/facturacion/emitidas - facturas emitidas con su estado de cobranza (anulada, pagada, vencida,
+// proxima, al_dia, sin_vencimiento), dias de mora y dias para vencer. Filtros: estado (vencidas, proximas,
+// por_cobrar, pagadas, anuladas, todas), cliente_id, q (folio o cliente), desde/hasta (sobre la emision, o
+// el dia de carga si no la tiene) y limit/offset. Vencidas y proximas usan el mismo predicado que las
+// tarjetas de GET /api/dashboard/resumen. Sin archivo_url. Ruta fija: va antes de las de /:facturaId.
+router.get('/emitidas', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    const estado = req.query.estado === undefined || req.query.estado === '' ? 'todas' : req.query.estado;
+    if (typeof estado !== 'string' || !ESTADOS_LISTA.includes(estado)) {
+        return res.status(400).json({ error: `estado debe ser uno de: ${ESTADOS_LISTA.join(', ')}` });
+    }
+    let clienteId = null;
+    if (req.query.cliente_id !== undefined && req.query.cliente_id !== '') {
+        if (typeof req.query.cliente_id !== 'string' || !/^\d{1,9}$/.test(req.query.cliente_id) || Number(req.query.cliente_id) <= 0) {
+            return res.status(400).json({ error: 'cliente_id inválido' });
+        }
+        clienteId = Number(req.query.cliente_id);
+    }
+    const dia = (v) => (v === undefined || v === '' ? null : (esDiaValido(v) ? v : undefined));
+    const desde = dia(req.query.desde);
+    const hasta = dia(req.query.hasta);
+    if (desde === undefined || hasta === undefined) return res.status(400).json({ error: 'desde y hasta deben ser fechas válidas (AAAA-MM-DD)' });
+    const { limit, offset } = parsearPaginacion(req.query);
+    const q = parsearBusqueda(req.query);
+    try {
+        const r = await cargarEmitidas(pool, { estado, clienteId, q: q ? q.slice(0, 100) : null, desde, hasta, limit, offset });
+        res.set('Cache-Control', 'no-store');
+        res.json({ estado, hoy: r.hoy, ...envolver(r.items, r.total, { limit, offset }) });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al consultar las facturas emitidas' });
+    }
+});
+
+const tiene = (obj, clave) => Object.prototype.hasOwnProperty.call(obj, clave);
+const vacio = (v) => v === undefined || v === null || v === '';
+const aNumeroONulo = (v) => (v === null || v === undefined ? null : Number(v));
+
+// PATCH /api/facturacion/:facturaId/pago - cobranza (038): { fecha_pago } marca la factura pagada (null la
+// deja por cobrar) y { anulada_nc } la marca anulada con nota de credito guardando el folio de la NC (null
+// lo deshace). Se puede mandar uno o los dos. Solo el administrativo; el gerente consulta la lista.
+// No cambia el contenido de la factura: no pasa por la regla del correo pendiente ni cancela correos.
+// Una factura anulada con NC deja de contar como ingreso del equipo (utils/rentabilidad.js) pero NO libera
+// el periodo facturado. Responde la fila como en GET /emitidas.
+router.patch('/:facturaId/pago', verifyToken, requireRole('administrativo'), async (req, res) => {
+    const cuerpo = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
+    const conPago = tiene(cuerpo, 'fecha_pago');
+    const conNc = tiene(cuerpo, 'anulada_nc');
+    if (!conPago && !conNc) return res.status(400).json({ error: 'Indica fecha_pago o anulada_nc' });
+    const pago = conPago ? validarFechaPago(cuerpo.fecha_pago) : null;
+    if (pago && pago.error) return res.status(400).json({ error: pago.error });
+    const nc = conNc ? validarFolioNotaCredito(cuerpo.anulada_nc) : null;
+    if (nc && nc.error) return res.status(400).json({ error: nc.error });
+    const id = Number(req.params.facturaId);
+    let client;
+    try {
+        client = await pool.connect();
+        await client.query('BEGIN');
+        const fila = await client.query('SELECT id FROM facturas WHERE id = $1 FOR UPDATE', [id]);
+        if (fila.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Factura no encontrada' });
+        }
+        await client.query(
+            `UPDATE facturas SET
+                 fecha_pago = CASE WHEN $2 THEN $3::date ELSE fecha_pago END,
+                 anulada_nc = CASE WHEN $4 THEN $5::varchar ELSE anulada_nc END
+             WHERE id = $1`,
+            [id, conPago, conPago ? pago.fecha_pago : null, conNc, conNc ? nc.anulada_nc : null]
+        );
+        await client.query('COMMIT');
+        const r = await cargarEmitidas(pool, { id });
+        res.json(r.items[0]);
+    } catch (err) {
+        if (client) await client.query('ROLLBACK').catch(() => {});
+        console.error(err);
+        res.status(500).json({ error: 'Error al registrar el pago de la factura' });
+    } finally {
+        if (client) client.release();
+    }
+});
+
 // PATCH /api/facturacion/:facturaId - corrige folio/monto despues de creada la factura
-// (por si la deteccion del PDF se equivoco), funciona para cualquier tipo de factura
+// (por si la deteccion del PDF se equivoco), funciona para cualquier tipo de factura.
+// Desde la 038 corrige tambien monto_neto, traslado_entrega, traslado_retiro, fecha_emision y
+// fecha_vencimiento. Un campo ausente no cambia; presente con null o '' lo borra (monto_neto y fechas).
+// Si llega alguna parte del traslado, se toman las dos del cuerpo (la que falta vale 0) y, sin
+// monto_traslado, el total es su suma. Si llega solo monto_traslado, la division guardada se mantiene si
+// sigue cuadrando (si no, el trigger de la 038 la borra).
 router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (req, res) => {
-    const { folio, monto, monto_traslado } = req.body || {};
+    const cuerpo = req.body || {};
+    const { folio, monto, monto_traslado } = cuerpo;
     if (!/^\d{1,9}$/.test(String(req.params.facturaId))) return res.status(400).json({ error: 'Id de factura inválido' });
+    // formato de lo nuevo; las reglas contra lo ya guardado se revisan con la fila bloqueada
+    if (tiene(cuerpo, 'monto_neto') && !vacio(cuerpo.monto_neto) && montoEnteroONulo(cuerpo.monto_neto) === null) {
+        return res.status(400).json({ error: 'El monto neto debe ser un número entero de pesos, sin puntos ni decimales, de hasta 10 dígitos' });
+    }
+    const fechasEnviadas = validarFechasFactura({
+        fecha_emision: tiene(cuerpo, 'fecha_emision') ? cuerpo.fecha_emision : undefined,
+        fecha_vencimiento: tiene(cuerpo, 'fecha_vencimiento') ? cuerpo.fecha_vencimiento : undefined,
+    });
+    if (fechasEnviadas.error) return res.status(400).json({ error: fechasEnviadas.error });
     let folioNuevo = null;
     if (folio !== undefined && folio !== null && folio !== '') {
         const v = validarFolio(folio);
@@ -377,7 +520,10 @@ router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (r
         await client.query('BEGIN');
         // se bloquea la fila: serializa con encolarCorreoFactura (que tambien la bloquea), asi un envio no
         // puede colarse entre la revision de abajo y el UPDATE
-        const fila = await client.query('SELECT id, monto, monto_traslado FROM facturas WHERE id = $1 FOR UPDATE', [req.params.facturaId]);
+        const fila = await client.query(
+            `SELECT id, monto, monto_traslado, monto_neto, traslado_entrega, traslado_retiro,
+                    to_char(fecha_emision, 'YYYY-MM-DD') AS fecha_emision, to_char(fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento
+             FROM facturas WHERE id = $1 FOR UPDATE`, [req.params.facturaId]);
         if (fila.rows.length === 0) {
             await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Factura no encontrada' });
@@ -390,22 +536,53 @@ router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (r
         }
         // monto y traslado finales (lo nuevo o lo ya guardado) deben seguir cuadrando
         // NUMERIC llega como texto con decimales ('249900.00'): se pasa a numero entero antes de validar
-        const montoGuardado = fila.rows[0].monto === null ? null : Number(fila.rows[0].monto);
+        const guardada = fila.rows[0];
+        const montoGuardado = aNumeroONulo(guardada.monto);
         const montoFinal = montoONulo(monto) ?? montoGuardado;
-        const trasladoEnviado = !(monto_traslado === undefined || monto_traslado === null || monto_traslado === '');
-        const trasladoFinal = validarTraslado(montoFinal, trasladoEnviado ? monto_traslado : Number(fila.rows[0].monto_traslado));
-        if (trasladoFinal.error) {
+        const rechazarCambio = async (mensaje) => {
             await client.query('ROLLBACK');
-            return res.status(400).json({ error: trasladoFinal.error });
+            return res.status(400).json({ error: mensaje });
+        };
+        // neto final: lo enviado (null lo borra) o lo guardado; no mayor que el monto final
+        const netoFinal = validarNeto(montoFinal, tiene(cuerpo, 'monto_neto') ? cuerpo.monto_neto : aNumeroONulo(guardada.monto_neto));
+        if (netoFinal.error) return await rechazarCambio(netoFinal.error);
+        const trasladoEnviado = !vacio(monto_traslado);
+        const trasladoBase = trasladoEnviado ? monto_traslado : aNumeroONulo(guardada.monto_traslado);
+        const partesEnviadas = tiene(cuerpo, 'traslado_entrega') || tiene(cuerpo, 'traslado_retiro');
+        let traslado;
+        if (partesEnviadas && (!vacio(cuerpo.traslado_entrega) || !vacio(cuerpo.traslado_retiro))) {
+            traslado = resolverTraslado({
+                monto: montoFinal, neto: netoFinal.neto, monto_traslado: trasladoEnviado ? monto_traslado : undefined,
+                traslado_entrega: cuerpo.traslado_entrega, traslado_retiro: cuerpo.traslado_retiro,
+            });
+        } else {
+            const v = validarTraslado(montoFinal, trasladoBase, netoFinal.neto);
+            traslado = v.error ? v : {
+                traslado: v.traslado,
+                // partes enviadas vacias = sin division; sin partes, la guardada (el trigger la borra si ya no cuadra)
+                entrega: partesEnviadas ? null : aNumeroONulo(guardada.traslado_entrega),
+                retiro: partesEnviadas ? null : aNumeroONulo(guardada.traslado_retiro),
+            };
+        }
+        if (traslado.error) return await rechazarCambio(traslado.error);
+        // fechas finales: el vencimiento no puede quedar antes de la emision (solo si se cambio alguna)
+        const emisionFinal = tiene(cuerpo, 'fecha_emision') ? fechasEnviadas.fecha_emision : guardada.fecha_emision;
+        const vencimientoFinal = tiene(cuerpo, 'fecha_vencimiento') ? fechasEnviadas.fecha_vencimiento : guardada.fecha_vencimiento;
+        if ((tiene(cuerpo, 'fecha_emision') || tiene(cuerpo, 'fecha_vencimiento'))
+            && emisionFinal && vencimientoFinal && vencimientoFinal < emisionFinal) {
+            return await rechazarCambio('La fecha de vencimiento no puede ser anterior a la emisión');
         }
         const result = await client.query(
-            `UPDATE facturas SET folio = COALESCE($1, folio), monto = COALESCE($2, monto), monto_traslado = $3 WHERE id = $4 RETURNING *`,
-            [folioNuevo, montoONulo(monto), trasladoFinal.traslado, req.params.facturaId]
+            `UPDATE facturas SET folio = COALESCE($1, folio), monto = COALESCE($2, monto), monto_traslado = $3,
+                    monto_neto = $4, traslado_entrega = $5, traslado_retiro = $6, fecha_emision = $7, fecha_vencimiento = $8
+             WHERE id = $9 RETURNING *`,
+            [folioNuevo, montoONulo(monto), traslado.traslado, netoFinal.neto, traslado.entrega, traslado.retiro,
+             emisionFinal, vencimientoFinal, req.params.facturaId]
         );
         // un correo anterior que agoto sus reintentos (error) llevaba el folio y el monto viejos
         await cancelarCorreosPrevios(client, req.params.facturaId, 'Factura corregida');
         await client.query('COMMIT');
-        res.json(result.rows[0]);
+        res.json(conFechasTexto(result.rows[0]));
     } catch (err) {
         if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);

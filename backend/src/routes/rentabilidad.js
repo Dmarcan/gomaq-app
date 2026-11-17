@@ -6,6 +6,7 @@ const { leerConfiguracion } = require('../utils/configuracion');
 const { diaSantiago } = require('../utils/diasArriendo');
 const {
     calcularRentabilidad,
+    ingresoFactura,
     calcularDiasArrendado,
     calcularHorasEnPeriodo,
     clasificarResultado,
@@ -58,9 +59,11 @@ const SQL_LINEAS = `
 `;
 
 // Ingreso facturado por equipo, por sus dos caminos: factura de arriendo (facturas.maquinaria_id,
-// migracion 008) y factura de reparacion (a traves de la orden de trabajo).
+// migracion 008) y factura de reparacion (a traves de la orden de trabajo). El neto y la nota de credito
+// (038) los usa ingresoFactura (utils/rentabilidad.js) para decidir la regla de cada factura.
 const SQL_FACTURAS = `
-    SELECT COALESCE(f.maquinaria_id, ot.maquinaria_id) AS maquinaria_id, f.monto, f.monto_traslado
+    SELECT COALESCE(f.maquinaria_id, ot.maquinaria_id) AS maquinaria_id, f.monto, f.monto_traslado,
+           f.monto_neto, f.anulada_nc
     FROM facturas f
     LEFT JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
     WHERE COALESCE(f.maquinaria_id, ot.maquinaria_id) IS NOT NULL
@@ -233,7 +236,7 @@ router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativ
                 [id, desde, hasta]
             ),
             pool.query(
-                `SELECT f.id, f.folio, f.monto, f.monto_traslado, f.created_at, f.orden_trabajo_id,
+                `SELECT f.id, f.folio, f.monto, f.monto_traslado, f.monto_neto, f.anulada_nc, f.created_at, f.orden_trabajo_id,
                         COALESCE(f.cliente_id, ot.cliente_id) AS cliente_id, c.nombre AS cliente_nombre
                  FROM facturas f
                  LEFT JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
@@ -255,7 +258,14 @@ router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativ
                 cantidad: num(l.cantidad),
                 precio_unitario: num(l.precio_unitario),
             })),
-            facturas: facturas.rows.map((f) => ({ ...f, monto: num(f.monto), monto_traslado: num(f.monto_traslado) })),
+            // `ingreso` es lo que esa factura aporta al equipo (0 si se anulo con nota de credito)
+            facturas: facturas.rows.map((f) => ({
+                ...f,
+                monto: num(f.monto),
+                monto_traslado: num(f.monto_traslado),
+                monto_neto: num(f.monto_neto),
+                ingreso: ingresoFactura(f),
+            })),
         });
     } catch (err) {
         console.error(err);

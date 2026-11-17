@@ -187,6 +187,12 @@ describe('parsearFactura', () => {
             monto_detectado: 249900,
             folio_detectado: '1512',
             rut_detectado: '98765432-1',
+            // migracion 038: lo que se precarga para cobranza
+            monto_neto_detectado: 210000,
+            fecha_emision_detectada: '2026-07-14',
+            vencimiento_detectado: '2026-08-28',
+            varias_cuotas: false,
+            traslado_detectado: { total: 140000, entrega: 70000, retiro: 70000, concepto: 'entrega_y_retiro', lineas: 1 },
         });
     });
 });

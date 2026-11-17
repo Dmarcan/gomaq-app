@@ -44,12 +44,32 @@ function calcularGasto(lineas) {
     return { total, lineas_sin_precio: sinPrecio };
 }
 
+const conValor = (v) => v !== null && v !== undefined && v !== '';
+
+/**
+ * Ingreso del equipo por UNA factura. Unica regla para la rentabilidad, el perfil y la linea de tiempo:
+ *   - Anulada con nota de credito (anulada_nc, migracion 038): 0. Deja de contar como ingreso.
+ *   - Con monto_neto guardado (facturas nuevas, 038): neto menos traslado, todo en neto como la planilla
+ *     de la administrativa (decision de David del 16-11-2026: el IVA solo se corrige en las facturas nuevas).
+ *   - Sin monto_neto (las ya cargadas): exactamente como antes, monto total menos traslado (033). Ninguna
+ *     cifra ya vista cambia.
+ * Nunca menor que 0. null si la factura no tiene monto (no suma).
+ */
+function ingresoFactura(factura) {
+    if (!factura) return null;
+    if (conValor(factura.anulada_nc) && String(factura.anulada_nc).trim() !== '') return 0;
+    if (conValor(factura.monto_neto) && !isNaN(Number(factura.monto_neto))) {
+        return ingresoSinTraslado(factura.monto_neto, factura.monto_traslado);
+    }
+    // el traslado cobrado en la factura no es ingreso del equipo (migracion 033)
+    return ingresoSinTraslado(factura.monto, factura.monto_traslado);
+}
+
 /** Ingreso facturado del equipo: arriendos y reparaciones, ambos ya resueltos por la consulta. */
 function calcularIngreso(facturas) {
     if (!Array.isArray(facturas)) return 0;
     return facturas.reduce((total, factura) => {
-        // el traslado cobrado en la factura no es ingreso del equipo (migracion 033)
-        const ingreso = ingresoSinTraslado(factura && factura.monto, factura && factura.monto_traslado);
+        const ingreso = ingresoFactura(factura);
         return ingreso === null ? total : total + ingreso;
     }, 0);
 }
@@ -217,6 +237,7 @@ module.exports = {
     diasDelPeriodo,
     compararPorRelevancia,
     calcularGasto,
+    ingresoFactura,
     calcularIngreso,
     calcularRentabilidad,
     calcularDiasArrendado,

@@ -11,6 +11,8 @@ const { validarMotivo, detalleFacturaAnulada, esIdPositivo, montoEnteroONulo } =
 const { cancelarCorreosFactura, encolarCorreoFactura, validarFolio } = require('../utils/correoFactura');
 
 const { avisarFacturaAnulada } = require('../utils/avisos');
+const { validarNeto } = require('../utils/trasladoFactura');
+const { validarFechasFactura } = require('../utils/cobranza');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id', 'facturaId']);
@@ -27,9 +29,10 @@ const URL_EXPIRACION_SEGUNDOS = 3600;
 // antes o empieza despues, y la factura nunca queda sobre lineas distintas a las que se cobraron.
 // La subida del PDF va antes, fuera de la transaccion: no conviene tener la OT bloqueada mientras
 // se espera a Supabase, y si algo falla despues el archivo se borra.
+// Opcionales (038): monto_neto (no mayor que el monto) y fecha_vencimiento (no anterior a la emision).
 router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
     const { id } = req.params;
-    const { folio, monto, fecha_emision } = req.body;
+    const { folio, monto, fecha_emision, fecha_vencimiento, monto_neto } = req.body;
     if (!esIdPositivo(id)) return res.status(400).json({ error: 'Id de orden inválido' });
     if (!folio || !req.file) {
         return res.status(400).json({ error: 'folio y archivo (PDF) son requeridos' });
@@ -43,6 +46,13 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPd
     }
     if (!montoVacio(fecha_emision) && !esDiaValido(fecha_emision)) {
         return res.status(400).json({ error: 'fecha_emision debe ser una fecha válida (AAAA-MM-DD)' });
+    }
+    const neto = validarNeto(monto, monto_neto);
+    if (neto.error) return res.status(400).json({ error: neto.error });
+    const vencimiento = validarFechasFactura({ fecha_vencimiento });
+    if (vencimiento.error) return res.status(400).json({ error: vencimiento.error });
+    if (vencimiento.fecha_vencimiento && !montoVacio(fecha_emision) && vencimiento.fecha_vencimiento < fecha_emision) {
+        return res.status(400).json({ error: 'La fecha de vencimiento no puede ser anterior a la emisión' });
     }
     let rutaStorage = null;
     let client = null;
@@ -78,10 +88,11 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPd
             return res.status(409).json({ error: rechazo });
         }
         const result = await client.query(
-            `INSERT INTO facturas (orden_trabajo_id, folio, archivo_url, monto, fecha_emision)
-             VALUES ($1, $2, $3, $4, $5)
+            `INSERT INTO facturas (orden_trabajo_id, folio, archivo_url, monto, fecha_emision, fecha_vencimiento, monto_neto)
+             VALUES ($1, $2, $3, $4, $5, $6, $7)
              RETURNING *`,
-            [id, folioValido.folio, rutaStorage, montoONulo(monto), montoVacio(fecha_emision) ? null : fecha_emision]
+            [id, folioValido.folio, rutaStorage, montoONulo(monto), montoVacio(fecha_emision) ? null : fecha_emision,
+             vencimiento.fecha_vencimiento, neto.neto]
         );
         const factura = result.rows[0];
         await dejarEvento(client, {

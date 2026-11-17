@@ -17,8 +17,7 @@
 // `armarLineaTiempo` es pura; `leerLineaTiempo` hace las consultas (una por fuente, en paralelo, cada
 // una con tope) y se la entrega.
 
-const { calcularGasto } = require('./rentabilidad');
-const { ingresoSinTraslado } = require('./trasladoFactura');
+const { calcularGasto, ingresoFactura } = require('./rentabilidad');
 
 /** Cantidad maxima de eventos que devuelve la linea de tiempo. */
 const TOPE_EVENTOS = 500;
@@ -75,7 +74,10 @@ function eventoFactura(f) {
         folio: f.folio,
         monto,
         monto_traslado: traslado,
-        ingreso: monto === null ? null : ingresoSinTraslado(monto, traslado),
+        monto_neto: num(f.monto_neto),
+        anulada_nc: f.anulada_nc || null,
+        // misma regla que la rentabilidad: neto menos traslado si hay neto (038), 0 si se anulo con nota de credito
+        ingreso: monto === null ? null : ingresoFactura(f),
         periodo_desde: f.periodo_desde || null,
         periodo_hasta: f.periodo_hasta || null,
         orden_trabajo_id: idOCero(f.orden_trabajo_id),
@@ -191,7 +193,7 @@ async function leerLineaTiempo(pool, equipoId, { tope = TOPE_EVENTOS } = {}) {
             [equipoId, limite]
         ),
         pool.query(
-            `SELECT f.id, f.folio, f.monto, f.monto_traslado, f.orden_trabajo_id,
+            `SELECT f.id, f.folio, f.monto, f.monto_traslado, f.monto_neto, f.anulada_nc, f.orden_trabajo_id,
                     COALESCE(f.fecha_emision::timestamp AT TIME ZONE 'America/Santiago', f.created_at) AS fecha_evento,
                     to_char(f.periodo_desde, 'YYYY-MM-DD') AS periodo_desde, to_char(f.periodo_hasta, 'YYYY-MM-DD') AS periodo_hasta,
                     COALESCE(f.cliente_id, ot.cliente_id) AS cliente_id, c.nombre AS cliente_nombre
@@ -199,7 +201,7 @@ async function leerLineaTiempo(pool, equipoId, { tope = TOPE_EVENTOS } = {}) {
              LEFT JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
              LEFT JOIN clientes c ON c.id = COALESCE(f.cliente_id, ot.cliente_id)
              WHERE COALESCE(f.maquinaria_id, ot.maquinaria_id) = $1
-             ORDER BY 6 DESC, f.id DESC
+             ORDER BY fecha_evento DESC, f.id DESC
              LIMIT $2`,
             [equipoId, limite]
         ),

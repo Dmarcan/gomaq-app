@@ -9,6 +9,7 @@ const { cargarAlertasMantencion, contarAlertas } = require('../utils/mantencion'
 const { cargarArriendos, filtrarPorFacturar, filtrarConAviso } = require('../utils/arriendos');
 const { leerConfiguracion } = require('../utils/configuracion');
 const { SQL_OT_SIN_ASIGNAR, SQL_OT_POR_VALORIZAR, SQL_OT_LISTA_FACTURAR } = require('../utils/ordenes');
+const { SQL_FACTURAS_VENCIDAS, SQL_FACTURAS_PROXIMAS } = require('../utils/cobranza');
 
 const router = express.Router();
 
@@ -50,6 +51,12 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
         const cuentasPorAprobar = await pool.query(
             `SELECT COUNT(*) AS n FROM solicitudes_cliente WHERE ${SQL_CUENTAS_POR_APROBAR}`
         );
+        // tarjetas de cobranza: el mismo predicado que GET /api/facturacion/emitidas?estado=vencidas|proximas
+        const cobranza = await pool.query(
+            `SELECT COUNT(*) FILTER (WHERE ${SQL_FACTURAS_VENCIDAS})::int AS vencidas,
+                    COUNT(*) FILTER (WHERE ${SQL_FACTURAS_PROXIMAS})::int AS proximas
+             FROM facturas f`
+        );
 
         res.json({
             flota: flota.rows[0],
@@ -61,6 +68,7 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
                 guias_sin_documento: Number(guiasSinDocumento.rows[0].n),
                 cuentas_por_aprobar: Number(cuentasPorAprobar.rows[0].n),
             },
+            cobranza: { vencidas: cobranza.rows[0].vencidas, proximas: cobranza.rows[0].proximas },
         });
     } catch (err) {
         console.error(err);
