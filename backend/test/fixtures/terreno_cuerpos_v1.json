@@ -1,0 +1,219 @@
+{
+  "version": "v1",
+  "nota": "Generado por terreno/test/contrato_cuerpos_test.dart. No editar a mano: ver la cabecera de esa prueba.",
+  "pasos": [
+    {
+      "tipo": "crear_ot",
+      "metodo": "POST",
+      "ruta": "/api/ordenes-trabajo/en-terreno",
+      "cuerpo": {
+        "maquinaria_id": 1,
+        "motivo": "Segundo equipo de la visita",
+        "uuid_cliente": "00000000-0000-4000-8000-000000000001"
+      }
+    },
+    {
+      "tipo": "diagnostico",
+      "metodo": "PATCH",
+      "ruta": "/api/ordenes-trabajo/:orden/diagnostico",
+      "cuerpo": {
+        "estado": "aceptada",
+        "ocurrio_en": "2026-01-15T14:30:00.000Z",
+        "uuid": "00000000-0000-4000-8000-000000000002",
+        "uuid_cliente": "00000000-0000-4000-8000-000000000002"
+      }
+    },
+    {
+      "tipo": "diagnostico",
+      "metodo": "PATCH",
+      "ruta": "/api/ordenes-trabajo/:orden/diagnostico",
+      "cuerpo": {
+        "estado": "en_camino",
+        "ocurrio_en": "2026-01-15T14:30:00.000Z",
+        "posicion": {
+          "latitud": -33.45,
+          "longitud": -70.66,
+          "precision_m": 12,
+          "capturada_en": "2026-01-15T14:30:00.000Z"
+        },
+        "uuid": "00000000-0000-4000-8000-000000000003",
+        "uuid_cliente": "00000000-0000-4000-8000-000000000003"
+      }
+    },
+    {
+      "tipo": "posicion",
+      "metodo": "POST",
+      "ruta": "/api/ordenes-trabajo/:orden/posicion",
+      "cuerpo": {
+        "latitud": -33.451,
+        "longitud": -70.661,
+        "precision_m": 8,
+        "capturada_en": "2026-01-15T14:30:00.000Z"
+      }
+    },
+    {
+      "tipo": "diagnostico",
+      "metodo": "PATCH",
+      "ruta": "/api/ordenes-trabajo/:orden/diagnostico",
+      "cuerpo": {
+        "diagnostico": "Fuga de aceite en el cilindro",
+        "estado": "en_terreno",
+        "ocurrio_en": "2026-01-15T14:30:00.000Z",
+        "uuid": "00000000-0000-4000-8000-000000000005",
+        "uuid_cliente": "00000000-0000-4000-8000-000000000005"
+      }
+    },
+    {
+      "tipo": "datos_ot",
+      "metodo": "PATCH",
+      "ruta": "/api/ordenes-trabajo/:orden/datos",
+      "cuerpo": {
+        "tipo_servicio": "reparacion",
+        "diagnostico": "Fuga de aceite en el cilindro",
+        "observacion_final": "Se cambio el sello",
+        "folio_papel": "1234",
+        "uuid": "00000000-0000-4000-8000-000000000006"
+      }
+    },
+    {
+      "tipo": "checklist",
+      "metodo": "PUT",
+      "ruta": "/api/ordenes-trabajo/:orden/checklist",
+      "cuerpo": {
+        "servicio_ids": [
+          1,
+          2
+        ],
+        "uuid": "00000000-0000-4000-8000-000000000007"
+      }
+    },
+    {
+      "tipo": "tramo",
+      "metodo": "POST",
+      "ruta": "/api/ordenes-trabajo/:orden/tramos",
+      "cuerpo": {
+        "inicio": "2026-01-15T15:00:00.000Z",
+        "uuid_cliente": "00000000-0000-4000-8000-000000000008"
+      }
+    },
+    {
+      "tipo": "tramo",
+      "metodo": "POST",
+      "ruta": "/api/ordenes-trabajo/:orden/tramos",
+      "cuerpo": {
+        "inicio": "2026-01-15T15:00:00.000Z",
+        "termino": "2026-01-15T17:00:00.000Z",
+        "uuid_cliente": "00000000-0000-4000-8000-000000000009"
+      }
+    },
+    {
+      "tipo": "horometro",
+      "metodo": "POST",
+      "ruta": "/api/horometro/maquinaria/:equipo",
+      "cuerpo": {
+        "valor": 51000.5,
+        "orden_trabajo_id": 5,
+        "reiniciar_contador": false,
+        "observacion": "Lectura al llegar",
+        "uuid_cliente": "00000000-0000-4000-8000-000000000010"
+      }
+    },
+    {
+      "tipo": "horometro",
+      "metodo": "POST",
+      "ruta": "/api/horometro/maquinaria/:equipo",
+      "cuerpo": {
+        "valor": 51001.0,
+        "reiniciar_contador": false,
+        "uuid_cliente": "00000000-0000-4000-8000-000000000011"
+      }
+    },
+    {
+      "tipo": "insumo",
+      "metodo": "POST",
+      "ruta": "/api/insumos/orden/:orden",
+      "cuerpo": {
+        "insumo_id": 7,
+        "cantidad": 2.0,
+        "precio_unitario": 15990.0,
+        "facturable": "si",
+        "uuid_cliente": "00000000-0000-4000-8000-000000000012"
+      }
+    },
+    {
+      "tipo": "insumo",
+      "metodo": "POST",
+      "ruta": "/api/insumos/orden/:orden",
+      "cuerpo": {
+        "cantidad": 1.5,
+        "descripcion": "Sello hidraulico",
+        "facturable": "pendiente",
+        "uuid_cliente": "00000000-0000-4000-8000-000000000013"
+      }
+    },
+    {
+      "tipo": "anular_insumo",
+      "metodo": "POST",
+      "ruta": "/api/insumos/orden/:orden/linea/:linea/anular",
+      "cuerpo": {}
+    },
+    {
+      "tipo": "solicitar_subida",
+      "metodo": "POST",
+      "ruta": "/api/ordenes-trabajo/:orden/evidencia/solicitar-upload",
+      "cuerpo": {
+        "nombre_archivo": "foto_contrato.jpg"
+      }
+    },
+    {
+      "tipo": "evidencia",
+      "metodo": "POST",
+      "ruta": "/api/ordenes-trabajo/:orden/evidencia/confirmar",
+      "cuerpo": {
+        "path": "ot-5/foto_contrato.jpg",
+        "tipo": "antes",
+        "uuid_cliente": "00000000-0000-4000-8000-000000000016"
+      }
+    },
+    {
+      "tipo": "solicitar_subida",
+      "metodo": "POST",
+      "ruta": "/api/ordenes-trabajo/:orden/evidencia/solicitar-upload",
+      "cuerpo": {
+        "nombre_archivo": "foto_contrato_despues.jpg"
+      }
+    },
+    {
+      "tipo": "evidencia",
+      "metodo": "POST",
+      "ruta": "/api/ordenes-trabajo/:orden/evidencia/confirmar",
+      "cuerpo": {
+        "path": "ot-5/foto_contrato_despues.jpg",
+        "tipo": "despues",
+        "uuid_cliente": "00000000-0000-4000-8000-000000000018"
+      }
+    },
+    {
+      "tipo": "solicitar_subida",
+      "metodo": "POST",
+      "ruta": "/api/ordenes-trabajo/:orden/evidencia/solicitar-upload",
+      "cuerpo": {
+        "nombre_archivo": "firma_contrato.png",
+        "carpeta": "firmas"
+      }
+    },
+    {
+      "tipo": "finalizar",
+      "metodo": "PATCH",
+      "ruta": "/api/ordenes-trabajo/:orden/finalizar",
+      "cuerpo": {
+        "uuid_cliente": "00000000-0000-4000-8000-000000000020",
+        "persona_recibe": "Juan Perez",
+        "sin_persona": false,
+        "firma_path": "firmas/ot-5/firma.png",
+        "estado_equipo": "operativa",
+        "ocurrio_en": "2026-01-15T14:30:00.000Z"
+      }
+    }
+  ]
+}

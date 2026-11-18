@@ -1,3 +1,6 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -62,6 +65,34 @@ void main() {
     test('hora de corte distinta de 13', () {
       expect(efectoCobroGuia(tipo: 'recepcion', fecha: DateTime(2026, 11, 16, 14), horaCorte: 15)!.dia, DateTime(2026, 11, 15));
     });
+  });
+
+  // Los mismos casos y valores esperados los lee backend/test/diasArriendo.test.js contra la regla del
+  // servidor (inicioCobroDia y finCobroDia). Si una de las dos cambia sola, la otra prueba falla.
+  // `flutter test` corre con panel/ como carpeta actual.
+  group('casos de borde compartidos con el backend (db/datos/casos_corte_cobro.json)', () {
+    final archivo = File('../db/datos/casos_corte_cobro.json');
+    final casos = (jsonDecode(archivo.readAsStringSync())['casos'] as List).cast<Map<String, dynamic>>();
+
+    test('el archivo trae casos de despacho y de recepción', () {
+      expect(casos.any((c) => c['tipo'] == 'despacho'), isTrue);
+      expect(casos.any((c) => c['tipo'] == 'recepcion'), isTrue);
+      expect(casos.length, greaterThanOrEqualTo(20));
+    });
+
+    String iso(DateTime d) => '${d.year.toString().padLeft(4, '0')}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
+
+    for (final caso in casos) {
+      test('${caso['nombre']} (${caso['fecha_local']}, corte ${caso['hora_corte']})', () {
+        // la hora de pared de Santiago, sin desfase: efectoCobroGuia solo mira sus componentes
+        final e = efectoCobroGuia(
+          tipo: caso['tipo'] as String,
+          fecha: DateTime.parse(caso['fecha_local'] as String),
+          horaCorte: caso['hora_corte'] as int,
+        )!;
+        expect(iso(e.dia), caso['dia_esperado']);
+      });
+    }
   });
 
   test('un tipo desconocido no tiene efecto', () {

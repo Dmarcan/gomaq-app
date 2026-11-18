@@ -1,0 +1,173 @@
+{
+  "descripcion": "Casos de borde del corte de cobro (hora de corte, 13:00 por defecto). Los leen backend/test/diasArriendo.test.js (inicioCobroDia y finCobroDia) y panel/test/efecto_cobro_guia_test.dart (efectoCobroGuia) con los MISMOS valores esperados: si una de las dos reglas cambia, una de las dos pruebas falla. fecha_local es la hora de pared en Santiago; desfase es el de Santiago ese dia (horario de verano, UTC-3). tipo despacho: dia_esperado es el primer dia que se cobra; tipo recepcion: es el ultimo dia cobrado.",
+  "casos": [
+    {
+      "nombre": "despacho 12:59 cobra desde el mismo dia",
+      "tipo": "despacho",
+      "fecha_local": "2026-11-16T12:59:00",
+      "desfase": "-03:00",
+      "hora_corte": 13,
+      "dia_esperado": "2026-11-16"
+    },
+    {
+      "nombre": "despacho 13:00 cobra desde el dia siguiente",
+      "tipo": "despacho",
+      "fecha_local": "2026-11-16T13:00:00",
+      "desfase": "-03:00",
+      "hora_corte": 13,
+      "dia_esperado": "2026-11-17"
+    },
+    {
+      "nombre": "despacho 23:59 cobra desde el dia siguiente",
+      "tipo": "despacho",
+      "fecha_local": "2026-11-16T23:59:00",
+      "desfase": "-03:00",
+      "hora_corte": 13,
+      "dia_esperado": "2026-11-17"
+    },
+    {
+      "nombre": "despacho 00:00 cobra desde el mismo dia",
+      "tipo": "despacho",
+      "fecha_local": "2026-11-16T00:00:00",
+      "desfase": "-03:00",
+      "hora_corte": 13,
+      "dia_esperado": "2026-11-16"
+    },
+    {
+      "nombre": "despacho con cambio de mes",
+      "tipo": "despacho",
+      "fecha_local": "2026-11-30T15:00:00",
+      "desfase": "-03:00",
+      "hora_corte": 13,
+      "dia_esperado": "2026-12-01"
+    },
+    {
+      "nombre": "despacho con cambio de ano",
+      "tipo": "despacho",
+      "fecha_local": "2026-12-31T15:00:00",
+      "desfase": "-03:00",
+      "hora_corte": 13,
+      "dia_esperado": "2027-01-01"
+    },
+    {
+      "nombre": "despacho en febrero bisiesto",
+      "tipo": "despacho",
+      "fecha_local": "2028-02-29T14:00:00",
+      "desfase": "-03:00",
+      "hora_corte": 13,
+      "dia_esperado": "2028-03-01"
+    },
+    {
+      "nombre": "despacho antes del corte de fin de ano",
+      "tipo": "despacho",
+      "fecha_local": "2026-12-31T12:59:00",
+      "desfase": "-03:00",
+      "hora_corte": 13,
+      "dia_esperado": "2026-12-31"
+    },
+    {
+      "nombre": "despacho con corte 15, a las 13:00",
+      "tipo": "despacho",
+      "fecha_local": "2026-11-16T13:00:00",
+      "desfase": "-03:00",
+      "hora_corte": 15,
+      "dia_esperado": "2026-11-16"
+    },
+    {
+      "nombre": "despacho con corte 9, a las 08:59",
+      "tipo": "despacho",
+      "fecha_local": "2026-11-16T08:59:00",
+      "desfase": "-03:00",
+      "hora_corte": 9,
+      "dia_esperado": "2026-11-16"
+    },
+    {
+      "nombre": "despacho con corte 9, a las 09:00",
+      "tipo": "despacho",
+      "fecha_local": "2026-11-16T09:00:00",
+      "desfase": "-03:00",
+      "hora_corte": 9,
+      "dia_esperado": "2026-11-17"
+    },
+    {
+      "nombre": "recepcion 12:59 deja como ultimo dia el anterior",
+      "tipo": "recepcion",
+      "fecha_local": "2026-11-16T12:59:00",
+      "desfase": "-03:00",
+      "hora_corte": 13,
+      "dia_esperado": "2026-11-15"
+    },
+    {
+      "nombre": "recepcion 13:00 cobra ese mismo dia",
+      "tipo": "recepcion",
+      "fecha_local": "2026-11-16T13:00:00",
+      "desfase": "-03:00",
+      "hora_corte": 13,
+      "dia_esperado": "2026-11-16"
+    },
+    {
+      "nombre": "recepcion 23:59 cobra ese mismo dia",
+      "tipo": "recepcion",
+      "fecha_local": "2026-11-16T23:59:00",
+      "desfase": "-03:00",
+      "hora_corte": 13,
+      "dia_esperado": "2026-11-16"
+    },
+    {
+      "nombre": "recepcion 00:00 deja como ultimo dia el anterior",
+      "tipo": "recepcion",
+      "fecha_local": "2026-11-16T00:00:00",
+      "desfase": "-03:00",
+      "hora_corte": 13,
+      "dia_esperado": "2026-11-15"
+    },
+    {
+      "nombre": "recepcion con cambio de mes hacia atras",
+      "tipo": "recepcion",
+      "fecha_local": "2026-12-01T08:00:00",
+      "desfase": "-03:00",
+      "hora_corte": 13,
+      "dia_esperado": "2026-11-30"
+    },
+    {
+      "nombre": "recepcion con cambio de ano hacia atras",
+      "tipo": "recepcion",
+      "fecha_local": "2027-01-01T08:00:00",
+      "desfase": "-03:00",
+      "hora_corte": 13,
+      "dia_esperado": "2026-12-31"
+    },
+    {
+      "nombre": "recepcion en marzo bisiesto hacia atras",
+      "tipo": "recepcion",
+      "fecha_local": "2028-03-01T08:00:00",
+      "desfase": "-03:00",
+      "hora_corte": 13,
+      "dia_esperado": "2028-02-29"
+    },
+    {
+      "nombre": "recepcion con corte 15, a las 14:00",
+      "tipo": "recepcion",
+      "fecha_local": "2026-11-16T14:00:00",
+      "desfase": "-03:00",
+      "hora_corte": 15,
+      "dia_esperado": "2026-11-15"
+    },
+    {
+      "nombre": "recepcion con corte 9, a las 08:59",
+      "tipo": "recepcion",
+      "fecha_local": "2026-11-16T08:59:00",
+      "desfase": "-03:00",
+      "hora_corte": 9,
+      "dia_esperado": "2026-11-15"
+    },
+    {
+      "nombre": "recepcion con corte 9, a las 09:00",
+      "tipo": "recepcion",
+      "fecha_local": "2026-11-16T09:00:00",
+      "desfase": "-03:00",
+      "hora_corte": 9,
+      "dia_esperado": "2026-11-16"
+    }
+  ]
+}

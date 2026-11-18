@@ -2,6 +2,8 @@ process.env.TZ = 'America/Santiago'; // solo para las funciones antiguas, que de
 
 const { test, describe } = require('node:test');
 const assert = require('node:assert');
+const fs = require('node:fs');
+const path = require('node:path');
 
 const {
     diaSantiago, horaSantiago, sumarDias, diasEntre,
@@ -226,4 +228,25 @@ describe('validarCambioConfiguracion', () => {
     test('los valores por defecto son los de siempre', () => {
         assert.deepEqual({ ...DEFAULTS }, { dia_facturacion: 5, hora_corte_despacho: 13, corte_cierra_periodo: true });
     });
+});
+
+// Los mismos casos y valores esperados los lee panel/test/efecto_cobro_guia_test.dart, que replica esta
+// regla en Dart (efectoCobroGuia). Si una de las dos cambia sola, la otra prueba falla.
+describe('casos de borde compartidos con el panel (db/datos/casos_corte_cobro.json)', () => {
+    const { casos } = JSON.parse(fs.readFileSync(path.join(__dirname, '..', '..', 'db', 'datos', 'casos_corte_cobro.json'), 'utf8'));
+
+    test('el archivo trae casos de despacho y de recepcion', () => {
+        assert.ok(casos.some((c) => c.tipo === 'despacho') && casos.some((c) => c.tipo === 'recepcion'));
+        assert.ok(casos.length >= 20);
+    });
+
+    for (const caso of casos) {
+        test(`${caso.nombre} (${caso.fecha_local}, corte ${caso.hora_corte})`, () => {
+            const instante = `${caso.fecha_local}${caso.desfase}`;
+            const dia = caso.tipo === 'despacho'
+                ? inicioCobroDia(instante, caso.hora_corte)
+                : finCobroDia(instante, caso.hora_corte);
+            assert.equal(dia, caso.dia_esperado);
+        });
+    }
 });
