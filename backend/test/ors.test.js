@@ -74,8 +74,15 @@ describe('calcularRuta', () => {
 
     test('sin llave no llama a nadie', async () => {
         const { fetchFn, llamadas } = falso(ok({}));
-        for (const llave of [undefined, '', '   ']) {
-            await assert.rejects(calcularRuta(origen, destino, { fetchFn, llave }), (e) => e.tipo === 'sin_llave');
+        // con `llave: undefined` se lee ORS_API_KEY del entorno: se quita para no depender de un .env real
+        const llaveEntorno = process.env.ORS_API_KEY;
+        delete process.env.ORS_API_KEY;
+        try {
+            for (const llave of [undefined, '', '   ']) {
+                await assert.rejects(calcularRuta(origen, destino, { fetchFn, llave }), (e) => e.tipo === 'sin_llave');
+            }
+        } finally {
+            if (llaveEntorno !== undefined) process.env.ORS_API_KEY = llaveEntorno;
         }
         assert.strictEqual(llamadas.length, 0);
     });

@@ -7,6 +7,7 @@
 // Nunca se llama a Resend: la llamada a su API se intercepta y se lee el codigo del texto del correo.
 
 require('dotenv').config();
+const { exigirBaseLocal } = require('./_entornoPruebas');
 process.env.JWT_SECRET = 'secreto-solo-para-pruebas-de-verificacion-de-correo';
 
 const { test, describe, before, after } = require('node:test');
@@ -66,6 +67,7 @@ const registrar = (email, extra = {}) => pedir('POST', '/api/registro-cliente', 
 });
 
 before(async () => {
+    if (HABILITADO) exigirBaseLocal();
     sinCorreoConfigurado();
     globalThis.fetch = async (url, opciones) => {
         if (url === URL_RESEND) {

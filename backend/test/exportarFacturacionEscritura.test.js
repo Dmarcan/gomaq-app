@@ -4,6 +4,7 @@
 //   GOMAQ_TEST_ESCRITURA=1 npm test
 
 require('dotenv').config();
+const { exigirBaseLocal } = require('./_entornoPruebas');
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
@@ -16,6 +17,7 @@ const creado = { cliente: null, ejecutivo: null, equipo: null, facturas: [] };
 
 before(async () => {
     if (!HABILITADO) return;
+    exigirBaseLocal();
     pool = require('../src/config/db');
     creado.ejecutivo = (await pool.query(`INSERT INTO ejecutivos (nombre) VALUES ($1) RETURNING id`, [`Vendedor Prueba ${sufijo}`])).rows[0].id;
     creado.cliente = (await pool.query(

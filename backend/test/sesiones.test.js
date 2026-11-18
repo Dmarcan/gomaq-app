@@ -6,6 +6,7 @@
 //   GOMAQ_TEST_ESCRITURA=1 npm test
 
 require('dotenv').config();
+const { exigirBaseLocal } = require('./_entornoPruebas');
 process.env.JWT_SECRET = 'secreto-solo-para-pruebas-de-sesiones-en-base';
 
 const { test, describe, before, after } = require('node:test');
@@ -112,6 +113,7 @@ async function entrar(email, extra = {}) {
 const consulta = (token) => pedir('GET', '/api/usuarios?rol=mecanico', { token });
 
 before(async () => {
+    if (HABILITADO) exigirBaseLocal();
     delete process.env.SESIONES_EN_BASE;
     const express = require('express');
     if (HABILITADO) pool = require('../src/config/db');

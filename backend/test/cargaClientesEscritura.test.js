@@ -6,6 +6,7 @@
 // Sin esa variable (o sin DATABASE_URL) se omite, igual que las demas pruebas de escritura.
 
 require('dotenv').config();
+const { exigirBaseLocal } = require('./_entornoPruebas');
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -34,6 +35,7 @@ describe('carga de clientes con la base', { skip: HABILITADO ? false : 'pruebas 
     const contar = async (tabla) => (await db.query(`SELECT COUNT(*)::int AS n FROM ${tabla}`)).rows[0].n;
 
     before(async () => {
+        exigirBaseLocal();
         db = new Client({ connectionString: process.env.DATABASE_URL });
         await db.connect();
         ejecutivosAntes = (await db.query('SELECT id FROM ejecutivos')).rows.map((r) => r.id);

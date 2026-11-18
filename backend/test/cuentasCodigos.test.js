@@ -8,6 +8,7 @@
 // Nunca se llama a Resend: la llamada a su API se intercepta y se lee el codigo del texto del correo.
 
 require('dotenv').config();
+const { exigirBaseLocal } = require('./_entornoPruebas');
 process.env.JWT_SECRET = 'secreto-solo-para-pruebas-de-codigos-de-cuenta';
 
 const { test, describe, before, after } = require('node:test');
@@ -62,6 +63,7 @@ function conCorreoConfigurado() {
 }
 
 before(async () => {
+    if (HABILITADO) exigirBaseLocal();
     sinCorreoConfigurado();
     // la API de Resend se reemplaza: se guarda lo que se habria enviado y se responde como Resend
     globalThis.fetch = async (url, opciones) => {

@@ -4,16 +4,17 @@
 // de datos con las cuentas de prueba. Si no hay instancia disponible, los casos se omiten con
 // un aviso en vez de fallar: un servidor apagado no es un defecto del codigo.
 //
-//   npm test                                  usa el servidor de Railway
-//   GOMAQ_TEST_URL=http://localhost:3000 npm test    apunta a otra instancia
+//   GOMAQ_TEST_URL=http://localhost:3000 npm test    apunta a la instancia a verificar
 //
-// Todos los casos son de solo lectura. Ninguno crea, modifica ni borra datos, de modo que la
-// bateria puede ejecutarse contra el servidor real sin ensuciarlo.
+// Sin GOMAQ_TEST_URL los casos se omiten: no hay instancia por defecto, para que una ejecucion
+// local nunca inicie sesion ni consulte el servidor de produccion. Todos los casos son de solo
+// lectura, pero se usan cuentas de prueba, asi que el destino debe ser una instancia propia
+// (local o del CI).
 
 const { test, describe, before } = require('node:test');
 const assert = require('node:assert/strict');
 
-const BASE = process.env.GOMAQ_TEST_URL || 'https://gomaq-app-production.up.railway.app';
+const BASE = process.env.GOMAQ_TEST_URL || '';
 const CLAVE = process.env.GOMAQ_TEST_PASSWORD || 'PruebaGomaq123';
 const CUENTAS = {
     administrativo: 'administrativo@gomaq.test',
@@ -45,13 +46,17 @@ const con = (token) => ({ headers: { Authorization: `Bearer ${token}` } });
 /** Omite el caso, con motivo, cuando no hay instancia contra la cual verificar. */
 function requiereServidor(t) {
     if (!disponible) {
-        t.skip(`sin instancia disponible en ${BASE}: ${motivo}`);
+        t.skip(`sin instancia disponible${BASE ? ` en ${BASE}` : ''}: ${motivo}`);
         return false;
     }
     return true;
 }
 
 before(async () => {
+    if (!BASE) {
+        motivo = 'defina GOMAQ_TEST_URL';
+        return;
+    }
     try {
         // sonda breve: si no contesta rapido, la instancia no esta operativa y no tiene
         // sentido hacer esperar diez segundos a cada ejecucion de la bateria

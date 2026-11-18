@@ -1,5 +1,6 @@
 // Retencion de datos personales: reglas, plazos y que no toque lo que no debe. Con Postgres (GOMAQ_TEST_ESCRITURA=1).
 const test = require('node:test');
+const { exigirBaseLocal } = require('./_entornoPruebas');
 const assert = require('node:assert');
 const { PLAZOS_DIAS, REGLAS, validarPlazos, contarRetencion, ejecutarRetencion, iniciarRetencion } = require('../src/utils/retencion');
 
@@ -24,6 +25,7 @@ test('la tarea del worker esta apagada salvo que se active', () => {
 
 test('borra solo lo vencido y no toca lo reciente ni lo pendiente', async (t) => {
     if (process.env.GOMAQ_TEST_ESCRITURA !== '1') return t.skip('necesita Postgres (GOMAQ_TEST_ESCRITURA=1)');
+    exigirBaseLocal();
     const pool = require('../src/config/db');
     const marca = `ret-${Date.now()}`;
     const c = await pool.connect();

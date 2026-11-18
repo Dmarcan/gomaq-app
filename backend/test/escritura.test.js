@@ -12,6 +12,7 @@
 // Los tokens se firman con un secreto propio de la prueba: no se usa ninguna credencial real.
 
 require('dotenv').config();
+const { exigirBaseLocal } = require('./_entornoPruebas');
 process.env.JWT_SECRET = 'secreto-solo-para-pruebas-de-escritura';
 
 const { test, describe, before, after } = require('node:test');
@@ -49,6 +50,7 @@ async function pedir(metodo, ruta, rol, cuerpo, cabeceras = {}) {
 
 before(async () => {
     if (!HABILITADO) return;
+    exigirBaseLocal();
     const express = require('express');
     pool = require('../src/config/db');
     // verifyToken revisa la cuenta en la base. Los usuarios reales se buscan ahi; los tokens de

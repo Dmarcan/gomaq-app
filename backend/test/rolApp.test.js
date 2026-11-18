@@ -2,6 +2,7 @@
 // reescribir el historial de ordenes. Usa SET ROLE dentro de una transaccion que se deshace; necesita
 // Postgres y que quien corre la prueba pueda asumir el rol (superusuario, como en el CI).
 const test = require('node:test');
+const { exigirBaseLocal } = require('./_entornoPruebas');
 const assert = require('node:assert');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -27,6 +28,7 @@ test('migracion 042: deja apagados los atributos de privilegio del rol', async (
     const sql042 = fs.readFileSync(path.join(__dirname, '..', '..', 'db', 'migrations', '042_rol_app_atributos.sql'), 'utf8');
     assert.match(sql042, /NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/);
     if (process.env.GOMAQ_TEST_ESCRITURA !== '1') return t.skip('necesita Postgres (GOMAQ_TEST_ESCRITURA=1)');
+    exigirBaseLocal();
     const pool = require('../src/config/db');
     {
         const r = await pool.query("SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls FROM pg_roles WHERE rolname = 'gomaq_app'");
@@ -36,6 +38,7 @@ test('migracion 042: deja apagados los atributos de privilegio del rol', async (
 
 test('el rol puede escribir filas pero no cambiar el esquema ni el historial', async (t) => {
     if (process.env.GOMAQ_TEST_ESCRITURA !== '1') return t.skip('necesita Postgres (GOMAQ_TEST_ESCRITURA=1)');
+    exigirBaseLocal();
     const pool = require('../src/config/db');
     const c = await pool.connect();
     const denegado = async (consulta) => {

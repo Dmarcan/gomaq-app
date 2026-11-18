@@ -9,6 +9,7 @@
 // cruzarse con las demas pruebas de escritura, que corren en paralelo y cuentan filas de toda la base.
 
 require('dotenv').config();
+const { exigirBaseLocal } = require('./_entornoPruebas');
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
 const path = require('node:path');
@@ -234,6 +235,7 @@ describe('carga y borrado contra una base temporal', { skip: HABILITADO ? false 
     };
 
     before(async () => {
+        exigirBaseLocal();
         admin = new Client({ connectionString: process.env.DATABASE_URL });
         await admin.connect();
         try {
@@ -246,7 +248,7 @@ describe('carga y borrado contra una base temporal', { skip: HABILITADO ? false 
         u.pathname = `/${nombreBase}`;
         urlTemporal = u.toString();
         execFileSync(process.execPath, [path.join(__dirname, '../scripts/migrar.js')], {
-            env: { ...process.env, DATABASE_URL: urlTemporal }, stdio: 'pipe', timeout: 120000,
+            env: { ...process.env, DATABASE_URL: urlTemporal, DATABASE_URL_MIGRACION: urlTemporal }, stdio: 'pipe', timeout: 120000,
         });
         db = new Client({ connectionString: urlTemporal });
         await db.connect();
@@ -292,7 +294,7 @@ describe('carga y borrado contra una base temporal', { skip: HABILITADO ? false 
         assert.deepEqual(await foto(), fotoInicial);
         // la orden de linea de comandos tambien
         const salida = execFileSync(process.execPath, [path.join(__dirname, '../scripts/cargar_demo.js'), '--simular'], {
-            env: { ...process.env, DATABASE_URL: urlTemporal }, encoding: 'utf8', timeout: 60000,
+            env: { ...process.env, DATABASE_URL: urlTemporal, DATABASE_URL_MIGRACION: urlTemporal }, encoding: 'utf8', timeout: 60000,
         });
         assert.match(salida, /Simulacion: no se guardo nada/);
         assert.match(salida, /DEMO-0012/);
