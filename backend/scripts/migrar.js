@@ -13,6 +13,13 @@
 //
 //   node scripts/migrar.js --marcar-hasta 016
 //
+// Para probar una migracion nueva contra filas ya existentes (scripts/probar_migraciones_con_datos.js)
+// se puede aplicar solo hasta cierta version, inclusive, sin tocar las siguientes:
+//
+//   node scripts/migrar.js --hasta 042
+//
+// Sin esa opcion el script se comporta exactamente igual que siempre.
+//
 // Cada migracion corre en su propia transaccion: si falla, no queda a medias ni registrada.
 
 require('dotenv').config();
@@ -25,6 +32,19 @@ const CANDADO_MIGRACIONES = 70214;
 
 // en el repositorio db/ esta junto a backend/; en la imagen de Docker se copia a /db
 const DIRECTORIO_DB = [path.join(__dirname, '../../db'), '/db'].find((d) => fs.existsSync(d));
+
+// Lee la opcion --hasta NNN de los argumentos. Devuelve null si no viene; lanza un error claro si
+// el valor no es un numero de tres digitos o no corresponde a ninguna migracion existente.
+function leerHasta(argv, disponibles) {
+    const i = argv.indexOf('--hasta');
+    if (i === -1) return null;
+    const tope = argv[i + 1];
+    if (!/^\d{3}$/.test(tope || '')) throw new Error('Uso: --hasta 042 (numero de tres digitos)');
+    if (!disponibles.some((f) => f.slice(0, 3) === tope)) {
+        throw new Error(`--hasta ${tope}: no existe una migracion con ese numero`);
+    }
+    return tope;
+}
 
 function migracionesDisponibles() {
     return fs.readdirSync(path.join(DIRECTORIO_DB, 'migrations'))
@@ -70,7 +90,11 @@ async function main() {
             );
         }
 
-        const pendientes = ['schema.sql', ...migracionesDisponibles()].filter((n) => !aplicadas.has(n));
+        const disponibles = migracionesDisponibles();
+        const hasta = leerHasta(process.argv, disponibles);
+        const pendientes = ['schema.sql', ...disponibles]
+            .filter((n) => !aplicadas.has(n))
+            .filter((n) => hasta === null || n === 'schema.sql' || n.slice(0, 3) <= hasta);
         if (pendientes.length === 0) {
             console.log('Base al dia: no hay migraciones pendientes.');
             return;
@@ -96,7 +120,11 @@ async function main() {
     }
 }
 
-main().catch((err) => {
-    console.error(err.message);
-    process.exit(1);
-});
+if (require.main === module) {
+    main().catch((err) => {
+        console.error(err.message);
+        process.exit(1);
+    });
+}
+
+module.exports = { leerHasta };

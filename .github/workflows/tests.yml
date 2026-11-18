@@ -64,6 +64,13 @@ jobs:
 
       - run: npm ci
 
+      # una migracion nueva tambien tiene que aplicar sobre filas ya existentes (en produccion siempre
+      # las hay): migra una base vacia hasta la version base, carga un fixture y aplica las migraciones
+      # posteriores. Corre en una base aparte que crea y borra el propio script; la base de las pruebas
+      # de abajo no se toca
+      - name: Probar migraciones con datos
+        run: node scripts/probar_migraciones_con_datos.js
+
       # el mismo script que corre Railway al arrancar: si una migracion no aplica sobre una base
       # vacia, falla aca antes de llegar a produccion
       - name: Aplicar esquema y migraciones
