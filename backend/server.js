@@ -134,12 +134,16 @@ app.use(express.json());
 const publicDir = path.join(__dirname, 'public');
 app.use(express.static(publicDir));
 
+// Mientras la API se apaga (SIGTERM) o la base no responde, el chequeo da 503: es lo que Railway y
+// los balanceadores entienden como "no me mandes trafico" (un 500 se lee como un error de codigo).
+let apagando = false;
 app.get('/api/health', async (req, res) => {
+    if (apagando) return res.status(503).json({ status: 'apagando', db: 'desconocido' });
     try {
         await pool.query('SELECT 1');
         res.json({ status: 'ok', db: 'connected' });
     } catch (err) {
-        res.status(500).json({ status: 'error', db: 'disconnected' });
+        res.status(503).json({ status: 'error', db: 'disconnected' });
     }
 });
 
@@ -185,11 +189,40 @@ app.get('*', (req, res, next) => {
 app.use(manejarErrores);
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
+let detenerWorker = null;
+const servidor = app.listen(PORT, () => {
     console.log(`GOMAQ backend escuchando en puerto ${PORT}`);
     // En produccion el worker corre como servicio aparte (scripts/worker.js) y la API lo apaga con
     // NOTIFICACIONES_EN_PROCESO=0. Por defecto sigue encendido aca: asi el desarrollo local y el CI
     // no cambian. Si el flag quedara mal puesto, el peor caso son dos emisores, y SKIP LOCKED
     // impide que un aviso salga dos veces.
-    if (process.env.NOTIFICACIONES_EN_PROCESO !== '0') iniciarWorker();
+    if (process.env.NOTIFICACIONES_EN_PROCESO !== '0') detenerWorker = iniciarWorker();
 });
+
+// Apagado ordenado: con node como proceso 1 (el Dockerfile usa `exec`), sin este manejador Node
+// ignora SIGTERM y Railway espera hasta matarlo a la fuerza, cortando las peticiones en curso.
+// Se deja de aceptar conexiones, se termina lo que esta en vuelo y se cierra el pool.
+async function apagar(senal) {
+    if (apagando) return;
+    apagando = true;
+    console.log(`[api] ${senal} recibida, cerrando`);
+    // si algo se cuelga, se sale igual antes de que Railway lo mate
+    const tope = setTimeout(() => process.exit(1), 25000);
+    tope.unref();
+    try {
+        servidor.close();
+        if (typeof servidor.closeIdleConnections === 'function') servidor.closeIdleConnections();
+        if (typeof detenerWorker === 'function') await detenerWorker();
+        await new Promise((resolver) => {
+            if (!servidor.listening) return resolver();
+            servidor.once('close', resolver);
+        });
+        await pool.end();
+        process.exit(0);
+    } catch (err) {
+        console.error('[api] error al cerrar:', err);
+        process.exit(1);
+    }
+}
+process.on('SIGTERM', () => apagar('SIGTERM'));
+process.on('SIGINT', () => apagar('SIGINT'));

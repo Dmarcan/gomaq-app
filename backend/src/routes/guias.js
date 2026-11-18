@@ -174,9 +174,10 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
         }
     };
     try {
-        client = await pool.connect();
+        // Las revisiones previas y la subida del PDF van con el pool, sin retener una conexion: una
+        // subida lenta a Supabase no debe dejar una conexion de la base tomada ni agotar el pool.
         if (cliente_id) {
-            const clienteExiste = await client.query('SELECT id FROM clientes WHERE id = $1', [cliente_id]);
+            const clienteExiste = await pool.query('SELECT id FROM clientes WHERE id = $1', [cliente_id]);
             if (clienteExiste.rows.length === 0) {
                 return res.status(400).json({ error: 'El cliente elegido no existe' });
             }
@@ -184,7 +185,7 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
 
         // el equipo debe existir; se revisa antes de subir el PDF para no dejar un archivo huerfano.
         // El estado real del equipo se lee mas abajo, ya con su fila bloqueada.
-        const equipoExiste = await client.query('SELECT 1 FROM maquinarias WHERE id = $1', [id]);
+        const equipoExiste = await pool.query('SELECT 1 FROM maquinarias WHERE id = $1', [id]);
         if (equipoExiste.rows.length === 0) {
             return res.status(404).json({ error: 'Maquinaria no encontrada' });
         }
@@ -197,6 +198,7 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
             if (errorSubida) throw errorSubida;
         }
 
+        client = await pool.connect();
         await client.query('BEGIN');
 
         // Se bloquea la fila del equipo ANTES de leer su estado o escribir la guia: dos guias del

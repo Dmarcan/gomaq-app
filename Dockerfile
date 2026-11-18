@@ -49,6 +49,9 @@ COPY --from=panel /app/panel/build/web ./public
 # esquema y migraciones: scripts/migrar.js los aplica al arrancar (ver CMD)
 COPY db/ /db/
 
+# no correr como root: nada escribe en disco (las subidas van en memoria a Supabase)
+USER node
+
 # Primero las migraciones pendientes y despues el servidor (que lee el puerto de PORT). Se hace
 # al arrancar y no con el preDeployCommand de Railway, que en el primer despliegue no se aplico:
 # asi la base queda al dia en cualquier plataforma. Si una migracion falla, el servidor no
