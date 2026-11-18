@@ -10,6 +10,7 @@ process.env.SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'clave-so
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { servirApp } = require('./utils/http');
 const jwt = require('jsonwebtoken');
 const express = require('express');
 const { creerEnElToken } = require('./_sesionDePrueba');
@@ -45,8 +46,7 @@ describe('solicitar-upload con el almacenamiento caido', () => {
         const app = express();
         app.use(express.json());
         app.use('/api/ordenes-trabajo', evidencias);
-        await new Promise((resolve) => { servidor = app.listen(0, resolve); });
-        base = `http://127.0.0.1:${servidor.address().port}`;
+        ({ servidor, base } = await servirApp(app));
     });
 
     after(async () => {

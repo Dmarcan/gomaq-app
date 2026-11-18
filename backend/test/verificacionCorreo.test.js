@@ -12,6 +12,7 @@ process.env.JWT_SECRET = 'secreto-solo-para-pruebas-de-verificacion-de-correo';
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { requiereBase, servirApp, leerRespuesta } = require('./utils/http');
 const jwt = require('jsonwebtoken');
 const { URL_RESEND } = require('../src/services/correoResend');
 
@@ -38,9 +39,7 @@ async function pedir(metodo, ruta, { token, cuerpo } = {}) {
         },
         body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
     });
-    let json = null;
-    try { json = await r.json(); } catch (_) { /* sin cuerpo */ }
-    return { status: r.status, body: json };
+    return leerRespuesta(r);
 }
 
 function codigoDelTexto(texto) {
@@ -90,8 +89,7 @@ before(async () => {
     app.use(express.json());
     app.use('/api/registro-cliente', require('../src/routes/registro'));
     app.use('/api/usuarios', require('../src/routes/usuarios'));
-    await new Promise((resolve) => { servidor = app.listen(0, resolve); });
-    base = `http://127.0.0.1:${servidor.address().port}`;
+    ({ servidor, base } = await servirApp(app));
 
     if (HABILITADO) {
         const r = await pool.query(
@@ -119,14 +117,6 @@ async function limpiar(email) {
     await pool.query('DELETE FROM solicitudes_cliente WHERE lower(email) = $1', [email]);
     await pool.query('DELETE FROM usuarios WHERE lower(email) = $1', [email]);
     await pool.query('DELETE FROM clientes WHERE lower(email) = $1', [email]);
-}
-
-function requiereBase(t) {
-    if (!HABILITADO) {
-        t.skip('pruebas de escritura deshabilitadas: usar GOMAQ_TEST_ESCRITURA=1 con una base local');
-        return false;
-    }
-    return true;
 }
 
 describe('validaciones antes de tocar la base', () => {

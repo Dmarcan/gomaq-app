@@ -6,7 +6,7 @@ import 'package:gomaq_mecanico/utils/hoja_inferior.dart';
 
 void main() {
   group('AccionUnica (doble toque)', () {
-    test('dos toques seguidos ejecutan la accion una sola vez', () async {
+    testWidgets('dos toques seguidos ejecutan la accion una sola vez', (tester) async {
       var tareasEncoladas = 0;
       final guarda = AccionUnica();
       Future<void> encolar() async {
@@ -17,6 +17,7 @@ void main() {
       final a = guarda.ejecutar(encolar);
       final b = guarda.ejecutar(encolar);
       expect(guarda.enCurso, isTrue);
+      await tester.pump(const Duration(milliseconds: 10));
       expect(await a, isTrue);
       expect(await b, isFalse);
       expect(tareasEncoladas, 1);

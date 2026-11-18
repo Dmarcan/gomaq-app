@@ -6,6 +6,7 @@ import 'package:gomaq_web/screens/panel/facturacion_screen.dart';
 import 'package:gomaq_web/services/api_client.dart';
 import 'package:gomaq_web/theme/gomaq_theme.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'utils/tamano.dart';
 
 // Datos ficticios: sin clientes ni RUT reales.
 
@@ -69,13 +70,6 @@ Widget _app(Map<String, dynamic> item, Map<String, dynamic>? deteccion, _Subidas
       ),
     );
 
-void _tamano(WidgetTester t, Size s) {
-  t.view.physicalSize = s;
-  t.view.devicePixelRatio = 1;
-  addTearDown(t.view.resetPhysicalSize);
-  addTearDown(t.view.resetDevicePixelRatio);
-}
-
 Finder _campo(String etiqueta) => find.widgetWithText(TextFormField, etiqueta);
 String _texto(WidgetTester t, String etiqueta) => t.widget<TextFormField>(_campo(etiqueta)).controller!.text;
 
@@ -97,7 +91,7 @@ void main() {
 
   void prueba(String d, Future<void> Function(WidgetTester t) cuerpo) {
     testWidgets(d, (t) async {
-      _tamano(t, const Size(900, 3000));
+      fijarTamano(t, const Size(900, 3000));
       await cuerpo(t);
     });
   }
@@ -402,7 +396,7 @@ void main() {
 
   group('teléfono', () {
     testWidgets('a 375 px el formulario con todo lo precargado y las opciones de vencimiento no desborda', (t) async {
-      _tamano(t, const Size(375, 3000));
+      fijarTamano(t, const Size(375, 3000));
       final d = _muestra()
         ..['plazo_cliente_dias'] = 30
         ..['vencimiento'] = {
@@ -424,7 +418,7 @@ void main() {
     });
 
     testWidgets('el aviso usa advertenciaFuerte (cumple el contraste) con icono y texto', (t) async {
-      _tamano(t, const Size(900, 3000));
+      fijarTamano(t, const Size(900, 3000));
       final s = _Subidas();
       await t.pumpWidget(_app(_arriendo, _muestra(), s));
       await _leerPdf(t);

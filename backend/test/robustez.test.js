@@ -12,6 +12,7 @@ process.env.SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'clave-so
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { servirApp, leerRespuesta } = require('./utils/http');
 const jwt = require('jsonwebtoken');
 const express = require('express');
 const { creerEnElToken } = require('./_sesionDePrueba');
@@ -29,9 +30,7 @@ async function pedir(metodo, ruta, rol, cuerpo) {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token(rol)}` },
         body: cuerpo === undefined ? undefined : (typeof cuerpo === 'string' ? cuerpo : JSON.stringify(cuerpo)),
     });
-    let json = null;
-    try { json = await r.json(); } catch (_) { /* sin cuerpo */ }
-    return { status: r.status, body: json };
+    return leerRespuesta(r);
 }
 
 before(async () => {
@@ -53,8 +52,7 @@ before(async () => {
     app.use('/prueba', prueba);
     app.get('/vivo', (req, res) => res.json({ ok: true }));
     app.use(manejarErrores);
-    await new Promise((resolve) => { servidor = app.listen(0, resolve); });
-    base = `http://127.0.0.1:${servidor.address().port}`;
+    ({ servidor, base } = await servirApp(app));
 });
 
 after(async () => {

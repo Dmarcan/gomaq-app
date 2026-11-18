@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:gomaq_web/screens/panel/cliente_historial_screen.dart';
 import 'package:gomaq_web/services/api_client.dart';
+import 'utils/tamano.dart';
 
 Map<String, dynamic> _datos({int? plazo = 30, bool vacio = false}) => {
       'cliente': {
@@ -46,17 +47,10 @@ Widget _app(Widget hijo) {
   return MaterialApp.router(routerConfig: router);
 }
 
-void _tamano(WidgetTester t, Size s) {
-  t.view.physicalSize = s;
-  t.view.devicePixelRatio = 1;
-  addTearDown(t.view.resetPhysicalSize);
-  addTearDown(t.view.resetDevicePixelRatio);
-}
-
 void main() {
   setUpAll(() => initializeDateFormatting('es_CL'));
   testWidgets('a 375 px apila las tres secciones con los datos, sin desbordar', (t) async {
-    _tamano(t, const Size(375, 2400));
+    fijarTamano(t, const Size(375, 2400));
     await t.pumpWidget(_app(HistorialDeClienteScreen(id: 7, cargar: (_) async => _datos())));
     await t.pumpAndSettle();
     expect(t.takeException(), isNull);
@@ -73,7 +67,7 @@ void main() {
   });
 
   testWidgets('desde 600 px van en pestañas y se cambia de sección', (t) async {
-    _tamano(t, const Size(1000, 800));
+    fijarTamano(t, const Size(1000, 800));
     await t.pumpWidget(_app(HistorialDeClienteScreen(id: 7, cargar: (_) async => _datos())));
     await t.pumpAndSettle();
     expect(find.text('Factura 1512'), findsNothing, reason: 'solo se ve la pestaña activa');
@@ -83,7 +77,7 @@ void main() {
   });
 
   testWidgets('cada fila abre su equipo o su orden', (t) async {
-    _tamano(t, const Size(375, 1400));
+    fijarTamano(t, const Size(375, 1400));
     await t.pumpWidget(_app(HistorialDeClienteScreen(id: 7, cargar: (_) async => _datos())));
     await t.pumpAndSettle();
     await t.tap(find.text('Orden 11, GR-3'));
@@ -92,7 +86,7 @@ void main() {
   });
 
   testWidgets('sin plazo se marca con icono y texto', (t) async {
-    _tamano(t, const Size(375, 812));
+    fijarTamano(t, const Size(375, 812));
     await t.pumpWidget(_app(HistorialDeClienteScreen(id: 7, cargar: (_) async => _datos(plazo: null))));
     await t.pumpAndSettle();
     expect(find.text('Sin plazo de pago'), findsOneWidget);
@@ -100,7 +94,7 @@ void main() {
   });
 
   testWidgets('cliente sin movimientos: mensajes de vacío', (t) async {
-    _tamano(t, const Size(375, 812));
+    fijarTamano(t, const Size(375, 812));
     await t.pumpWidget(_app(HistorialDeClienteScreen(id: 7, cargar: (_) async => _datos(vacio: true))));
     await t.pumpAndSettle();
     expect(t.takeException(), isNull);
@@ -110,7 +104,7 @@ void main() {
   });
 
   testWidgets('error del servidor: aviso con reintento', (t) async {
-    _tamano(t, const Size(375, 812));
+    fijarTamano(t, const Size(375, 812));
     var intentos = 0;
     await t.pumpWidget(_app(HistorialDeClienteScreen(
       id: 7,

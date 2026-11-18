@@ -149,7 +149,7 @@ void main() {
   });
 
   group('PendientesService', () {
-    test('invalidar vuelve a pedir el dato, una sola vez para varias escrituras seguidas', () async {
+    testWidgets('invalidar vuelve a pedir el dato, una sola vez para varias escrituras seguidas', (tester) async {
       var pedidos = 0;
       final s = PendientesService(
         esperaInvalidar: const Duration(milliseconds: 20),
@@ -165,13 +165,14 @@ void main() {
       s.invalidar();
       s.invalidar();
       s.invalidar();
-      await Future<void>.delayed(const Duration(milliseconds: 120));
+      // reloj controlado: no se espera de verdad, y 120 ms cubren la espera de 20 ms
+      await tester.pump(const Duration(milliseconds: 120));
       expect(pedidos, 2);
       expect(s.datos!['ot_sin_asignar'], 2);
       s.dispose();
     });
 
-    test('un cargar forzado mientras hay otro en curso no se pierde', () async {
+    testWidgets('un cargar forzado mientras hay otro en curso no se pierde', (tester) async {
       var pedidos = 0;
       final puerta = Completer<void>();
       final s = PendientesService(pedir: () async {
@@ -184,7 +185,7 @@ void main() {
       expect(pedidos, 1);
       puerta.complete();
       await primero;
-      await Future<void>.delayed(const Duration(milliseconds: 20));
+      await tester.pump(const Duration(milliseconds: 20));
       expect(pedidos, 2, reason: 'se repitió al terminar');
       expect(s.datos!['descuadres'], 2);
       s.dispose();

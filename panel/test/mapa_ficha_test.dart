@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gomaq_web/screens/panel/mapa_screen.dart';
 import 'package:gomaq_web/utils/mapa_operativo.dart';
 import 'package:gomaq_web/utils/ubicacion.dart';
+import 'utils/tamano.dart';
 
 /// La ficha del mapa ya no es una hoja modal: va en la columna lateral, no oscurece el mapa, se
 /// mantiene al día con cada refresco y se cierra con Esc. El refresco es más seguido con furgones.
@@ -35,16 +36,9 @@ DatosMapa _datos({List<FurgonMapa> furgones = const [], List<EquipoMapa> equipos
 
 Widget _app(MapaScreen mapa) => MaterialApp(home: Scaffold(body: mapa));
 
-void _tamano(WidgetTester t, Size s) {
-  t.view.physicalSize = s;
-  t.view.devicePixelRatio = 1;
-  addTearDown(t.view.resetPhysicalSize);
-  addTearDown(t.view.resetDevicePixelRatio);
-}
-
 void main() {
   testWidgets('tocar un furgón abre la ficha en la columna lateral, sin hoja modal ni barrera', (t) async {
-    _tamano(t, const Size(1200, 800));
+    fijarTamano(t, const Size(1200, 800));
     await t.pumpWidget(_app(MapaScreen(cargar: () async => _datos(furgones: [_furgon(posicionAt: DateTime.now())]), conMapa: false)));
     await t.pumpAndSettle();
     await t.tap(find.text('Pedro'));
@@ -57,7 +51,7 @@ void main() {
   });
 
   testWidgets('la ficha se mantiene al día con cada refresco', (t) async {
-    _tamano(t, const Size(1200, 800));
+    fijarTamano(t, const Size(1200, 800));
     var cargas = 0;
     await t.pumpWidget(_app(MapaScreen(
       refrescoActivo: const Duration(seconds: 5),
@@ -78,7 +72,7 @@ void main() {
   });
 
   testWidgets('si el furgón llega, la ficha lo dice y no se cierra sola', (t) async {
-    _tamano(t, const Size(1200, 800));
+    fijarTamano(t, const Size(1200, 800));
     var cargas = 0;
     await t.pumpWidget(_app(MapaScreen(
       refrescoActivo: const Duration(seconds: 5),
@@ -99,7 +93,7 @@ void main() {
   });
 
   testWidgets('Esc y el botón cerrar cierran la ficha', (t) async {
-    _tamano(t, const Size(1200, 800));
+    fijarTamano(t, const Size(1200, 800));
     await t.pumpWidget(_app(MapaScreen(cargar: () async => _datos(furgones: [_furgon(posicionAt: DateTime.now())]), conMapa: false)));
     await t.pumpAndSettle();
     await t.tap(find.text('Pedro'));
@@ -117,7 +111,7 @@ void main() {
   });
 
   testWidgets('la ficha de un equipo trae "Ver equipo" y a 375 px va entre el mapa y las listas sin desbordar', (t) async {
-    _tamano(t, const Size(375, 812));
+    fijarTamano(t, const Size(375, 812));
     await t.pumpWidget(_app(MapaScreen(cargar: () async => _datos(equipos: [_equipo(1)]), conMapa: false)));
     await t.pumpAndSettle();
     // sin mapa no hay icono que tocar: el equipo se abre desde el buscador
@@ -131,7 +125,7 @@ void main() {
   });
 
   testWidgets('el refresco es cada refrescoActivo con furgones en camino y cada refresco sin ellos', (t) async {
-    _tamano(t, const Size(1200, 800));
+    fijarTamano(t, const Size(1200, 800));
     var conFurgones = 0;
     await t.pumpWidget(_app(MapaScreen(
       refrescoActivo: const Duration(seconds: 1),

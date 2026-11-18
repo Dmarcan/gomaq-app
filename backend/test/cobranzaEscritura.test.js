@@ -12,6 +12,7 @@ process.env.JWT_SECRET = 'secreto-solo-para-pruebas-de-cobranza';
 
 const { test, before, after, describe } = require('node:test');
 const assert = require('node:assert/strict');
+const { requiereBase, servirApp, leerRespuesta } = require('./utils/http');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -26,21 +27,11 @@ const tokens = {};
 const datos = { clientes: [], equipos: [], guias: [], facturas: [] };
 const sufijo = crypto.randomUUID().slice(0, 6).toUpperCase();
 
-function requiereBase(t) {
-    if (!HABILITADO) {
-        t.skip('pruebas de escritura deshabilitadas: usar GOMAQ_TEST_ESCRITURA=1 con una base local');
-        return false;
-    }
-    return true;
-}
-
 async function pedir(metodo, ruta, rol, cuerpo) {
     const headers = { 'Content-Type': 'application/json' };
     if (rol) headers.Authorization = `Bearer ${tokens[rol]}`;
     const r = await fetch(`${base}${ruta}`, { method: metodo, headers, body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo) });
-    let json = null;
-    try { json = await r.json(); } catch (_) { /* sin cuerpo */ }
-    return { status: r.status, body: json };
+    return leerRespuesta(r);
 }
 
 async function facturar(campos, rol = 'administrativo') {
@@ -70,8 +61,7 @@ before(async () => {
         remove: async () => ({ data: [], error: null }),
         createSignedUrl: async (ruta) => ({ data: { signedUrl: `https://firmada.test/${ruta}` }, error: null }),
     });
-    await new Promise((resolve) => { servidor = app.listen(0, resolve); });
-    base = `http://127.0.0.1:${servidor.address().port}`;
+    ({ servidor, base } = await servirApp(app));
 
     const usuarios = await pool.query(
         `SELECT id, rol, email FROM usuarios

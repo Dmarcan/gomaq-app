@@ -8,6 +8,7 @@ import 'package:gomaq_web/services/api_client.dart';
 import 'package:gomaq_web/theme/gomaq_theme.dart';
 import 'package:gomaq_web/utils/cobranza.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'utils/tamano.dart';
 
 // Datos ficticios: ningún cliente ni RUT reales.
 Map<String, dynamic> _fila(
@@ -110,16 +111,9 @@ Widget _app(_Falso f, {bool admin = true, String? filtro}) => MaterialApp(
 /// Pantalla de escritorio alta: la lista es perezosa y así quedan construidas todas las filas.
 void _prueba(String descripcion, Future<void> Function(WidgetTester) cuerpo) {
   testWidgets(descripcion, (t) async {
-    _tamano(t, const Size(900, 3200));
+    fijarTamano(t, const Size(900, 3200));
     await cuerpo(t);
   });
-}
-
-void _tamano(WidgetTester t, Size s) {
-  t.view.physicalSize = s;
-  t.view.devicePixelRatio = 1;
-  addTearDown(t.view.resetPhysicalSize);
-  addTearDown(t.view.resetDevicePixelRatio);
 }
 
 void main() {
@@ -484,7 +478,7 @@ void main() {
 
   group('móvil, teclado y lector de pantalla', () {
     _prueba('a 375 px las filas se apilan sin desbordar, con nombres largos y todas las acciones', (t) async {
-      _tamano(t, const Size(375, 1400));
+      fijarTamano(t, const Size(375, 1400));
       final f = _Falso((_, _, _) => _pagina([
             _fila(1, 'vencida', mora: 120, cliente: 'Sociedad Constructora e Inmobiliaria Ficticia del Sur Austral Limitada', monto: 123456789, neto: 100000000, traslado: 12345678),
             _fila(2, 'pagada', pago: '2026-09-03'),
@@ -497,7 +491,7 @@ void main() {
     });
 
     _prueba('a 375 px los cuadros de pago y corrección caben', (t) async {
-      _tamano(t, const Size(375, 800));
+      fijarTamano(t, const Size(375, 800));
       final f = _Falso((_, _, _) => _pagina([_fila(1, 'vencida', mora: 4)]));
       await t.pumpWidget(_app(f));
       await t.pumpAndSettle();

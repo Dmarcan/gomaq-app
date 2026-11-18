@@ -6,6 +6,7 @@ import 'package:gomaq_web/services/auth_service.dart';
 import 'package:gomaq_web/theme/gomaq_theme.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
+import 'utils/tamano.dart';
 
 // Datos ficticios.
 List<dynamic> _datos({Map<String, dynamic>? cobranza = const {'vencidas': 4, 'proximas': 2}}) => [
@@ -38,13 +39,6 @@ Future<void> _montar(WidgetTester t, _Navegacion nav, {List<dynamic>? datos}) as
   await t.pump(const Duration(milliseconds: 600));
 }
 
-void _tamano(WidgetTester t, Size s) {
-  t.view.physicalSize = s;
-  t.view.devicePixelRatio = 1;
-  addTearDown(t.view.resetPhysicalSize);
-  addTearDown(t.view.resetDevicePixelRatio);
-}
-
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -57,7 +51,7 @@ void main() {
 
   testWidgets('las dos tarjetas de cobranza van en su propia sección COBRANZA, con su número', (t) async {
     // ancho de sobra: la tipografía de las pruebas es más ancha que la real y partiría las etiquetas
-    _tamano(t, const Size(1800, 2000));
+    fijarTamano(t, const Size(1800, 2000));
     await _montar(t, _Navegacion());
     expect(find.text('Facturas vencidas'), findsOneWidget);
     expect(find.text('Por vencer en 7 días'), findsOneWidget);
@@ -77,7 +71,7 @@ void main() {
   });
 
   testWidgets('el estado no va solo en color: cada tarjeta lleva icono, y la vencida usa estadoNegativo', (t) async {
-    _tamano(t, const Size(1200, 2000));
+    fijarTamano(t, const Size(1200, 2000));
     await _montar(t, _Navegacion());
     final vencida = find.ancestor(of: find.text('Facturas vencidas'), matching: find.byType(InkWell));
     final proxima = find.ancestor(of: find.text('Por vencer en 7 días'), matching: find.byType(InkWell));
@@ -90,7 +84,7 @@ void main() {
   });
 
   testWidgets('tocar una tarjeta abre Facturas emitidas con su filtro', (t) async {
-    _tamano(t, const Size(1200, 2000));
+    fijarTamano(t, const Size(1200, 2000));
     final nav = _Navegacion();
     await _montar(t, nav);
     await t.tap(find.text('Facturas vencidas'));
@@ -103,14 +97,14 @@ void main() {
   });
 
   testWidgets('no se agregan al bloque Pendientes: cada número aparece una sola vez', (t) async {
-    _tamano(t, const Size(1200, 2000));
+    fijarTamano(t, const Size(1200, 2000));
     await _montar(t, _Navegacion());
     expect(find.text('Facturas vencidas'), findsOneWidget);
     expect(find.text('Por vencer en 7 días'), findsOneWidget);
   });
 
   testWidgets('con un servidor sin el dato de cobranza no aparecen las tarjetas', (t) async {
-    _tamano(t, const Size(1200, 2000));
+    fijarTamano(t, const Size(1200, 2000));
     await _montar(t, _Navegacion(), datos: _datos(cobranza: null));
     expect(find.text('Facturas vencidas'), findsNothing);
     expect(find.text('COBRANZA'), findsNothing);
@@ -118,14 +112,14 @@ void main() {
   });
 
   testWidgets('con cero facturas las tarjetas siguen y dicen 0', (t) async {
-    _tamano(t, const Size(1200, 2000));
+    fijarTamano(t, const Size(1200, 2000));
     await _montar(t, _Navegacion(), datos: _datos(cobranza: {'vencidas': 0, 'proximas': 0}));
     final vencida = find.ancestor(of: find.text('Facturas vencidas'), matching: find.byType(InkWell));
     expect(find.descendant(of: vencida, matching: find.text('0')), findsOneWidget);
   });
 
   testWidgets('a 375 px la sección COBRANZA va bajo los equipos, de a dos, sin desbordar', (t) async {
-    _tamano(t, const Size(375, 2400));
+    fijarTamano(t, const Size(375, 2400));
     await _montar(t, _Navegacion());
     expect(t.takeException(), isNull);
     final arrendados = t.getTopLeft(find.text('Equipos arrendados')).dy;
@@ -138,7 +132,7 @@ void main() {
   });
 
   testWidgets('con Tab se llega a la tarjeta y Enter o Espacio la abren', (t) async {
-    _tamano(t, const Size(1200, 2000));
+    fijarTamano(t, const Size(1200, 2000));
     final nav = _Navegacion();
     await _montar(t, nav);
     final tarjeta = find.ancestor(of: find.text('Facturas vencidas'), matching: find.byType(InkWell)).first;
@@ -172,7 +166,7 @@ void main() {
   });
 
   testWidgets('el lector de pantalla las lee como un botón con el número y a dónde lleva', (t) async {
-    _tamano(t, const Size(1200, 2000));
+    fijarTamano(t, const Size(1200, 2000));
     final manija = t.ensureSemantics();
     await _montar(t, _Navegacion());
     final etiqueta = find.bySemanticsLabel('Facturas vencidas: 4. Abre la lista de facturas vencidas');

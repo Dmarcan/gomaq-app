@@ -5,6 +5,7 @@ import 'package:gomaq_web/services/api_client.dart';
 import 'package:gomaq_web/widgets/desglose_costos_equipo.dart';
 import 'package:gomaq_web/widgets/linea_tiempo_equipo.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'utils/tamano.dart';
 
 Map<String, dynamic> _evento(String tipo, int id, String fecha, {int? cliente, String? nombre, Map<String, dynamic> extra = const {}}) => {
       'tipo': tipo,
@@ -68,20 +69,13 @@ Map<String, dynamic> _datos({bool hayMas = false}) => {
       ],
     };
 
-void _tamano(WidgetTester t, Size s) {
-  t.view.physicalSize = s;
-  t.view.devicePixelRatio = 1;
-  addTearDown(t.view.resetPhysicalSize);
-  addTearDown(t.view.resetDevicePixelRatio);
-}
-
 Widget _app(Widget hijo) => MaterialApp(home: Scaffold(body: SingleChildScrollView(padding: const EdgeInsets.all(24), child: hijo)));
 
 void main() {
   setUpAll(() => initializeDateFormatting('es_CL'));
 
   testWidgets('muestra un encabezado por tramo con el cliente y los eventos con texto', (t) async {
-    _tamano(t, const Size(375, 900));
+    fijarTamano(t, const Size(375, 900));
     await t.pumpWidget(_app(LineaTiempoEquipo(maquinariaId: 5, cargar: () async => _datos())));
     await t.pumpAndSettle();
     expect(t.takeException(), isNull, reason: 'sin desbordes a 375 px');
@@ -118,7 +112,7 @@ void main() {
   });
 
   testWidgets('tocar una orden la abre; tocar una guía o una factura lleva a documentos', (t) async {
-    _tamano(t, const Size(800, 1600));
+    fijarTamano(t, const Size(800, 1600));
     final ordenes = <int>[];
     var documentos = 0;
     await t.pumpWidget(_app(LineaTiempoEquipo(
@@ -217,7 +211,7 @@ void main() {
     };
 
     testWidgets('cada repuesto con su orden y cada factura con su folio y cliente, con enlace', (t) async {
-      _tamano(t, const Size(375, 1600));
+      fijarTamano(t, const Size(375, 1600));
       final ordenes = <int>[];
       var documentos = 0;
       await t.pumpWidget(_app(DesgloseCostosEquipo(

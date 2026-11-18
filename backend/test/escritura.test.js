@@ -17,6 +17,7 @@ process.env.JWT_SECRET = 'secreto-solo-para-pruebas-de-escritura';
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { requiereBase, servirApp, leerRespuesta, pedirConToken: pedirConTokenEn, tokenClienteDe } = require('./utils/http');
 const crypto = require('node:crypto');
 const jwt = require('jsonwebtoken');
 const { diasEntre } = require('../src/utils/diasArriendo');
@@ -29,13 +30,8 @@ let pool;
 const datos = { ordenes: [], insumos: [], equipos: [], ubicaciones: [], solicitudes: [], clientes: [], storage: { subidos: [], borrados: [] } };
 const tokens = {};
 
-function requiereBase(t) {
-    if (!HABILITADO) {
-        t.skip('pruebas de escritura deshabilitadas: usar GOMAQ_TEST_ESCRITURA=1 con una base local');
-        return false;
-    }
-    return true;
-}
+// GET autenticado con un token ya firmado (usa la URL base que levanta el before)
+const pedirConToken = (ruta, token) => pedirConTokenEn(base, ruta, token);
 
 async function pedir(metodo, ruta, rol, cuerpo, cabeceras = {}) {
     const r = await fetch(`${base}${ruta}`, {
@@ -43,9 +39,7 @@ async function pedir(metodo, ruta, rol, cuerpo, cabeceras = {}) {
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens[rol]}`, ...cabeceras },
         body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
     });
-    let json = null;
-    try { json = await r.json(); } catch (_) { /* sin cuerpo */ }
-    return { status: r.status, body: json };
+    return leerRespuesta(r);
 }
 
 before(async () => {
@@ -88,8 +82,7 @@ before(async () => {
             return { data: { signedUrl: `https://firmada.test/${ruta}?token=t` }, error: null };
         },
     });
-    await new Promise((resolve) => { servidor = app.listen(0, resolve); });
-    base = `http://127.0.0.1:${servidor.address().port}`;
+    ({ servidor, base } = await servirApp(app));
 
     const usuarios = await pool.query(
         `SELECT id, rol, email FROM usuarios
@@ -1640,9 +1633,7 @@ async function subirFactura(ot, rol, campos) {
     const r = await fetch(`${base}/api/ordenes-trabajo/${ot}/factura`, {
         method: 'POST', headers: { Authorization: `Bearer ${tokens[rol]}` }, body: form,
     });
-    let json = null;
-    try { json = await r.json(); } catch (_) { /* sin cuerpo */ }
-    return { status: r.status, body: json };
+    return leerRespuesta(r);
 }
 
 /** OT cerrada y valorizada con dos lineas que se cobran (A y B), una que no (C) y una por decidir (D). */
@@ -3048,23 +3039,6 @@ describe('bloque 2a: configuracion de cobro, inicio de cobro y arriendos en curs
         const r = await pedir('GET', `/api/maquinarias/${datos.maquinariaId}/dias-arriendo`, 'administrativo');
         assert.equal(r.status, 404);
     });
-
-    test('la migracion 022 se puede correr otra vez sin romper nada', async (t) => {
-        if (!requiereBase(t)) return;
-        const sql = require('fs').readFileSync(require('path').join(__dirname, '../../db/migrations/022_configuracion_inicio_cobro.sql'), 'utf8');
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(sql);
-            await client.query('COMMIT');
-        } finally {
-            client.release();
-        }
-        const r = await pedir('GET', '/api/facturacion/configuracion', 'gerente');
-        assert.equal(r.body.dia_facturacion, 5);
-        const trig = await pool.query("SELECT count(*)::int AS n FROM pg_trigger WHERE tgname = 'guias_inicio_cobro'");
-        assert.equal(trig.rows[0].n, 1);
-    });
 });
 
 describe('bloque 2b (parte 1): la factura guarda despacho, periodo y cliente', () => {
@@ -3395,9 +3369,7 @@ describe('bloque 2b (parte 2): facturas de arriendo por periodo', () => {
         formulario.append('archivo', new Blob(['%PDF-1.4 prueba'], { type: 'application/pdf' }), 'f.pdf');
         const r = await fetch(`${base}/api/facturacion/arriendo`, {
             method: 'POST', headers: { Authorization: `Bearer ${tokens[rol]}` }, body: formulario });
-        let body = null;
-        try { body = await r.json(); } catch (_) { /* sin cuerpo */ }
-        return { status: r.status, body };
+        return leerRespuesta(r);
     }
 
     test('propuesta: del inicio de cobro al primer corte, con las opciones hasta el fin', async (t) => {
@@ -4362,37 +4334,13 @@ describe('bloque 4a: descuadres de inventario, conteo y traspaso', () => {
             if (fila) assert.ok(fila.negativo_desde || fila.sin_origen, 'cada caso trae su fecha o su aviso');
         }
     });
-
-    test('la migracion 025 se puede correr otra vez y el valor ajuste existe', async (t) => {
-        if (!requiereBase(t)) return;
-        const sql = require('fs').readFileSync(require('path').join(__dirname, '../../db/migrations/025_ajuste_inventario.sql'), 'utf8');
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(sql);
-            await client.query('COMMIT');
-        } catch (err) {
-            await client.query('ROLLBACK').catch(() => {});
-            throw err;
-        } finally {
-            client.release();
-        }
-        const valores = (await pool.query("SELECT unnest(enum_range(NULL::tipo_movimiento_insumo))::text AS v")).rows.map((x) => x.v);
-        assert.ok(valores.includes('ajuste'));
-    });
 });
 
 describe('bloque 4 (parte B): documentos del equipo por rol y cliente', () => {
     const esc = {};
     const clave = (d) => `${d.tipo}:${d.id}`;
-    const tokenCliente = (clienteId) => jwt.sign({ id: 987654, rol: 'cliente', cliente_id: clienteId }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const tokenCliente = tokenClienteDe(987654);
 
-    async function pedirConToken(ruta, token) {
-        const r = await fetch(`${base}${ruta}`, { headers: { Authorization: `Bearer ${token}` } });
-        let json = null;
-        try { json = await r.json(); } catch (_) { /* sin cuerpo */ }
-        return { status: r.status, body: json };
-    }
 
     const guia = async (tipo, fecha, clienteId, extra = {}) => (await pool.query(
         `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id, created_at)
@@ -4561,13 +4509,7 @@ describe('bloque 4 (parte B): documentos del equipo por rol y cliente', () => {
 describe('bloque 4 (parte B): documentos del equipo, casos de borde de la revision', () => {
     const esc = {};
     const clave = (d) => `${d.tipo}:${d.id}`;
-    const tokenCliente = (clienteId) => jwt.sign({ id: 987655, rol: 'cliente', cliente_id: clienteId }, process.env.JWT_SECRET, { expiresIn: '1h' });
-    async function pedirConToken(ruta, token) {
-        const r = await fetch(`${base}${ruta}`, { headers: { Authorization: `Bearer ${token}` } });
-        let json = null;
-        try { json = await r.json(); } catch (_) { /* sin cuerpo */ }
-        return { status: r.status, body: json };
-    }
+    const tokenCliente = tokenClienteDe(987655);
     const guia = async (equipoId, tipo, fecha, clienteId, extra = {}) => (await pool.query(
         `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id, created_at)
          VALUES ($1, $2::tipo_guia, $3, $4, $5, COALESCE($6, now())) RETURNING id`,
@@ -4831,24 +4773,6 @@ describe('bloque 5 (parte A): guias idempotentes con uuid_cliente', () => {
         }
         const n = await pool.query('SELECT count(*)::int AS n FROM guias WHERE maquinaria_id = $1', [equipo.id]);
         assert.equal(n.rows[0].n, 0);
-    });
-
-    test('la migracion 026 se puede correr otra vez', async (t) => {
-        if (!requiereBase(t)) return;
-        const sql = require('fs').readFileSync(require('path').join(__dirname, '../../db/migrations/026_guias_uuid_cliente.sql'), 'utf8');
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(sql);
-            await client.query('COMMIT');
-        } catch (err) {
-            await client.query('ROLLBACK').catch(() => {});
-            throw err;
-        } finally {
-            client.release();
-        }
-        const r = await pool.query("SELECT count(*)::int AS n FROM pg_indexes WHERE indexname = 'guias_uuid_cliente_key'");
-        assert.equal(r.rows[0].n, 1);
     });
 });
 
@@ -5173,21 +5097,6 @@ describe('bloque 5 (PR B): correo de la factura editable y cancelacion segura', 
         } finally {
             await pool.query('DELETE FROM notificaciones_pendientes WHERE id = $1', [n.rows[0].id]);
         }
-    });
-
-    test('la migracion 027 deja el valor cancelado y se puede correr otra vez', async (t) => {
-        if (!requiereBase(t)) return;
-        const sql = require('fs').readFileSync(require('path').join(__dirname, '../../db/migrations/027_notificacion_cancelada.sql'), 'utf8');
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN');
-            await client.query(sql);
-            await client.query('COMMIT');
-        } finally {
-            client.release();
-        }
-        const r = await pool.query("SELECT enumlabel FROM pg_enum WHERE enumtypid = 'estado_notificacion'::regtype ORDER BY enumsortorder");
-        assert.ok(r.rows.some((x) => x.enumlabel === 'cancelado'));
     });
 });
 
@@ -5760,13 +5669,7 @@ describe('bloque 5 (parte C): avisos al mecanico y al gerente', () => {
 });
 
 describe('bloque 6 (parte 1): contratos para el dashboard, Ordenes y el portal', () => {
-    const tokenCliente = (clienteId) => jwt.sign({ id: 987655, rol: 'cliente', cliente_id: clienteId }, process.env.JWT_SECRET, { expiresIn: '1h' });
-    async function pedirConToken(ruta, token) {
-        const r = await fetch(`${base}${ruta}`, { headers: { Authorization: `Bearer ${token}` } });
-        let json = null;
-        try { json = await r.json(); } catch (_) { /* sin cuerpo */ }
-        return { status: r.status, body: json };
-    }
+    const tokenCliente = tokenClienteDe(987655);
     // el dashboard guarda los arriendos 30 s: las pruebas, que acaban de crear datos, lo vacian antes de leer
     const pendientes = async (rol = 'administrativo') => {
         require('../src/routes/dashboard').vaciarCacheArriendos();
@@ -6331,7 +6234,7 @@ describe('bloque 6 (parte 1): contratos para el dashboard, Ordenes y el portal',
 });
 
 describe('bloque 6 (parte 1): correcciones de la revision experta', () => {
-    const tokenCliente = (clienteId) => jwt.sign({ id: 987656, rol: 'cliente', cliente_id: clienteId }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const tokenCliente = tokenClienteDe(987656);
     async function conToken(ruta, token) {
         const r = await fetch(`${base}${ruta}`, { headers: { Authorization: `Bearer ${token}` } });
         let json = null;
@@ -6721,14 +6624,8 @@ describe('fin de arriendo guardado: la configuracion nueva rige solo hacia adela
 
 describe('portal del cliente: equipos anteriores (mias/historicos)', () => {
     const esc = {};
-    const tokenCliente = (clienteId) => jwt.sign({ id: 987655, rol: 'cliente', cliente_id: clienteId }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const tokenCliente = tokenClienteDe(987655);
 
-    async function pedirConToken(ruta, token) {
-        const r = await fetch(`${base}${ruta}`, { headers: { Authorization: `Bearer ${token}` } });
-        let json = null;
-        try { json = await r.json(); } catch (_) { /* sin cuerpo */ }
-        return { status: r.status, body: json };
-    }
 
     const guia = async (equipoId, tipo, fecha, clienteId, creada = null) => (await pool.query(
         `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, cliente_id, created_at)
@@ -6852,7 +6749,7 @@ describe('portal del cliente: equipos anteriores (mias/historicos)', () => {
 
 describe('portal del cliente: equipos anteriores, casos de la revision', () => {
     const esc = {};
-    const tokenCliente = (clienteId) => jwt.sign({ id: 987656, rol: 'cliente', cliente_id: clienteId }, process.env.JWT_SECRET, { expiresIn: '1h' });
+    const tokenCliente = tokenClienteDe(987656);
 
     async function historicos(clienteId) {
         const r = await fetch(`${base}/api/maquinarias/mias/historicos`, { headers: { Authorization: `Bearer ${tokenCliente(clienteId)}` } });

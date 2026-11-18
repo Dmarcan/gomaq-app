@@ -4,21 +4,15 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gomaq_web/screens/panel/mapa_screen.dart';
 import 'package:gomaq_web/utils/mapa_operativo.dart';
 import 'package:gomaq_web/utils/ubicacion.dart';
+import 'utils/tamano.dart';
 
 DatosMapa _datos({BodegaMapa? bodega}) => DatosMapa(bodega: bodega, equipos: const [], furgones: const []);
 
 Widget _app(MapaScreen m) => MaterialApp(home: Scaffold(body: m));
 
-void _tamano(WidgetTester t, Size s) {
-  t.view.physicalSize = s;
-  t.view.devicePixelRatio = 1;
-  addTearDown(t.view.resetPhysicalSize);
-  addTearDown(t.view.resetDevicePixelRatio);
-}
-
 void main() {
   testWidgets('sin ubicación: tarjeta destacada con aviso y botón principal', (t) async {
-    _tamano(t, const Size(375, 812));
+    fijarTamano(t, const Size(375, 812));
     await t.pumpWidget(_app(MapaScreen(
       cargar: () async => _datos(bodega: const BodegaMapa(id: 1, nombre: 'Bodega', ubicacion: null)),
       conMapa: false,
@@ -34,7 +28,7 @@ void main() {
   });
 
   testWidgets('ubicada: una línea chica con centrar y cambiar, sin desbordar a 375 px', (t) async {
-    _tamano(t, const Size(375, 812));
+    fijarTamano(t, const Size(375, 812));
     await t.pumpWidget(_app(MapaScreen(
       cargar: () async => _datos(bodega: const BodegaMapa(id: 1, nombre: 'Bodega', ubicacion: Coordenada(-33.5, -70.7))),
       conMapa: false,
@@ -49,7 +43,7 @@ void main() {
   });
 
   testWidgets('sin bodega registrada: solo el aviso, sin botones', (t) async {
-    _tamano(t, const Size(375, 812));
+    fijarTamano(t, const Size(375, 812));
     await t.pumpWidget(_app(MapaScreen(cargar: () async => _datos(), conMapa: false)));
     await t.pumpAndSettle();
     expect(find.text('No hay una bodega registrada.'), findsOneWidget);
@@ -58,7 +52,7 @@ void main() {
   });
 
   testWidgets('centrar el mapa en la bodega mueve la cámara a su ubicación', (t) async {
-    _tamano(t, const Size(1200, 800));
+    fijarTamano(t, const Size(1200, 800));
     await t.pumpWidget(_app(MapaScreen(
       // un equipo lejos de la bodega: el encuadre inicial abarca los dos y no queda centrado en la bodega
       cargar: () async => DatosMapa(

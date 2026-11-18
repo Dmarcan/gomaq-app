@@ -7,6 +7,7 @@ process.env.SUPABASE_SERVICE_KEY = process.env.SUPABASE_SERVICE_KEY || 'clave-so
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { servirApp, leerRespuesta } = require('./utils/http');
 const zlib = require('node:zlib');
 const jwt = require('jsonwebtoken');
 const express = require('express');
@@ -48,8 +49,7 @@ before(async () => {
     const app = express();
     app.use(express.json());
     app.use('/api/facturacion', require('../src/routes/facturacion'));
-    await new Promise((resolve) => { servidor = app.listen(0, resolve); });
-    base = `http://127.0.0.1:${servidor.address().port}`;
+    ({ servidor, base } = await servirApp(app));
 });
 
 after(async () => {
@@ -67,9 +67,7 @@ async function exportar(rol, cuerpo, id) {
     const headers = { 'Content-Type': 'application/json' };
     if (rol) headers.Authorization = `Bearer ${token(rol, id)}`;
     const r = await fetch(`${base}/api/facturacion/exportar`, { method: 'POST', headers, body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo) });
-    let body = null;
-    try { body = await r.json(); } catch (_) { /* sin cuerpo */ }
-    return { status: r.status, body };
+    return leerRespuesta(r);
 }
 
 test('sin token: 401', async () => {

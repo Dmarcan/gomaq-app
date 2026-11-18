@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gomaq_web/screens/panel/facturas_emitidas_tab.dart';
 import 'package:gomaq_web/services/api_client.dart';
 import 'package:intl/date_symbol_data_local.dart';
+import 'utils/tamano.dart';
 
 // Datos ficticios: ningún cliente ni RUT reales.
 Future<Map<String, dynamic>> _vacia({required String estado, String? q, required int offset}) async =>
@@ -37,13 +38,6 @@ Widget _app(_Falso f, {bool admin = true, int? clienteId}) => MaterialApp(
       ),
     );
 
-void _tamano(WidgetTester t, Size s) {
-  t.view.physicalSize = s;
-  t.view.devicePixelRatio = 1;
-  addTearDown(t.view.resetPhysicalSize);
-  addTearDown(t.view.resetDevicePixelRatio);
-}
-
 Future<void> _abrirCuadro(WidgetTester t) async {
   await t.tap(find.byKey(const ValueKey('exportar-excel')));
   await t.pumpAndSettle();
@@ -58,7 +52,7 @@ void main() {
   setUpAll(() => initializeDateFormatting('es_CL'));
 
   testWidgets('flujo feliz: exporta, abre la url y anuncia las filas', (t) async {
-    _tamano(t, const Size(900, 1200));
+    fijarTamano(t, const Size(900, 1200));
     final f = _Falso();
     await t.pumpWidget(_app(f));
     await t.pumpAndSettle();
@@ -71,7 +65,7 @@ void main() {
   });
 
   testWidgets('envía el cliente cuando la lista está acotada', (t) async {
-    _tamano(t, const Size(900, 1200));
+    fijarTamano(t, const Size(900, 1200));
     final f = _Falso();
     await t.pumpWidget(_app(f, clienteId: 7));
     await t.pumpAndSettle();
@@ -81,7 +75,7 @@ void main() {
   });
 
   testWidgets('avisa cuando hay facturas sin neto', (t) async {
-    _tamano(t, const Size(900, 1200));
+    fijarTamano(t, const Size(900, 1200));
     final f = _Falso()..respuesta = {'url': 'https://ejemplo.test/a.xlsx', 'filas': 5, 'sin_neto': 3, 'generado_en': '2026-11-17'};
     await t.pumpWidget(_app(f));
     await t.pumpAndSettle();
@@ -94,7 +88,7 @@ void main() {
   });
 
   testWidgets('un 400 se muestra con el texto del servidor y no abre nada', (t) async {
-    _tamano(t, const Size(900, 1200));
+    fijarTamano(t, const Size(900, 1200));
     final f = _Falso()..error = ApiException(400, 'La exportación supera las 5000 facturas: acota el rango de fechas');
     await t.pumpWidget(_app(f));
     await t.pumpAndSettle();
@@ -107,14 +101,14 @@ void main() {
   });
 
   testWidgets('el gerente también ve el botón', (t) async {
-    _tamano(t, const Size(900, 1200));
+    fijarTamano(t, const Size(900, 1200));
     await t.pumpWidget(_app(_Falso(), admin: false));
     await t.pumpAndSettle();
     expect(find.byKey(const ValueKey('exportar-excel')), findsOneWidget);
   });
 
   testWidgets('teclado: con Tab se llega al botón y Enter abre el cuadro', (t) async {
-    _tamano(t, const Size(900, 1200));
+    fijarTamano(t, const Size(900, 1200));
     await t.pumpWidget(_app(_Falso()));
     await t.pumpAndSettle();
     var llego = false;
@@ -132,7 +126,7 @@ void main() {
   });
 
   testWidgets('375 px: el cuadro y el aviso no desbordan', (t) async {
-    _tamano(t, const Size(375, 760));
+    fijarTamano(t, const Size(375, 760));
     final f = _Falso()..respuesta = {'url': 'https://ejemplo.test/a.xlsx', 'filas': 1, 'sin_neto': 1, 'generado_en': '2026-11-17'};
     await t.pumpWidget(_app(f, clienteId: 7));
     await t.pumpAndSettle();

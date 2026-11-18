@@ -4,7 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:gomaq_mecanico/utils/pasadas_en_serie.dart';
 
 void main() {
-  test('una peticion durante una pasada no se pierde: corre una sola pasada extra al terminar', () async {
+  testWidgets('una peticion durante una pasada no se pierde: corre una sola pasada extra al terminar', (tester) async {
     final pasadas = <bool>[];
     var liberar = Completer<void>();
     late PasadasEnSerie serie;
@@ -31,7 +31,7 @@ void main() {
     expect(extrasTerminadas, 0, reason: 'las peticiones extra esperan su propia pasada');
 
     // la pasada extra ya empezo y pide la completa si alguna peticion la pidio
-    await Future<void>.delayed(Duration.zero);
+    await tester.pump();
     expect(pasadas, [false, true]);
     liberar.complete();
     await Future.wait(extras);
@@ -39,15 +39,15 @@ void main() {
     expect(serie.enCurso, isFalse);
 
     // sin bucles: no hubo una tercera pasada
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await tester.pump(const Duration(milliseconds: 10));
     expect(pasadas.length, 2);
   });
 
-  test('sin peticiones durante la pasada no hay pasada extra', () async {
+  testWidgets('sin peticiones durante la pasada no hay pasada extra', (tester) async {
     var n = 0;
     final serie = PasadasEnSerie(pasada: (_) async => n++, alCambiar: () {});
     await serie.pedir();
-    await Future<void>.delayed(const Duration(milliseconds: 10));
+    await tester.pump(const Duration(milliseconds: 10));
     expect(n, 1);
   });
 

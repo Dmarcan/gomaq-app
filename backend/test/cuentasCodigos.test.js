@@ -13,6 +13,7 @@ process.env.JWT_SECRET = 'secreto-solo-para-pruebas-de-codigos-de-cuenta';
 
 const { test, describe, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { requiereBase, servirApp } = require('./utils/http');
 const jwt = require('jsonwebtoken');
 const { URL_RESEND } = require('../src/services/correoResend');
 
@@ -88,8 +89,7 @@ before(async () => {
     app.use(express.json());
     app.use('/api/auth', require('../src/routes/auth'));
     app.use('/api/usuarios', require('../src/routes/usuarios'));
-    await new Promise((resolve) => { servidor = app.listen(0, resolve); });
-    base = `http://127.0.0.1:${servidor.address().port}`;
+    ({ servidor, base } = await servirApp(app));
 
     const firmar = (u) => jwt.sign({ id: u.id, rol: u.rol, cliente_id: null, pc: u.pc || 0 }, process.env.JWT_SECRET, { expiresIn: '1h' });
     tokens.relleno = firmar({ id: 987650, rol: 'administrativo' });
@@ -111,14 +111,6 @@ after(async () => {
         await pool.end();
     }
 });
-
-function requiereBase(t) {
-    if (!HABILITADO) {
-        t.skip('pruebas de escritura deshabilitadas: usar GOMAQ_TEST_ESCRITURA=1 con una base local');
-        return false;
-    }
-    return true;
-}
 
 describe('validaciones antes de tocar la base', () => {
     test('invitar exige nombre, correo, rol interno y canal', async () => {

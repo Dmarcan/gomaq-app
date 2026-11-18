@@ -11,6 +11,7 @@ process.env.JWT_SECRET = 'secreto-solo-para-pruebas-de-posicion';
 
 const { test, before, after } = require('node:test');
 const assert = require('node:assert/strict');
+const { requiereBase, servirApp, leerRespuesta } = require('./utils/http');
 const crypto = require('node:crypto');
 const jwt = require('jsonwebtoken');
 
@@ -23,23 +24,13 @@ let llaveOriginal;
 const tokens = {};
 const datos = { ordenes: [], equipos: [], mecanicoId: null, otroMecanicoId: null };
 
-function requiereBase(t) {
-    if (!HABILITADO) {
-        t.skip('pruebas de escritura deshabilitadas: usar GOMAQ_TEST_ESCRITURA=1 con una base local');
-        return false;
-    }
-    return true;
-}
-
 async function pedir(metodo, ruta, rol, cuerpo) {
     const r = await fetch(`${base}${ruta}`, {
         method: metodo,
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${tokens[rol]}` },
         body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo),
     });
-    let json = null;
-    try { json = await r.json(); } catch (_) { /* sin cuerpo */ }
-    return { status: r.status, body: json };
+    return leerRespuesta(r);
 }
 
 function posicionValida(extra = {}) {
@@ -78,8 +69,7 @@ before(async () => {
     const app = express();
     app.use(express.json());
     app.use('/api/ordenes-trabajo', require('../src/routes/ordenes'));
-    await new Promise((resolve) => { servidor = app.listen(0, resolve); });
-    base = `http://127.0.0.1:${servidor.address().port}`;
+    ({ servidor, base } = await servirApp(app));
 
     const usuarios = await pool.query(
         `SELECT id, rol, email FROM usuarios
