@@ -42,6 +42,9 @@ Future<void> romperEncolado(Database db) => db.execute(
 class ApiFalsa implements ApiCola {
   final llamadas = <String>[];
 
+  /// Cuerpo enviado en cada escritura (post, patch y put), en orden.
+  final cuerpos = <({String metodo, String ruta, Map<String, dynamic> cuerpo})>[];
+
   /// Si no es null, se lanza en las llamadas de escritura (post/patch/put).
   Object? errorAlEscribir;
 
@@ -67,6 +70,7 @@ class ApiFalsa implements ApiCola {
   @override
   Future<dynamic> post(String path, Map<String, dynamic> body) async {
     llamadas.add('POST $path');
+    cuerpos.add((metodo: 'POST', ruta: path, cuerpo: Map<String, dynamic>.from(body)));
     if (errorEnConfirmar != null && path.endsWith('/confirmar')) throw errorEnConfirmar!;
     if (errorAlEscribir != null) throw errorAlEscribir!;
     if (path.endsWith('/solicitar-upload')) {
@@ -78,6 +82,7 @@ class ApiFalsa implements ApiCola {
   @override
   Future<dynamic> patch(String path, Map<String, dynamic> body) async {
     llamadas.add('PATCH $path');
+    cuerpos.add((metodo: 'PATCH', ruta: path, cuerpo: Map<String, dynamic>.from(body)));
     if (errorEnPatch != null) throw errorEnPatch!;
     if (errorAlEscribir != null) throw errorAlEscribir!;
     return <String, dynamic>{};
@@ -86,6 +91,7 @@ class ApiFalsa implements ApiCola {
   @override
   Future<dynamic> put(String path, Map<String, dynamic> body) async {
     llamadas.add('PUT $path');
+    cuerpos.add((metodo: 'PUT', ruta: path, cuerpo: Map<String, dynamic>.from(body)));
     if (errorAlEscribir != null) throw errorAlEscribir!;
     return <String, dynamic>{};
   }

@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:gomaq_mecanico/services/api_client.dart' show ApiException;
 import 'package:gomaq_mecanico/services/sync_service.dart';
+import 'package:gomaq_mecanico/utils/fallo_sync.dart' show maxIntentosSync;
 import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:sqflite/sqflite.dart';
@@ -59,7 +61,7 @@ void main() {
       await sembrarOrden(db, 5);
       await romperEncolado(db);
 
-      await expectLater(cola.encolarDiagnostico(5, diagnostico: 'Fuga', estado: 'en_reparacion'), throwsA(anything));
+      await expectLater(cola.encolarDiagnostico(5, diagnostico: 'Fuga', estado: 'en_reparacion'), throwsA(isA<DatabaseException>()));
 
       final orden = (await db.query('ordenes_locales', where: 'id = 5')).single;
       expect(orden['diagnostico'], isNull);
@@ -73,27 +75,27 @@ void main() {
       var avisos = 0;
       cola.addListener(() => avisos++);
 
-      await expectLater(cola.encolarDatosOt(5, folioPapel: '123'), throwsA(anything));
+      await expectLater(cola.encolarDatosOt(5, folioPapel: '123'), throwsA(isA<DatabaseException>()));
       expect(avisos, 0);
     });
 
     test('si falla el encolado, la OT creada en terreno no queda en la base local', () async {
       await romperEncolado(db);
-      await expectLater(cola.encolarOtEnTerreno(maquinariaId: 2, maquinariaCodigo: 'EQ-2'), throwsA(anything));
+      await expectLater(cola.encolarOtEnTerreno(maquinariaId: 2, maquinariaCodigo: 'EQ-2'), throwsA(isA<DatabaseException>()));
       expect(await db.query('ordenes_locales'), isEmpty);
     });
 
     test('si falla el encolado, la foto no deja fila local sin tarea', () async {
       await sembrarOrden(db, 5);
       await romperEncolado(db);
-      await expectLater(cola.encolarEvidencia(5, '/tmp/ot5_1.jpg'), throwsA(anything));
+      await expectLater(cola.encolarEvidencia(5, '/tmp/ot5_1.jpg'), throwsA(isA<DatabaseException>()));
       expect(await db.query('evidencias_locales'), isEmpty);
     });
 
     test('si falla el encolado, el repuesto no deja fila local sin tarea', () async {
       await sembrarOrden(db, 5);
       await romperEncolado(db);
-      await expectLater(cola.encolarInsumo(5, insumoNombre: 'Filtro', cantidad: 1), throwsA(anything));
+      await expectLater(cola.encolarInsumo(5, insumoNombre: 'Filtro', cantidad: 1), throwsA(isA<DatabaseException>()));
       expect(await db.query('insumos_locales'), isEmpty);
     });
 
@@ -102,7 +104,7 @@ void main() {
       await db.insert('ot_servicios_locales', {'orden_trabajo_id': 5, 'servicio_id': 7});
       await romperEncolado(db);
 
-      await expectLater(cola.encolarChecklist(5, [1, 2]), throwsA(anything));
+      await expectLater(cola.encolarChecklist(5, [1, 2]), throwsA(isA<DatabaseException>()));
 
       final marcas = await db.query('ot_servicios_locales');
       expect(marcas.map((f) => f['servicio_id']), [7]);
@@ -119,7 +121,7 @@ void main() {
 
       await expectLater(
         cola.encolarTramo(5, inicio: DateTime.now(), termino: DateTime.now(), reemplazaTramoLocalId: abierto),
-        throwsA(anything),
+        throwsA(isA<DatabaseException>()),
       );
 
       final tramos = await db.query('tramos_locales');
@@ -134,7 +136,7 @@ void main() {
       await db.delete('cola_sincronizacion');
       await romperEncolado(db);
 
-      await expectLater(cola.anularInsumo(linea), throwsA(anything));
+      await expectLater(cola.anularInsumo(linea), throwsA(isA<DatabaseException>()));
 
       final despues = (await db.query('insumos_locales')).single;
       expect(despues['anulada'] ?? 0, 0);
@@ -143,7 +145,7 @@ void main() {
     test('encolarFinalizar tambien revierte la OT finalizada si falla el encolado', () async {
       await sembrarOrden(db, 5);
       await romperEncolado(db);
-      await expectLater(cola.encolarFinalizar(5, sinPersona: true, estadoEquipo: 'operativa'), throwsA(anything));
+      await expectLater(cola.encolarFinalizar(5, sinPersona: true, estadoEquipo: 'operativa'), throwsA(isA<DatabaseException>()));
       expect((await db.query('ordenes_locales', where: 'id = 5')).single['estado'], 'en_terreno');
     });
   });
@@ -215,6 +217,128 @@ void main() {
       final tarea = (await db.query('cola_sincronizacion')).single;
       expect(tarea['estado'], 'error');
       expect(tarea['ultimo_error'], contains('dañada'));
+    });
+  });
+
+  group('uuid_cliente: los reintentos no duplican', () {
+    late Directory carpetaArchivos;
+
+    setUp(() async {
+      carpetaArchivos = await Directory.systemTemp.createTemp('gomaq_uuid_test_');
+    });
+
+    tearDown(() async {
+      try {
+        await carpetaArchivos.delete(recursive: true);
+      } catch (_) {}
+    });
+
+    // datos_ot y checklist mandan el payload completo (el uuid viaja como `uuid`); el resto, como `uuid_cliente`
+    String? uuidEnviado(Map<String, dynamic> cuerpo) => (cuerpo['uuid_cliente'] ?? cuerpo['uuid']) as String?;
+
+    Future<String> uuidGuardado() async =>
+        jsonDecode((await db.query('cola_sincronizacion')).single['payload'] as String)['uuid'] as String;
+
+    final tipos = <String, Future<void> Function(SyncService c, Directory carpeta)>{
+      'diagnostico': (c, _) => c.encolarDiagnostico(5, diagnostico: 'Listo'),
+      'finalizar': (c, _) => c.encolarFinalizar(5, sinPersona: true, estadoEquipo: 'operativa'),
+      'datos_ot': (c, _) => c.encolarDatosOt(5, folioPapel: '123'),
+      'checklist': (c, _) => c.encolarChecklist(5, [1, 2]),
+      'tramo': (c, _) => c.encolarTramo(5, inicio: DateTime.now(), termino: DateTime.now()),
+      'horometro': (c, _) => c.encolarHorometro(5, maquinariaId: 1, valor: 100),
+      'insumo': (c, _) => c.encolarInsumo(5, insumoNombre: 'Filtro', cantidad: 1),
+      'evidencia': (c, carpeta) {
+        final foto = File('${carpeta.path}/ot5_777.jpg')..writeAsBytesSync([1, 2, 3]);
+        return c.encolarEvidencia(5, foto.path);
+      },
+    };
+
+    for (final entrada in tipos.entries) {
+      test('${entrada.key}: envia uuid_cliente igual al uuid guardado en la tarea', () async {
+        await sembrarOrden(db, 5);
+        await entrada.value(cola, carpetaArchivos);
+        final uuid = await uuidGuardado();
+        expect(uuid, isNotEmpty);
+
+        await cola.sincronizar();
+
+        expect(await enCola(), 0);
+        final enviados = api.cuerpos.map((c) => uuidEnviado(c.cuerpo)).whereType<String>().toList();
+        expect(enviados, [uuid]);
+      });
+    }
+
+    test('crear_ot: envia uuid_cliente igual al uuid guardado en la tarea', () async {
+      await cola.encolarOtEnTerreno(maquinariaId: 2, maquinariaCodigo: 'EQ-2');
+      final uuid = await uuidGuardado();
+
+      await cola.sincronizar();
+
+      final envio = api.cuerpos.firstWhere((c) => c.ruta == '/api/ordenes-trabajo/en-terreno');
+      expect(envio.cuerpo['uuid_cliente'], uuid);
+    });
+
+    test('tras un SocketException el reintento envia el mismo uuid_cliente', () async {
+      await sembrarOrden(db, 5);
+      await cola.encolarHorometro(5, maquinariaId: 1, valor: 100);
+      final uuid = await uuidGuardado();
+      api.errorAlEscribir = const SocketException('sin red');
+
+      await cola.sincronizar();
+      expect(await enCola(), 1);
+
+      api.errorAlEscribir = null;
+      await cola.sincronizar();
+
+      expect(await enCola(), 0);
+      expect(api.cuerpos.map((c) => c.cuerpo['uuid_cliente']), [uuid, uuid]);
+    });
+
+    test('una tarea sin uuid (version antigua) recibe uno, se guarda antes de enviar y el reintento lo reusa', () async {
+      await sembrarOrden(db, 5);
+      await db.insert('cola_sincronizacion', {
+        'tipo': 'horometro',
+        'orden_trabajo_id': 5,
+        'payload': jsonEncode({'maquinaria_id': 1, 'valor': 100, 'reiniciar_contador': false}),
+        'estado': 'pendiente',
+        'intentos': 0,
+        'creado_en': DateTime.now().toIso8601String(),
+      });
+      api.errorAlEscribir = const SocketException('sin red');
+
+      await cola.sincronizar();
+
+      // el envio fallo, pero el uuid ya quedo guardado
+      final uuid = await uuidGuardado();
+      expect(uuid, isNotEmpty);
+      expect(api.cuerpos.single.cuerpo['uuid_cliente'], uuid);
+
+      api.errorAlEscribir = null;
+      await cola.sincronizar();
+
+      expect(await enCola(), 0);
+      expect(api.cuerpos.map((c) => c.cuerpo['uuid_cliente']), [uuid, uuid]);
+    });
+  });
+
+  group('rechazos repetidos del servidor', () {
+    test('con 409 seguidos, tras el 4.o intento sigue pendiente y tras el 5.o pasa a error', () async {
+      await sembrarOrden(db, 5);
+      await cola.encolarDiagnostico(5, diagnostico: 'Listo');
+      api.errorAlEscribir = ApiException(409, 'La orden ya está cerrada');
+
+      for (var n = 1; n < maxIntentosSync; n++) {
+        await cola.sincronizar();
+        final tarea = (await db.query('cola_sincronizacion')).single;
+        expect(tarea['intentos'], n);
+        expect(tarea['estado'], 'pendiente', reason: 'despues del intento $n');
+        expect(tarea['ultimo_error'], 'La orden ya está cerrada');
+      }
+
+      await cola.sincronizar();
+      final tarea = (await db.query('cola_sincronizacion')).single;
+      expect(tarea['intentos'], maxIntentosSync);
+      expect(tarea['estado'], 'error');
     });
   });
 
