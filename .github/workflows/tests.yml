@@ -24,6 +24,7 @@ on:
 jobs:
   backend:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     services:
       postgres:
@@ -79,6 +80,8 @@ jobs:
       - name: Levantar el backend para los tests de extremo a extremo
         env:
           DATABASE_URL: postgres://gomaq_app:gomaq_app@localhost:5432/gomaq
+          # el worker de notificaciones corre aparte; dentro del servidor compite con las pruebas
+          NOTIFICACIONES_EN_PROCESO: '0'
         run: |
           node server.js > servidor.log 2>&1 &
           for i in $(seq 1 60); do
@@ -97,6 +100,7 @@ jobs:
 
   panel:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
 
     steps:
       - uses: actions/checkout@v4

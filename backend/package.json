@@ -9,7 +9,7 @@
   "scripts": {
     "start": "node server.js",
     "dev": "node --watch server.js",
-    "test": "node --test --test-concurrency=1",
+    "test": "node --test --test-concurrency=1 --test-timeout=60000",
     "migrar": "node scripts/migrar.js"
   },
   "dependencies": {
