@@ -71,7 +71,14 @@ jobs:
       - name: Cargar datos de prueba
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f ../db/scripts/semilla_pruebas.sql
 
+      # la API corre con el rol limitado de la migracion 041 (sin DDL ni borrado del historial de ordenes),
+      # como en produccion cuando se cambia su DATABASE_URL; los tests y los scripts siguen con el dueno
+      - name: Dar login al rol limitado de la API
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "ALTER ROLE gomaq_app LOGIN PASSWORD 'gomaq_app'"
+
       - name: Levantar el backend para los tests de extremo a extremo
+        env:
+          DATABASE_URL: postgres://gomaq_app:gomaq_app@localhost:5432/gomaq
         run: |
           node server.js > servidor.log 2>&1 &
           for i in $(seq 1 60); do

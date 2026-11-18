@@ -120,10 +120,10 @@ async function main() {
     const i = argv.indexOf('--archivo');
     const archivo = i >= 0 ? argv[i + 1] : buscarArchivo();
     if (!archivo || !fs.existsSync(archivo)) throw new Error('No se encontro db/datos/clientes_gomaq.json');
-    if (!process.env.DATABASE_URL) throw new Error('Falta DATABASE_URL');
+    if (!(process.env.DATABASE_URL_MIGRACION || process.env.DATABASE_URL)) throw new Error('Falta DATABASE_URL');
     const { clientes } = JSON.parse(fs.readFileSync(archivo, 'utf8'));
 
-    const db = new Client({ connectionString: process.env.DATABASE_URL });
+    const db = new Client({ connectionString: (process.env.DATABASE_URL_MIGRACION || process.env.DATABASE_URL) });
     await db.connect();
     try {
         imprimir(await cargarClientes(db, clientes, { simular }));

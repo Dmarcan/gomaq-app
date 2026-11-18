@@ -34,9 +34,9 @@ function migracionesDisponibles() {
 
 async function main() {
     if (!DIRECTORIO_DB) throw new Error('No se encontro el directorio db/ con schema.sql y migrations/');
-    if (!process.env.DATABASE_URL) throw new Error('Falta DATABASE_URL');
+    if (!(process.env.DATABASE_URL_MIGRACION || process.env.DATABASE_URL)) throw new Error('Falta DATABASE_URL');
 
-    const cliente = new Client({ connectionString: process.env.DATABASE_URL });
+    const cliente = new Client({ connectionString: (process.env.DATABASE_URL_MIGRACION || process.env.DATABASE_URL) });
     await cliente.connect();
     // Candado de la base: si dos instancias arrancan a la vez (un despliegue nuevo mientras la
     // anterior sigue viva, o al escalar), la segunda espera a que la primera termine y despues

@@ -746,9 +746,9 @@ async function main() {
     const borrar = argv.includes('--borrar');
     const desconocidos = argv.filter((a) => !['--simular', '--borrar'].includes(a));
     if (desconocidos.length) throw new Error(`Opciones desconocidas: ${desconocidos.join(' ')} (validas: --simular, --borrar)`);
-    if (!process.env.DATABASE_URL) throw new Error('Falta DATABASE_URL');
+    if (!(process.env.DATABASE_URL_MIGRACION || process.env.DATABASE_URL)) throw new Error('Falta DATABASE_URL');
 
-    const db = new Client({ connectionString: process.env.DATABASE_URL });
+    const db = new Client({ connectionString: (process.env.DATABASE_URL_MIGRACION || process.env.DATABASE_URL) });
     await db.connect();
     try {
         imprimir(borrar ? await borrarDemo(db, { simular }) : await cargarDemo(db, { simular }));

@@ -23,11 +23,11 @@ const ARCHIVO = [path.join(__dirname, '../../db/datos'), '/db/datos']
 
 async function main() {
     if (!ARCHIVO) throw new Error('No se encontro db/datos/equipos_gomaq.json');
-    if (!process.env.DATABASE_URL) throw new Error('Falta DATABASE_URL');
+    if (!(process.env.DATABASE_URL_MIGRACION || process.env.DATABASE_URL)) throw new Error('Falta DATABASE_URL');
     const simular = process.argv.includes('--simular');
     const { equipos } = JSON.parse(fs.readFileSync(ARCHIVO, 'utf8'));
 
-    const cliente = new Client({ connectionString: process.env.DATABASE_URL });
+    const cliente = new Client({ connectionString: (process.env.DATABASE_URL_MIGRACION || process.env.DATABASE_URL) });
     await cliente.connect();
     let nuevos = 0;
     const existentes = [];
