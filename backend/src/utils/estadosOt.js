@@ -6,9 +6,8 @@
 // destino, y al llegar pulsa Iniciar (en_terreno). Un APK anterior sigue funcionando: puede pasar
 // de asignada directo a en_terreno.
 //
-// Hallazgo de la segunda auditoria: ninguna ruta revisaba el estado. Una OT finalizada podia
-// volver a "asignada" al reasignarla, el mecanico podia reabrirla con /diagnostico, y cerrarla
-// dos veces reescribia la fecha de cierre y le mandaba al cliente un segundo aviso de cierre.
+// Ninguna ruta puede reabrir una OT finalizada: sin esta regla se podia reasignar a "asignada", reabrirla
+// con /diagnostico o cerrarla dos veces (reescribia la fecha de cierre y mandaba otro aviso de cierre).
 //
 // Funciones puras: la regla queda testeable sin base de datos (ver test/estadosOt.test.js).
 
@@ -26,7 +25,7 @@ const EN_CURSO_PANEL = ['asignada', 'aceptada', 'en_camino', 'en_terreno', 'en_r
 
 /**
  * Lista de estados de un filtro (`?estado=asignada,aceptada`): devuelve { estados } o { error }.
- * Un estado desconocido o una lista vacia se rechazan (antes un valor invalido terminaba en 500).
+ * Un estado desconocido o una lista vacia se rechazan.
  */
 function parsearEstados(texto) {
     if (typeof texto !== 'string') return { error: 'Estado inválido' };

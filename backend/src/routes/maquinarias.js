@@ -25,11 +25,9 @@ async function conFotoFirmada(fila) {
     return { ...fila, foto_url: error ? null : data.signedUrl };
 }
 
-// GET /api/maquinarias - listado con estado (HU-02)
 // Permisos (Tabla 6.1): Gerente=Lectura, Administrativo=Lectura/Escritura, Mecanico=Lectura, Cliente=Denegado
-// Acepta busqueda (`q`) y los mismos filtros que ofrece Flota, ademas de limit/offset. Los
-// filtros se resolvian en el panel sobre los ~500 equipos ya descargados; ahora los resuelve
-// Postgres y solo viajan los que se van a mostrar.
+// Acepta busqueda (`q`) y los mismos filtros que ofrece Flota, ademas de limit/offset: los resuelve
+// Postgres y solo viajan los equipos que se van a mostrar.
 router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     const { limit, offset } = parsearPaginacion(req.query);
     const q = parsearBusqueda(req.query);
@@ -90,7 +88,6 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
     }
 });
 
-// GET /api/maquinarias/mias - portal cliente: solo su propia flota
 router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     if (!req.user.cliente_id) {
         return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
@@ -107,7 +104,7 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     }
 });
 
-// GET /api/maquinarias/mias/historicos - portal cliente: los equipos con documentos propios, los
+// portal cliente: los equipos con documentos propios, los
 // que tiene hoy (actual = true) y los que tuvo antes. Sale SOLO de los documentos que llevan su
 // cliente_id (guias, OT y facturas, con las mismas reglas que /:id/documentos), nunca del cliente
 // actual del equipo; el cliente sale del token y no se acepta por parametro. /mias no cambia.
@@ -128,7 +125,7 @@ router.get('/mias/historicos', verifyToken, requireRole('cliente'), async (req, 
     }
 });
 
-// GET /api/maquinarias/resumen - totales de la flota para el encabezado de Flota y sus pestanas.
+// totales de la flota para el encabezado de Flota y sus pestanas.
 // Es de toda la flota y no cambia con los filtros: son los numeros que uno mira antes de filtrar.
 // "Disponibles" y "arrendados" se cuentan igual que en el Dashboard: disponible es sin cliente y
 // operativo; arrendado es tener cliente. Un equipo en mantencion sin cliente no es ninguno de los dos.
@@ -156,7 +153,7 @@ router.get('/resumen', verifyToken, requireRole('gerente', 'administrativo', 'me
     }
 });
 
-// GET /api/maquinarias/:id/documentos - guias, ordenes de trabajo y facturas del equipo.
+// guias, ordenes de trabajo y facturas del equipo.
 // Administrativo y gerente ven todo (tambien lo que no tiene cliente) y pueden filtrar con
 // ?cliente_id. Un cliente ve SOLO los documentos que llevan su cliente_id (el que el documento
 // guardo en su momento, no el de hoy del equipo), ignora ?cliente_id y no ve valorizaciones.
@@ -223,7 +220,7 @@ router.get('/:id/documentos', verifyToken, requireRole('gerente', 'administrativ
     }
 });
 
-// GET /api/maquinarias/:id/linea-tiempo - guias, ordenes de trabajo, facturas y lecturas de horometro del
+// guias, ordenes de trabajo, facturas y lecturas de horometro del
 // equipo, del evento mas reciente al mas antiguo, agrupados en tramos de un mismo cliente (el que guardo
 // cada registro en su momento). Lleva montos por evento, por eso solo gerente y administrativo; no entrega
 // archivos ni URLs firmadas (el documento se abre en la pestana Documentos). Maximo 500 eventos (`hay_mas`).
@@ -241,7 +238,6 @@ router.get('/:id/linea-tiempo', verifyToken, requireRole('gerente', 'administrat
     }
 });
 
-// GET /api/maquinarias/:id - perfil completo del equipo (ficha tecnica)
 router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     try {
         const result = await pool.query(
@@ -277,7 +273,6 @@ router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecani
     }
 });
 
-// GET /api/maquinarias/:id/ordenes-trabajo - historial simple de OTs del equipo
 router.get('/:id/ordenes-trabajo', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     try {
         const result = await pool.query(
@@ -292,7 +287,6 @@ router.get('/:id/ordenes-trabajo', verifyToken, requireRole('gerente', 'administ
     }
 });
 
-// POST /api/maquinarias - crear maquinaria (con ficha tecnica y foto opcional)
 // Permisos: Administrativo tiene Lectura/Escritura sobre Control de Flota
 router.post('/', verifyToken, requireRole('administrativo'), subidaImagen.single('archivo'), async (req, res) => {
     const {
@@ -346,7 +340,6 @@ router.post('/', verifyToken, requireRole('administrativo'), subidaImagen.single
     }
 });
 
-// PATCH /api/maquinarias/:id - editar ficha tecnica (todo opcional, no toca la foto)
 router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res) => {
     const {
         tipo, ubicacion,
@@ -391,7 +384,6 @@ router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res
     }
 });
 
-// PATCH /api/maquinarias/:id/foto - reemplazar solo la foto de la ficha tecnica
 router.patch('/:id/foto', verifyToken, requireRole('administrativo'), subidaImagen.single('archivo'), async (req, res) => {
     if (!req.file) {
         return res.status(400).json({ error: 'archivo (imagen) es requerido' });
@@ -420,7 +412,6 @@ router.patch('/:id/foto', verifyToken, requireRole('administrativo'), subidaImag
     }
 });
 
-// PATCH /api/maquinarias/:id/estado - actualizar estado (mecanico reporta)
 // Permisos: Mecanico y Administrativo pueden escribir; Gerente solo lectura, Cliente denegado
 router.patch('/:id/estado', verifyToken, requireRole('mecanico', 'administrativo'), async (req, res) => {
     const { id } = req.params;

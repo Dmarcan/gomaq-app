@@ -72,7 +72,7 @@ async function moverStock(client, { ubicacionId, insumoId, delta }) {
     );
 }
 
-// GET /api/insumos - catalogo completo (mecanico lo usa para el picker de consumo).
+// catalogo completo (mecanico lo usa para el picker de consumo).
 // Ademas de stock_actual (el total) trae cuanto hay en la bodega central y, para un mecanico,
 // en su furgon: al cargar repuestos necesita ver "bodega: X / furgon: Y" antes de elegir.
 router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
@@ -96,7 +96,6 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
     }
 });
 
-// POST /api/insumos - crear item de catalogo
 router.post('/', verifyToken, requireRole('administrativo'), async (req, res) => {
     const { nombre, unidad_medida, costo_unitario } = req.body;
     const errCuerpo = validarCuerpo(req.body, { textos: { nombre: 150, unidad_medida: 20 } });
@@ -120,7 +119,6 @@ router.post('/', verifyToken, requireRole('administrativo'), async (req, res) =>
     }
 });
 
-// PATCH /api/insumos/:id - editar nombre/unidad/costo
 router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res) => {
     const { nombre, unidad_medida, costo_unitario } = req.body;
     const errCuerpo = validarCuerpo(req.body, { textos: { nombre: 150, unidad_medida: 20 } });
@@ -149,7 +147,6 @@ router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res
     }
 });
 
-// GET /api/insumos/mi-furgon - lo que lleva el furgon del mecanico autenticado
 router.get('/mi-furgon', verifyToken, requireRole('mecanico'), async (req, res) => {
     let client;
     try {
@@ -179,7 +176,7 @@ router.get('/mi-furgon', verifyToken, requireRole('mecanico'), async (req, res) 
     }
 });
 
-// POST /api/insumos/transferencia - el mecanico carga repuestos de la bodega a su furgon.
+// el mecanico carga repuestos de la bodega a su furgon.
 //
 // Solo con señal, a proposito: la carga se hace en el taller y validar contra la bodega en el
 // momento evita que dos mecanicos reclamen sin saberlo la misma pieza. Por eso aca SI se
@@ -216,7 +213,7 @@ router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrati
 
         await client.query('BEGIN');
         const bodega = await bodegaCentral(client);
-        // un mecanico siempre carga a SU furgon: aceptar un destino del cuerpo le permitia
+        // un mecanico siempre carga a SU furgon: aceptar un destino del cuerpo le permitiria
         // cargarle stock al furgon de otro. Solo el administrativo puede indicar destino.
         if (req.user.rol === 'administrativo' && req.body.ubicacion_destino_id !== undefined && req.body.ubicacion_destino_id !== null
             && !idDeCuerpoValido(req.body.ubicacion_destino_id)) {
@@ -231,7 +228,7 @@ router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrati
             return res.status(400).json({ error: 'No tienes un furgón asignado' });
         }
 
-        // el destino debe ser un furgon activo: una clave foranea invalida terminaba en 500
+        // el destino debe ser un furgon activo: una clave foranea invalida daria 500
         if (req.user.rol === 'administrativo' && req.body.ubicacion_destino_id) {
             const ubi = await client.query(
                 'SELECT tipo, activa FROM ubicaciones_stock WHERE id = $1', [destino]);
@@ -303,7 +300,7 @@ router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrati
     }
 });
 
-// GET /api/insumos/descuadres - existencias negativas por ubicacion, para que bodega las cuadre.
+// existencias negativas por ubicacion, para que bodega las cuadre.
 // Aparecen cuando un mecanico registro el consumo de un repuesto que el sistema no tenia en su
 // furgon; el dato del trabajo se conserva y la diferencia queda a la vista. Cada fila dice desde
 // cuando esta negativo, reconstruido con los movimientos (utils/stock.js reconstruirDescuadre).
@@ -368,13 +365,13 @@ router.get('/descuadres', verifyToken, requireRole('administrativo', 'gerente'),
     }
 });
 
-// GET /api/insumos/motivos-ajuste - motivos validos para un CONTEO, para el selector del panel.
+// motivos validos para un CONTEO, para el selector del panel.
 // 'traspaso_no_registrado' no esta: ese caso se cuadra con un traspaso desde la bodega.
 router.get('/motivos-ajuste', verifyToken, requireRole('administrativo', 'gerente'), (req, res) => {
     res.json(Object.entries(MOTIVOS_CONTEO).map(([codigo, nombre]) => ({ codigo, nombre })));
 });
 
-// POST /api/insumos/ajuste - conteo fisico de un insumo en una ubicacion (solo administrativo).
+// conteo fisico de un insumo en una ubicacion (solo administrativo).
 //
 // Cuadra la existencia del sistema con lo contado: guarda la diferencia como un movimiento de
 // tipo 'ajuste' con su motivo. Idempotente con `uuid_cliente` (obligatorio): si se pierde la
@@ -490,7 +487,6 @@ router.post('/ajuste', verifyToken, requireRole('administrativo'), async (req, r
     }
 });
 
-// GET /api/insumos/por-ubicacion - existencias de todo el inventario, agrupadas por lugar
 router.get('/por-ubicacion', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
         const result = await pool.query(
@@ -512,7 +508,6 @@ router.get('/por-ubicacion', verifyToken, requireRole('administrativo', 'gerente
     }
 });
 
-// POST /api/insumos/:id/ingreso - suma stock (compra de insumo)
 router.post('/:id/ingreso', verifyToken, requireRole('administrativo'), async (req, res) => {
     const { cantidad } = req.body;
     if (!esIdPositivo(req.params.id)) return res.status(400).json({ error: 'Id de insumo inválido' });
@@ -552,11 +547,10 @@ router.post('/:id/ingreso', verifyToken, requireRole('administrativo'), async (r
     }
 });
 
-// GET /api/insumos/movimientos - movimientos recientes, con datos de OT/insumo/usuario para auditoria.
+// movimientos recientes, con datos de OT/insumo/usuario para auditoria.
 // Filtros opcionales: ?insumo_id= y ?ubicacion_id= (origen o destino), para "ver movimientos" de un
 // descuadre. Los ajustes de inventario traen su motivo (motivo_codigo).
 router.get('/movimientos', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
-    // antes venia con un LIMIT 100 fijo, sin forma de ver mas alla ni de saber cuantos habia
     const { limit, offset } = parsearPaginacion(req.query);
     const filtros = [];
     const valores = [];
@@ -595,7 +589,6 @@ router.get('/movimientos', verifyToken, requireRole('gerente', 'administrativo')
     }
 });
 
-// GET /api/insumos/orden/:ordenId - insumos consumidos por una OT puntual
 router.get('/orden/:ordenId', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     try {
         // un mecanico solo ve las lineas de sus propias OT, igual que en el resto de su flujo
@@ -640,8 +633,6 @@ async function recalcularFacturableOt(client, ordenId) {
     return facturable;
 }
 
-// ---- Cambios a las lineas de una OT (bloque 1b) ----
-//
 // Agregar, anular y modificar una linea cambian lo que se cobra, asi que las tres rutas siguen el
 // mismo camino, todo dentro de UNA transaccion:
 //   1. bloquear la fila de la OT (FOR NO KEY UPDATE). Es obligatorio: el historial se ordena por el id de
@@ -718,11 +709,9 @@ function detalleDeLinea({ lineaId, insumo, campo, antes, despues, compuertas }) 
     };
 }
 
-/**
- * Una OT finalizada que no era facturable y no esta valorizada pasa a facturable por un cambio de lineas: queda
- * esperando al gerente y antes no habia aviso (la valorizacion no se "anulo" porque nunca existio).
- * `orden` trae el facturable ANTERIOR (bloquearOrden); `facturableOt` es el recalculado.
- */
+// Una OT finalizada que no era facturable y no esta valorizada pasa a facturable por un cambio de lineas:
+// queda esperando al gerente y se le avisa (no hay valorizacion que anular: nunca existio).
+// `orden` trae el facturable ANTERIOR (bloquearOrden); `facturableOt` es el recalculado.
 async function avisarSiPasoAPorValorizar(client, req, orden, facturableOt) {
     if (orden.estado === 'finalizada' && (orden.valorizacion === null || orden.valorizacion === undefined)
         && orden.facturable !== true && facturableOt === true) {
@@ -764,7 +753,7 @@ async function anularValorizacionSiCorresponde(client, req, orden, antes, { tipo
     return true;
 }
 
-// POST /api/insumos/orden/:ordenId - agregar una linea de repuesto a la OT.
+// agregar una linea de repuesto a la OT.
 // Replica la tabla del talonario: cantidad, insumo del catalogo o descripcion escrita a mano,
 // precio, y el facturable SI/NO/? de esa linea.
 //
@@ -793,7 +782,7 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
     if (!uuidValido) {
         return res.status(400).json({ error: 'uuid_cliente no es un UUID valido' });
     }
-    // un mecanico solo carga repuestos a sus propias OT: sin esto podia agregar lineas a la
+    // un mecanico solo carga repuestos a sus propias OT: sin esto podria agregar lineas a la
     // orden de otro y, de paso, cambiarle el facturable (que se deriva de las lineas)
     if (req.user.rol === 'mecanico') {
         const check = await verificarDuenoOrden(req.params.ordenId, req.user.id);
@@ -927,7 +916,7 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
     }
 });
 
-// POST /api/insumos/orden/:ordenId/linea/:lineaId/anular - tachar una linea mal ingresada.
+// tachar una linea mal ingresada.
 //
 // Como en el talonario, la linea no se borra: queda tachada, con quien la anulo y cuando. El
 // repuesto vuelve a la ubicacion de donde salio (furgon o bodega) y la linea deja de contar como
@@ -1023,8 +1012,7 @@ router.post('/orden/:ordenId/linea/:lineaId/anular', verifyToken, requireRole('m
     }
 });
 
-// PATCH /api/insumos/orden/:ordenId/linea/:lineaId - resolver el "?" del papel o corregir el
-// precio. Es la decision que describio el jefe de taller (entrevista, punto 9): clientes antiguos a los
+// resolver el "?" del papel o corregir el precio. Sirve para los clientes antiguos a los
 // que se decide despues no cobrarles, aunque el trabajo se haya hecho.
 //
 // Con la OT cerrada exige motivo (motivo_codigo y motivo); con la OT facturada responde 409.

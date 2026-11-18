@@ -1,7 +1,7 @@
 // Paginacion y busqueda de los listados que crecen.
 //
-// Hallazgo de la auditoria de UX: ningun endpoint paginaba. Con ~500 equipos, cada carga de
-// Flota traia los 500 y la pantalla de Costo por equipo armaba una tabla de 500 filas de golpe.
+// Sin paginar, con ~500 equipos cada carga de Flota traeria los 500 y la pantalla de Costo por equipo
+// armaria una tabla de 500 filas de golpe.
 //
 // Forma de la respuesta: SIEMPRE el sobre { items, total, hay_mas }, incluso cuando no se pide
 // limite. Tener una sola forma evita que el mismo endpoint devuelva a veces un arreglo y a

@@ -1,4 +1,4 @@
-// Periodos de facturacion de un arriendo (bloque 2b). Funciones puras sobre dias de calendario
+// Periodos de facturacion de un arriendo. Funciones puras sobre dias de calendario
 // 'YYYY-MM-DD', sin zona horaria ni base de datos.
 //
 // Un arriendo va del inicio de cobro de su despacho hasta su fin (el dia en que sale del cliente si

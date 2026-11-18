@@ -5,15 +5,13 @@ const path = require('path');
 const { rutaAdjuntoSolicitud } = require('../src/utils/rutaArchivo');
 
 /**
- * Regresion del hallazgo critico de la auditoria.
+ * Regresion de una vulnerabilidad critica: guardar el adjunto con `multer.diskStorage` y el nombre que
+ * envia el cliente. Multer hace `path.join(destino, nombre)` SIN normalizar, asi que un nombre con `../`
+ * escapa del directorio: `1700-../../../../.env` terminaba escribiendo `backend/.env`, es decir el
+ * JWT_SECRET y las credenciales de la base.
  *
- * Antes el adjunto del cliente se guardaba con `multer.diskStorage` usando el nombre que el
- * propio cliente enviaba. Multer hace `path.join(destino, nombre)` SIN normalizar, asi que un
- * nombre con `../` escapaba del directorio: se verifico que `1700-../../../../.env` terminaba
- * escribiendo `backend/.env`, es decir el JWT_SECRET y las credenciales de la base.
- *
- * La correccion es que el nombre del cliente ya no participe de la ruta: el servidor la arma
- * entera y del original solo rescata la extension, saneada.
+ * La regla: el nombre del cliente no participa de la ruta; el servidor la arma entera y del original
+ * solo rescata la extension, saneada.
  */
 describe('rutaAdjuntoSolicitud', () => {
     test('conserva la extension de un nombre normal', () => {
@@ -59,8 +57,8 @@ describe('rutaAdjuntoSolicitud', () => {
     });
 });
 
-// Segunda auditoria: guias, facturas, fotos de equipos, documentos de vehiculos y evidencias
-// seguian metiendo el nombre enviado por el usuario dentro de la ruta.
+// guias, facturas, fotos de equipos, documentos de vehiculos y evidencias: el nombre enviado por el
+// usuario tampoco entra en la ruta
 const { rutaArchivo, segmentoSeguro, rutaPerteneceAOrden } = require('../src/utils/rutaArchivo');
 
 describe('rutaArchivo', () => {

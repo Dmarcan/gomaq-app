@@ -1,4 +1,4 @@
-// Lectura de arriendos desde las guias (bloque 2b): una sola definicion de "arriendo" que comparten
+// Lectura de arriendos desde las guias: una sola definicion de "arriendo" que comparten
 // /pendientes, /arriendos-en-curso y la propuesta de periodo.
 //
 // Un arriendo es un despacho no fallido. Lo cierra la siguiente guia no fallida del mismo equipo

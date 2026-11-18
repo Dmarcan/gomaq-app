@@ -52,10 +52,9 @@ router.post('/login', limiteLogin, async (req, res) => {
         );
         const usuario = result.rows[0];
         if (!usuario) {
-            // Si no existe en usuarios puede ser un cliente que se registro y aun no lo aprueban.
-            // Se le da ese mensaje mas claro, pero SOLO tras validar su contrasena: antes se
-            // devolvia sin comprobarla, lo que permitia a cualquiera averiguar que correos
-            // estaban registrados probando uno por uno (enumeracion de usuarios).
+            // Si no existe en usuarios puede ser un cliente registrado cuya solicitud sigue pendiente. Se le da un
+            // mensaje claro SOLO tras validar su contrasena: si no, se podria averiguar que correos estan
+            // registrados probando uno por uno (enumeracion de usuarios).
             const solicitud = await pool.query(
                 `SELECT password_hash FROM solicitudes_cliente WHERE lower(email) = lower($1) AND estado = 'pendiente'`,
                 [email]
@@ -104,7 +103,7 @@ const RESPUESTA_RECUPERAR = {
         + 'Si tu cuenta no tiene un correo real, pide el código a GOMAQ.',
 };
 
-// POST /api/auth/recuperar - "Olvide mi contrasena". Responde lo mismo exista o no la cuenta, y el
+// "Olvide mi contrasena". Responde lo mismo exista o no la cuenta, y el
 // correo se envia despues de responder: ni el texto ni la demora delatan que correos estan registrados.
 router.post('/recuperar', limiteRecuperar, async (req, res) => {
     const email = normalizarCorreo(req.body && req.body.email);
@@ -164,7 +163,7 @@ async function procesarRecuperacion(email) {
 
 const ERROR_CODIGO = 'El código no es válido o ya venció. Revisa el correo y el código, o pide uno nuevo';
 
-// POST /api/auth/codigo/confirmar - canjea un codigo (invitacion o recuperar) y fija la contrasena que
+// canjea un codigo (invitacion o recuperar) y fija la contrasena que
 // eligio la persona. La invitacion ademas activa la cuenta. Las sesiones abiertas se cortan
 // (password_cambiada_at). Despues el cliente inicia sesion con la clave nueva.
 router.post('/codigo/confirmar', limiteCodigo, async (req, res) => {
@@ -230,7 +229,7 @@ router.post('/codigo/confirmar', limiteCodigo, async (req, res) => {
     }
 });
 
-// POST /api/auth/logout - cierra la sesion actual en el servidor (el cliente igual borra su token). Con un
+// cierra la sesion actual en el servidor (el cliente igual borra su token). Con un
 // token antiguo (JWT) no hay nada que revocar y responde igual.
 router.post('/logout', verifyToken, async (req, res) => {
     try {
@@ -244,7 +243,6 @@ router.post('/logout', verifyToken, async (req, res) => {
     }
 });
 
-// POST /api/auth/logout-todas - cierra todas las sesiones de la cuenta, incluida esta.
 router.post('/logout-todas', verifyToken, async (req, res) => {
     try {
         await revocarSesiones(pool, req.user.id, { motivo: 'logout_todas' });
@@ -255,7 +253,7 @@ router.post('/logout-todas', verifyToken, async (req, res) => {
     }
 });
 
-// POST /api/auth/cambiar-password - la persona cambia su propia clave con la sesion abierta. Las demas
+// la persona cambia su propia clave con la sesion abierta. Las demas
 // sesiones de la cuenta se cortan (password_cambiada_at) y esta recibe un token nuevo para seguir.
 // Una clave actual equivocada responde 400 y no 401: un 401 cerraria la sesion en el panel.
 router.post('/cambiar-password', limiteLogin, verifyToken, async (req, res) => {

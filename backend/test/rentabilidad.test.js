@@ -38,7 +38,7 @@ describe('calcularGasto', () => {
     });
 
     test('cuenta el gasto aunque la linea no se le cobre al cliente', () => {
-        // regla de la entrevista: a el jefe de taller le importa el costo real para GOMAQ, no lo facturado
+        // regla de negocio: interesa el costo real para GOMAQ, no lo facturado
         const lineas = [linea(1, 15000, 'no'), linea(1, 5000, 'pendiente')];
         assert.strictEqual(calcularGasto(lineas).total, 20000);
     });

@@ -27,8 +27,8 @@ function rutaApiNoEncontrada(req, res) {
 }
 
 /**
- * Red de seguridad del proceso: una promesa rechazada o una excepcion que se escape de una
- * ruta se registra y una promesa rechazada solo se registra; una excepcion no atrapada se registra y reinicia el proceso.
+ * Red de seguridad del proceso: una promesa rechazada se registra y nada mas; una excepcion no
+ * atrapada se registra y reinicia el proceso.
  * Los handlers asincronos ya van cubiertos por `utils/asyncErrores.js`; esto es el ultimo
  * recurso (por ejemplo un temporizador o un evento del pool).
  */

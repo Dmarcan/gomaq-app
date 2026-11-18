@@ -44,7 +44,7 @@ function validarNeto(monto, neto) {
 }
 
 /**
- * Division propuesta de un traslado segun lo que dice la factura (regla de David):
+ * Division propuesta de un traslado segun lo que dice la factura (regla del negocio):
  *   entrega_y_retiro  mitad y mitad; si el monto es impar, entrega lleva el peso que sobra
  *   entrega / retiro  todo a ese concepto
  *   otro              null (un solo monto, sin dividir)

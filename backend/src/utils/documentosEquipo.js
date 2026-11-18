@@ -1,6 +1,6 @@
 // Documentos de un equipo (guias, ordenes de trabajo y facturas) y quien puede verlos.
 //
-// Un equipo pasa por varios clientes (ACSA, Prize, Servinut, ACSA...), asi que lo que ve cada
+// Un equipo pasa por varios clientes, asi que lo que ve cada
 // cliente sale SIEMPRE del cliente que el propio documento guardo al momento del evento
 // (guias.cliente_id, ordenes_trabajo.cliente_id, facturas.cliente_id), nunca de
 // maquinarias.cliente_id, que es el cliente de hoy.

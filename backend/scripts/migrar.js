@@ -2,10 +2,8 @@
 //
 //   node scripts/migrar.js
 //
-// En el servidor local las migraciones se aplicaban a mano con psql y nada registraba cuales
-// ya habian corrido. En Railway no hay un servidor donde entrar a hacerlo: este script corre
-// al arrancar el contenedor, antes que el servidor (CMD del Dockerfile), y lleva el registro en
-// la tabla schema_migraciones.
+// Corre al arrancar el contenedor, antes que el servidor (CMD del Dockerfile), y lleva el registro de las
+// migraciones aplicadas en la tabla schema_migraciones.
 //
 // Base vacia: aplica schema.sql y todas las migraciones.
 // Base existente sin registro (la del servidor local, migrada a mano): se niega a tocarla,
@@ -17,8 +15,6 @@
 // se puede aplicar solo hasta cierta version, inclusive, sin tocar las siguientes:
 //
 //   node scripts/migrar.js --hasta 042
-//
-// Sin esa opcion el script se comporta exactamente igual que siempre.
 //
 // Cada migracion corre en su propia transaccion: si falla, no queda a medias ni registrada.
 

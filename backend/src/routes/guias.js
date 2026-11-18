@@ -21,7 +21,7 @@ const { sqlGuiasSinDocumento } = require('../utils/pendientes');
 const router = express.Router();
 validarIdsEnRuta(router, ['id', 'guiaId']);
 
-// POST /api/maquinarias/guias/detectar - lee el texto del PDF (si lo tiene) y prellena el
+// lee el texto del PDF (si lo tiene) y prellena el
 // formulario con lo que reconozca (ver utils/parsearDocumento). Mejor esfuerzo: nunca falla
 // el flujo, si no encuentra nada devuelve todo en null y el usuario llena a mano.
 router.post('/guias/detectar', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
@@ -57,9 +57,7 @@ router.post('/guias/detectar', verifyToken, requireRole('administrativo'), subid
     }
 });
 
-// GET /api/maquinarias/guias/recientes - las ultimas guias subidas, con su PDF.
-// La pantalla de Guias era solo un formulario: una vez subida, la guia no se podia volver a ver
-// desde ahi para confirmar que quedo bien.
+// las ultimas guias subidas, con su PDF.
 // Con ?sin_documento=1 lista solo las guias que aun no tienen PDF (sin tope de 20: no pueden
 // quedar olvidadas), de la mas antigua a la mas nueva.
 router.get('/guias/recientes', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
@@ -88,7 +86,7 @@ router.get('/guias/recientes', verifyToken, requireRole('administrativo', 'geren
     }
 });
 
-// POST /api/maquinarias/:id/guias - subir guia de despacho o recepcion (PDF va a Supabase Storage)
+// subir guia de despacho o recepcion (PDF va a Supabase Storage)
 // El PDF es obligatorio salvo que se pida explicitamente `sin_documento` (el equipo salio antes de
 // tener la guia escaneada): la guia se crea igual, con quien la registro, y queda marcada como
 // "falta el documento" hasta adjuntarlo con POST /guias/:guiaId/archivo. Hay que pedirlo a
@@ -297,7 +295,7 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
     }
 });
 
-// POST /api/maquinarias/guias/:guiaId/archivo - adjunta el PDF a una guia que se registro sin
+// adjunta el PDF a una guia que se registro sin
 // documento. Solo si todavia no lo tiene: reemplazar un documento ya cargado cambiaria la
 // evidencia de un despacho, y eso no se hace en silencio.
 router.post('/guias/:guiaId/archivo', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {

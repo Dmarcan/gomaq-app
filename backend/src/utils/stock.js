@@ -1,11 +1,8 @@
-// Inventario por ubicacion (patron "van stock": bodega central + el furgon de cada mecanico).
+// Inventario por ubicacion (patron "van stock": bodega central + el furgon de cada mecanico): cada mecanico
+// lleva en su furgon su stock de repuestos.
 //
-// Entrevista el jefe de taller, punto 3: cada mecanico tiene un furgon asignado y lleva ahi su stock de
-// repuestos. Antes existia un unico `insumos.stock_actual` global y consumir en una OT lo
-// descontaba de ahi, aunque el repuesto hubiera salido del furgon.
-//
-// `insumos.stock_actual` no se elimina: pasa a ser el TOTAL de todas las ubicaciones, para que
-// la pantalla de Insumos del panel y GET /api/insumos sigan funcionando sin cambios.
+// `insumos.stock_actual` no se elimina: es el TOTAL de todas las ubicaciones, para que la pantalla de
+// Insumos del panel y GET /api/insumos sigan funcionando sin cambios.
 //
 // Funciones puras: la regla queda testeable sin base de datos.
 
@@ -62,9 +59,7 @@ function validarTransferencia({ cantidad, disponibleOrigen, origenId, destinoId 
 }
 
 
-// ---------------------------------------------------------------------------------------------
 // Ajustes de inventario (conteo fisico) y descuadres (migracion 025)
-// ---------------------------------------------------------------------------------------------
 
 /** Motivos de un ajuste de inventario (o de un traspaso no registrado) y su texto para el panel. */
 const MOTIVOS_AJUSTE = Object.freeze({

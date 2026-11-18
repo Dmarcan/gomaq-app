@@ -1,16 +1,13 @@
-// Costo real y rentabilidad por equipo.
+// Costo real y rentabilidad por equipo: permite saber si una maquina "sale a perdida", es decir, si en los
+// meses que estuvo se gasto mas plata de la que dejaba el arriendo.
 //
-// Entrevista con el jefe de taller del 21 de julio de 2026, punto 1: hoy no hay forma de saber si una
-// maquina "sale a perdida" - textual: "no sabemos si en los tres meses que estuvo la maquina
-// se gasto mas plata de la que dejaba el arriendo". Esto responde esa pregunta.
+// Regla clave: el gasto cuenta TODAS las lineas de repuesto, se hayan cobrado al cliente o no. Interesa el
+// costo real para GOMAQ, no lo facturado. Por eso aca no aparece `facturable` por ningun lado: es
+// deliberado, no un olvido.
 //
-// Regla clave de esa misma entrevista: el gasto cuenta TODAS las lineas de repuesto, se hayan
-// cobrado al cliente o no. A el jefe de taller le interesa el costo real para GOMAQ, no lo facturado.
-// Por eso aca no aparece `facturable` por ningun lado: es deliberado, no un olvido.
-//
-// Alcance acordado: solo repuestos. Los traslados se cobran en la guia pero `guias` no guarda
-// el monto, y las horas de trabajo existen como tramos pero no hay ningun valor hora definido
-// en el negocio. Ambos quedan fuera hasta que esos datos existan.
+// Alcance: solo repuestos. Los traslados se cobran en la guia pero `guias` no guarda el monto, y las
+// horas de trabajo existen como tramos pero no hay ningun valor hora definido en el negocio. Ambos quedan
+// fuera hasta que esos datos existan.
 
 const { ingresoSinTraslado } = require('./trasladoFactura');
 const { inicioCobroDia, finCobroDia, sumarDias, diaCalendarioUtc } = require('./diasArriendo');
@@ -50,9 +47,8 @@ const conValor = (v) => v !== null && v !== undefined && v !== '';
  * Ingreso del equipo por UNA factura. Unica regla para la rentabilidad, el perfil y la linea de tiempo:
  *   - Anulada con nota de credito (anulada_nc, migracion 038): 0. Deja de contar como ingreso.
  *   - Con monto_neto guardado (facturas nuevas, 038): neto menos traslado, todo en neto como la planilla
- *     de la administrativa (decision de David del 16-11-2026: el IVA solo se corrige en las facturas nuevas).
- *   - Sin monto_neto (las ya cargadas): exactamente como antes, monto total menos traslado (033). Ninguna
- *     cifra ya vista cambia.
+ *     de cobranza (el IVA solo se corrige en las facturas nuevas).
+ *   - Sin monto_neto (las ya cargadas): monto total menos traslado (033), sin cambiar las cifras ya vistas.
  * Nunca menor que 0. null si la factura no tiene monto (no suma).
  */
 function ingresoFactura(factura) {
@@ -75,8 +71,8 @@ function calcularIngreso(facturas) {
 }
 
 /**
- * Resumen de un equipo. `margen` negativo es exactamente el caso que el jefe de taller quiere detectar
- * para decidir si le sube el precio al cliente o deja de arrendarle ese equipo.
+ * Resumen de un equipo. `margen` negativo es exactamente el caso a detectar para decidir si se sube
+ * el precio al cliente o se deja de arrendarle ese equipo.
  */
 function calcularRentabilidad({ lineas, facturas }) {
     const gasto = calcularGasto(lineas);

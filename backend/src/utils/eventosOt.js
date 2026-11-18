@@ -1,28 +1,18 @@
 // Historial de eventos de la orden de trabajo (tabla ordenes_eventos, migracion 020).
 //
-// Cada ruta que crea, asigna, toma, avanza, cierra o valoriza una OT deja un evento en la MISMA
-// transaccion que el cambio, para que el historial nunca diga algo distinto de lo que paso. La
-// tabla es de solo insercion (triggers en la migracion).
+// Cada ruta que crea, asigna, toma, avanza, cierra, valoriza o cambia las lineas y la factura de una OT
+// deja un evento en la MISMA transaccion que el cambio, para que el historial nunca diga algo distinto de
+// lo que paso. La tabla es de solo insercion (triggers en la migracion).
 //
-// Quien escribe cada tipo: creacion, asignacion, toma, cambio_estado, cierre y valorizacion los
-// escriben las rutas de ordenes.js y solicitudes.js (bloque 1a). linea_agregada, linea_modificada,
-// linea_anulada, factura_cargada y factura_anulada los escribe el bloque 1b (insumos.js y
-// facturas.js). Los cuatro primeros ya los admitia el CHECK de la migracion 020; factura_anulada lo
-// agrega la 021.
-//
-// Orden del historial: el endpoint ordena por id (orden de escritura = llegada al servidor), con la
-// creacion siempre primero. ocurrio_en es la hora del evento que se muestra, pero no ordena: la hora
-// de un telefono con el reloj mal (atrasado o adelantado) daria cadenas "de X a Y" incoherentes.
-// registrado_en tampoco ordena: es la hora de inicio de la transaccion y puede invertir dos
-// operaciones casi simultaneas.
+// Orden del historial: se ordena por id (orden de escritura), con la creacion siempre primero.
+// ocurrio_en es la hora que se muestra, pero no ordena: la hora de un telefono con el reloj mal daria
+// cadenas "de X a Y" incoherentes. registrado_en tampoco: es la hora de inicio de la transaccion y puede
+// invertir dos operaciones casi simultaneas.
 //
 // IMPORTANTE: el id solo sigue el orden real mientras TODO evento se escriba con la fila de la OT
-// bloqueada (FOR UPDATE, o un UPDATE de esa fila en la misma transaccion), como hacen hoy todas las
-// rutas. El bloque 1b, que agrega los eventos linea_*, y quien escriba factura_cargada deben
-// respetarlo.
+// bloqueada (FOR UPDATE, o un UPDATE de esa fila en la misma transaccion).
 //
-// Las funciones de armado son puras y se prueban sin base (test/eventosOt.test.js); solo
-// registrarEvento toca la base, y usa el cliente de la transaccion que le pasan.
+// Las funciones de armado son puras (test/eventosOt.test.js); solo registrarEvento toca la base.
 
 const TIPOS_EVENTO = [
     'creacion', 'asignacion', 'toma', 'cambio_estado', 'cierre', 'valorizacion',

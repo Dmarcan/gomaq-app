@@ -29,7 +29,6 @@ async function conUrlFirmada(filas) {
     }));
 }
 
-// POST /api/solicitudes - el cliente reporta una falla o pide mantencion sobre su propia maquinaria
 router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archivo'), async (req, res) => {
     const { maquinaria_id, descripcion, tipo } = req.body;
     const errCuerpo = validarCuerpo(req.body, { textos: { descripcion: 2000, tipo: 50 }, ids: ['maquinaria_id'] });
@@ -83,7 +82,6 @@ router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archi
     }
 });
 
-// GET /api/solicitudes/mias - el cliente ve sus propias solicitudes con el estado de la OT vinculada
 router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     if (!req.user.cliente_id) {
         return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
@@ -108,7 +106,6 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     }
 });
 
-// GET /api/solicitudes - administrativo/gerente revisan las solicitudes de los clientes
 router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     // ?estado=pendiente: las que cuenta el dashboard (utils/pendientes.js); sin el, todas
     const filtro = req.query.estado;
@@ -132,7 +129,6 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
     }
 });
 
-// PATCH /api/solicitudes/:id/convertir - transforma la solicitud en una Orden de Trabajo real
 router.patch('/:id/convertir', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     let client = null;
     try {

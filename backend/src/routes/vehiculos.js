@@ -30,7 +30,6 @@ async function documentosConUrl(vehiculoId) {
     }));
 }
 
-// GET /api/vehiculos/mio - el vehiculo del mecanico autenticado, con sus documentos
 router.get('/mio', verifyToken, requireRole('mecanico'), async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM vehiculos WHERE usuario_id = $1 AND activo = true', [req.user.id]);
@@ -46,7 +45,6 @@ router.get('/mio', verifyToken, requireRole('mecanico'), async (req, res) => {
     }
 });
 
-// PATCH /api/vehiculos/mio - el mecanico actualiza lo que le consta de su propio vehiculo
 router.patch('/mio', verifyToken, requireRole('mecanico'), async (req, res) => {
     const { kilometraje } = req.body;
     if (kilometraje === undefined) {
@@ -71,7 +69,6 @@ router.patch('/mio', verifyToken, requireRole('mecanico'), async (req, res) => {
     }
 });
 
-// GET /api/vehiculos - flota de vehiculos del personal
 router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
         const result = await pool.query(
@@ -87,7 +84,7 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
     }
 });
 
-// POST /api/vehiculos - crear un vehiculo y, si corresponde, asignarlo a un mecanico.
+// crear un vehiculo y, si corresponde, asignarlo a un mecanico.
 // Asignarlo crea ademas su ubicacion de stock: el furgon pasa a tener existencias propias.
 // Un vehiculo sin mecanico (el furgon de compras, que no sale a terreno) no lleva stock.
 router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
@@ -136,7 +133,6 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
     }
 });
 
-// PATCH /api/vehiculos/:id - editar datos o reasignar el vehiculo
 router.patch('/:id', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { marca, modelo, anio, tipo, kilometraje, usuario_id, activo } = req.body;
     const errCuerpo = validarCuerpo(req.body, { textos: { marca: 100, modelo: 100, tipo: 50 }, ids: ['usuario_id'], numeros: { anio: [1900, 2200], kilometraje: [0, 2147483647] } });
@@ -145,10 +141,9 @@ router.patch('/:id', verifyToken, requireRole('administrativo', 'gerente'), asyn
     try {
         client = await pool.connect();
         await client.query('BEGIN');
-        // `usuario_id` NO puede ir por COALESCE: el panel ofrece "Sin asignar" y mandar null
-        // con COALESCE conservaba el valor anterior, asi que desasignar un furgon no hacia
-        // nada y no avisaba. Se distingue "no mandes el campo" (undefined) de "dejalo vacio"
-        // (null), que es justo lo que COALESCE no puede diferenciar.
+        // `usuario_id` NO puede ir por COALESCE: el panel ofrece "Sin asignar" y mandar null con COALESCE
+        // conservaria el valor anterior, asi que desasignar un furgon no haria nada. Se distingue "no mandes
+        // el campo" (undefined) de "dejalo vacio" (null), que COALESCE no puede diferenciar.
         const desasignar = usuario_id === null;
         const result = await client.query(
             `UPDATE vehiculos
@@ -195,7 +190,7 @@ router.patch('/:id', verifyToken, requireRole('administrativo', 'gerente'), asyn
     }
 });
 
-// POST /api/vehiculos/:id/documentos - permiso de circulacion, revision tecnica, seguro...
+// permiso de circulacion, revision tecnica, seguro...
 // Solo se guardan: no hay control de vencimiento (el calendario chileno de revision tecnica
 // depende del tipo de vehiculo y cambia cada año, calcularlo seria mas riesgo que ayuda).
 router.post('/:id/documentos', verifyToken, requireRole('mecanico', 'administrativo', 'gerente'),

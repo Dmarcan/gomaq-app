@@ -2,7 +2,7 @@
 // de viaje cuando no hay servicio de rutas.
 //
 // La base ya tiene CHECK de rango, pero no basta: el backend debe rechazar strings, NaN,
-// infinitos y pares incompletos ANTES de llegar a SQL (revision de Codex del plan de ubicacion).
+// infinitos y pares incompletos ANTES de llegar a SQL.
 
 const DECIMALES = 6; // ~0,1 m; mas precision es ruido y dato personal de sobra
 const RADIO_TIERRA_M = 6371000;

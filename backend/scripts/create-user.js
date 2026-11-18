@@ -2,9 +2,8 @@
 // rol: gerente | administrativo | mecanico | cliente
 // cliente_id: solo aplica (y es requerido) cuando rol=cliente, vincula el usuario a su empresa
 //
-// La contrasena NO se pasa por argumento: se pide por consola y no se muestra al escribirla.
-// Antes iba en argv, donde queda en el historial del shell y visible en `ps` para cualquier
-// otro usuario de la maquina (hallazgo de la auditoria).
+// La contrasena NO se pasa por argumento (quedaria en el historial del shell y visible en `ps`): se pide
+// por consola y no se muestra al escribirla.
 require('dotenv').config();
 const readline = require('readline');
 const bcrypt = require('bcryptjs');

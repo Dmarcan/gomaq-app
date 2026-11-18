@@ -1,7 +1,7 @@
 // Estado de mantencion preventiva de un equipo a partir de su horometro.
 // Funciones puras, sin BD: la regla de negocio queda testeable (ver test/mantencion.test.js).
 //
-// Regla (entrevista el jefe de taller del 21 de julio de 2026): la preventiva toca cada N horas de uso
+// Regla: la preventiva toca cada N horas de uso
 // (350 h para toda la flota de GOMAQ hoy, configurable por equipo). Lo que se cuenta son las
 // horas transcurridas desde la ultima mantencion, no el horometro absoluto: un equipo con
 // 1.156 h que recibio mantencion a las 1.100 lleva 56 h de uso, no 1.156.

@@ -63,9 +63,9 @@ function parsearFechaEmision(texto) {
 /**
  * Hora del documento como 'HH:MM', o null si no hay ninguna valida.
  *
- * Se devuelve aparte de la fecha a proposito: antes ambas se concatenaban en un unico
- * `new Date()`, y una hora invalida (un numero cualquiera con formato HH:MM en otra parte
- * del PDF) anulaba tambien una fecha perfectamente buena.
+  * Se devuelve aparte de la fecha a proposito: concatenarlas en un unico `new Date()` hacia que una
+  * hora invalida (un numero cualquiera con formato HH:MM en otra parte del PDF) anulara tambien una
+  * fecha perfectamente buena.
  */
 function parsearHora(texto) {
     if (!texto) return null;
@@ -234,7 +234,7 @@ const LINEA_VALOR = /^\s*\d+(?:[.,]\d+)?\s+[A-Za-z]{1,10}\.?\s+(?:[\d.,%-]+\s+)*
 /**
  * Traslado de una factura: suma de las lineas del detalle cuya descripcion empieza por "TRASLADO". El valor
  * de cada linea es el ultimo numero de su renglon "cantidad unidad precio valor" (neto). El concepto sale
- * de las palabras ENTREGA y RETIRO de la descripcion (regla de David):
+ * de las palabras ENTREGA y RETIRO de la descripcion (regla del negocio):
  *   entrega_y_retiro  dice las dos: se divide en mitades (entrega lleva el peso que sobra)
  *   entrega | retiro  dice solo una: todo a ese concepto
  *   sin_detalle       no dice ninguna: un solo monto, sin dividir

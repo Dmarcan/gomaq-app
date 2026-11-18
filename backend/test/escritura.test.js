@@ -94,7 +94,7 @@ before(async () => {
     tokens.gerente = firmar(porEmail['admin@gomaq.test']);
     tokens.mecanico = firmar(porEmail['mecanico@gomaq.test']);
     tokens.mecanicoDos = firmar(porEmail['mecanico2@gomaq.test']);
-    // cliente sin empresa vinculada (el usuario de la semilla ahora si tiene cliente_id en la base, y
+    // cliente sin empresa vinculada (el usuario de la semilla si tiene cliente_id en la base, y
     // verifyToken lo toma de ahi): un token de relleno, que el buscador de prueba da por bueno
     tokens.cliente = jwt.sign({ id: 987600, rol: 'cliente', cliente_id: null }, process.env.JWT_SECRET, { expiresIn: '1h' });
     datos.mecanicoId = porEmail['mecanico@gomaq.test'].id;
@@ -430,7 +430,7 @@ describe('anulacion de lineas de repuesto', () => {
         await pool.query("UPDATE ordenes_trabajo SET estado = 'finalizada' WHERE id = $1", [ot]);
         const ruta = `/api/insumos/orden/${ot}/linea/${linea.body.id}/anular`;
         assert.equal((await pedir('POST', ruta, 'mecanico')).status, 409);
-        // cerrada la OT, el panel anula solo con motivo (bloque 1b)
+        // cerrada la OT, el panel anula solo con motivo
         assert.equal((await pedir('POST', ruta, 'administrativo')).status, 400);
         assert.equal((await pedir('POST', ruta, 'administrativo', MOTIVO_VALIDO)).status, 200);
     });
@@ -758,9 +758,7 @@ describe('ciclo de vida de la OT', () => {
     });
 });
 
-// ---------------------------------------------------------------------------------------------
 // Cliente de la orden y costos por equipo
-// ---------------------------------------------------------------------------------------------
 
 /** Equipo propio de la prueba: las reglas no deben depender de los equipos que ya existan. */
 async function crearEquipo(clienteId = null) {
@@ -1042,9 +1040,7 @@ describe('alta de equipos', () => {
     });
 });
 
-// ---------------------------------------------------------------------------------------------
 // Historial de la orden (ordenes_eventos, migracion 020)
-// ---------------------------------------------------------------------------------------------
 
 /** Eventos de una OT en el orden en que se registraron. */
 async function eventosDe(ot) {
@@ -1582,9 +1578,7 @@ describe('historial de la orden: orden y sincronizacion tardia con datos inserta
     });
 });
 
-// ---------------------------------------------------------------------------------------------
-// Bloque 1b: cambios de lo facturable con motivo, bloqueo por factura y eventos en el historial
-// ---------------------------------------------------------------------------------------------
+// Cambios de lo facturable con motivo, bloqueo por factura y eventos en el historial
 
 /** Eventos de la OT de un tipo, en el orden en que se escribieron (id). */
 async function eventosTipo(ot, tipo) {
@@ -5422,8 +5416,7 @@ describe('bloque 5 (parte C): avisos al mecanico y al gerente', () => {
         assert.equal(lista[0].destinatario, 'mecanico@gomaq.test');
     });
 
-    // antes la asignacion pasaba (200) y solo se omitia el aviso; desde que una cuenta desactivada
-    // no puede recibir ordenes, la asignacion misma se rechaza y por lo tanto tampoco hay aviso
+    // una cuenta desactivada no puede recibir ordenes: la asignacion misma se rechaza y por lo tanto tampoco hay aviso
     test('a un mecanico inactivo no se le asigna ni se le avisa', async (t) => {
         if (!requiereBase(t)) return;
         await contactos(MARCA.telefono, MARCA.telefonoDos);
@@ -6917,9 +6910,7 @@ describe('validacion de dinero y cantidades (hallazgos del QA)', () => {
     });
 });
 
-// ---------------------------------------------------------------------------------------------
-// Concurrencia de guias y orden de bloqueo OT -> equipo (auditoria H6/H7, revision de Codex)
-// ---------------------------------------------------------------------------------------------
+// Concurrencia de guias y orden de bloqueo OT -> equipo
 
 async function crearClienteDePrueba(nombre) {
     const r = await pool.query('INSERT INTO clientes (nombre) VALUES ($1) RETURNING id', [`${nombre} ${crypto.randomUUID().slice(0, 6)}`]);

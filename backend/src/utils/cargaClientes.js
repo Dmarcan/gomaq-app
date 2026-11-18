@@ -6,7 +6,7 @@
 
 const { rutValido } = require('./rut');
 
-// ejecutivos que la carga crea si no existen (decision de David); los demas vendedores de la planilla
+// ejecutivos que la carga crea si no existen; los demas vendedores de la planilla
 // original quedan sin ejecutivo
 const EJECUTIVOS_A_CREAR = ['Freddy', 'Alejandra', 'Wenceslao', 'Oscar'];
 

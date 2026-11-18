@@ -1,7 +1,7 @@
 // Retencion de datos personales: borra lo que ya no sirve para operar, pasado un plazo.
 //
 // Solo toca cuatro tipos de filas que son datos de acceso o avisos viejos; NUNCA facturas, guias,
-// ordenes, clientes ni equipos (esos son el registro del negocio). Los plazos son los acordados con David:
+// ordenes, clientes ni equipos (esos son el registro del negocio). Los plazos son:
 //   * notificaciones ya terminadas (enviadas o con error definitivo): 180 dias
 //   * solicitudes de cliente rechazadas (guardan nombre, RUT, correo y el hash de la clave): 30 dias
 //   * sesiones vencidas o cerradas: 30 dias

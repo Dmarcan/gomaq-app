@@ -1,14 +1,14 @@
 // Facturable de una Orden de Trabajo, derivado de sus lineas de repuesto.
 //
 // En el talonario de papel el "FACTURABLE" no es de la orden: es una columna con tres casillas
-// (SI / NO / ?) en CADA linea de repuesto. El sistema tenia un unico booleano por OT, asi que
-// la fuente de verdad pasa a ser la linea y el campo de la OT queda derivado.
+// (SI / NO / ?) en CADA linea de repuesto. Por eso la fuente de verdad es la linea y el campo de la
+// OT queda derivado.
 //
 // Mantenerlo derivado, en vez de borrarlo, deja intactos los consumidores que ya existen:
 // routes/facturacion.js (pendientes de valorizar / listas para facturar) y routes/dashboard.js
 // siguen leyendo ordenes_trabajo.facturable sin enterarse del cambio.
 //
-// Regla acordada con el usuario: sin repuestos no se cobra. Un trabajo que no llevo ninguna
+// Regla: sin repuestos no se cobra. Un trabajo que no llevo ninguna
 // linea marcada 'si' no genera cobro, aunque haya tomado horas de mano de obra.
 
 /** Una OT es facturable si al menos una de sus lineas quedo marcada como cobrable. */
@@ -20,7 +20,7 @@ function calcularFacturableOt(lineas) {
 /**
  * Lineas cuyo cobro todavia no se decide (el "?" del papel). Son las que se le muestran al
  * gerente para que resuelva: el caso de los clientes antiguos a los que se decide despues
- * si se les cobra o no (entrevista el jefe de taller, punto 9).
+ * si se les cobra o no.
  */
 function lineasPendientesDeDecision(lineas) {
     if (!Array.isArray(lineas)) return [];

@@ -31,7 +31,7 @@ const {
 const router = express.Router();
 validarIdsEnRuta(router, ['facturaId', 'guiaDespachoId']);
 
-// un monto 0 es un monto valido: `monto || null` lo convertia en nulo
+// un monto 0 es un monto valido: `monto || null` lo volveria nulo
 const montoONulo = (v) => (v === undefined || v === null || v === '' ? null : v);
 
 // las fechas de cobranza de la factura como 'YYYY-MM-DD' en la respuesta: node-pg entrega un DATE como un Date
@@ -45,7 +45,7 @@ const conFechasTexto = (fila) => ({
     fecha_pago: diaDeFecha(fila.fecha_pago),
 });
 
-// GET /api/facturacion/pendientes - todo lo que falta facturar, agrupado por estado real:
+// todo lo que falta facturar, agrupado por estado real:
 // arriendos con ciclo despacho+recepcion cerrado, reparaciones esperando que el Gerente
 // les ponga monto, y reparaciones ya valorizadas listas para emitir factura.
 router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
@@ -113,7 +113,7 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
     }
 });
 
-// POST /api/facturacion/detectar - lee el texto del PDF de una factura para adivinar monto, folio, cliente,
+// lee el texto del PDF de una factura para adivinar monto, folio, cliente,
 // neto, emision, vencimiento y traslado (mejor esfuerzo, igual que /guias/detectar - nunca bloquea el flujo).
 // Lo leido se PRECARGA: el administrativo lo confirma en el dialogo. Si el cliente tiene plazo habitual y el
 // vencimiento del PDF no coincide con emision + plazo, `vencimiento` trae las dos opciones y va un aviso.
@@ -154,7 +154,7 @@ router.post('/detectar', verifyToken, requireRole('administrativo'), subidaPdf.s
     }
 });
 
-// GET /api/facturacion/arriendos/:guiaDespachoId/propuesta - el periodo que el sistema propone
+// el periodo que el sistema propone
 // facturar de un arriendo: desde el dia siguiente al ultimo facturado, hasta el primer fin de
 // periodo (o el fin del arriendo). El administrativo lo confirma o elige otro fin de la lista.
 router.get('/arriendos/:guiaDespachoId/propuesta', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
@@ -198,7 +198,7 @@ function respuestaPropuesta(a, config) {
 
 const esDia = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`));
 
-// POST /api/facturacion/arriendo - sube la factura de un periodo de un arriendo.
+// sube la factura de un periodo de un arriendo.
 // Campos: guia_despacho_id, periodo_desde, periodo_hasta, folio, monto y archivo (PDF). El servidor
 // vuelve a calcular la propuesta con el despacho bloqueado y rechaza lo que no calce (huecos y
 // solapes). Compatibilidad: solo con guia_recepcion_id (panel antiguo) factura todo lo que falta
@@ -319,7 +319,7 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
     }
 });
 
-// GET /api/facturacion/configuracion - reglas de cobro vigentes (dia de facturacion, hora de corte
+// reglas de cobro vigentes (dia de facturacion, hora de corte
 // del despacho, si el dia de la recepcion cuenta). Las rutas fijas van antes de /:facturaId.
 router.get('/configuracion', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
@@ -339,7 +339,7 @@ router.get('/configuracion', verifyToken, requireRole('administrativo', 'gerente
     }
 });
 
-// PUT /api/facturacion/configuracion - solo el gerente. Cambia las claves enviadas; no reescribe
+// solo el gerente. Cambia las claves enviadas; no reescribe
 // el inicio de cobro de los despachos ya creados.
 router.put('/configuracion', verifyToken, requireRole('gerente'), async (req, res) => {
     const { valores, error } = validarCambioConfiguracion(req.body);
@@ -371,7 +371,7 @@ router.put('/configuracion', verifyToken, requireRole('gerente'), async (req, re
     }
 });
 
-// GET /api/facturacion/arriendos-en-curso - solo lectura: equipos despachados que aun no vuelven,
+// solo lectura: equipos despachados que aun no vuelven,
 // desde cuando se cobran, cuantos dias van y cuantos periodos (cortes) llevan sin facturar.
 // Sale de las guias, no de maquinarias.cliente_id: un equipo con cliente cargado a mano y sin
 // despacho no aparece. Un equipo tiene a lo mas un arriendo en curso: el del ultimo despacho.
@@ -403,7 +403,7 @@ router.get('/arriendos-en-curso', verifyToken, requireRole('administrativo', 'ge
 
 const ESTADOS_LISTA = Object.keys(FILTROS_ESTADO);
 
-// GET /api/facturacion/emitidas - facturas emitidas con su estado de cobranza (anulada, pagada, vencida,
+// facturas emitidas con su estado de cobranza (anulada, pagada, vencida,
 // proxima, al_dia, sin_vencimiento), dias de mora y dias para vencer. Filtros: estado (vencidas, proximas,
 // por_cobrar, pagadas, anuladas, todas), cliente_id, q (folio o cliente), desde/hasta (sobre la emision, o
 // el dia de carga si no la tiene) y limit/offset. Vencidas y proximas usan el mismo predicado que las
@@ -436,7 +436,7 @@ router.get('/emitidas', verifyToken, requireRole('administrativo', 'gerente'), a
     }
 });
 
-// POST /api/facturacion/exportar - Excel con el formato de la hoja CLIENTES de la planilla de la administrativa (una fila
+// Excel con el formato de la hoja CLIENTES de la planilla de cobranza (una fila
 // por factura, valores y no formulas). Cuerpo opcional: { desde, hasta, cliente_id } (desde/hasta sobre la
 // emision, o el dia de carga si no la tiene). Sube el archivo al bucket privado de documentos
 // (exportaciones/facturacion-usuario-<id>.xlsx, se sobrescribe) y responde
@@ -489,7 +489,7 @@ const tiene = (obj, clave) => Object.prototype.hasOwnProperty.call(obj, clave);
 const vacio = (v) => v === undefined || v === null || v === '';
 const aNumeroONulo = (v) => (v === null || v === undefined ? null : Number(v));
 
-// PATCH /api/facturacion/:facturaId/pago - cobranza (038): { fecha_pago } marca la factura pagada (null la
+// cobranza (038): { fecha_pago } marca la factura pagada (null la
 // deja por cobrar) y { anulada_nc } la marca anulada con nota de credito guardando el folio de la NC (null
 // lo deshace). Se puede mandar uno o los dos. Solo el administrativo; el gerente consulta la lista.
 // No cambia el contenido de la factura: no pasa por la regla del correo pendiente ni cancela correos.
@@ -574,7 +574,7 @@ router.patch('/:facturaId/pago', verifyToken, requireRole('administrativo'), sub
     }
 });
 
-// GET /api/facturacion/:facturaId/comprobante - URL firmada (1 hora) del comprobante de pago. 404 si la
+// URL firmada (1 hora) del comprobante de pago. 404 si la
 // factura no existe o no tiene comprobante (las pagadas antes de existir esta regla no lo tienen).
 router.get('/:facturaId/comprobante', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
@@ -595,7 +595,7 @@ router.get('/:facturaId/comprobante', verifyToken, requireRole('administrativo',
     }
 });
 
-// PATCH /api/facturacion/:facturaId - corrige folio/monto despues de creada la factura
+// corrige folio/monto despues de creada la factura
 // (por si la deteccion del PDF se equivoco), funciona para cualquier tipo de factura.
 // Desde la 038 corrige tambien monto_neto, traslado_entrega, traslado_retiro, fecha_emision y
 // fecha_vencimiento. Un campo ausente no cambia; presente con null o '' lo borra (monto_neto y fechas).
@@ -707,7 +707,7 @@ router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (r
     }
 });
 
-// GET /api/facturacion/:facturaId/vista-previa - asunto y cuerpo propuestos para el correo, el periodo
+// asunto y cuerpo propuestos para el correo, el periodo
 // facturado y si ya hay un envio pendiente. El texto por defecto vive solo aca (utils/correoFactura.js).
 router.get('/:facturaId/vista-previa', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     if (!/^\d{1,9}$/.test(String(req.params.facturaId))) return res.status(400).json({ error: 'Id de factura inválido' });
@@ -731,10 +731,9 @@ router.get('/:facturaId/vista-previa', verifyToken, requireRole('administrativo'
     }
 });
 
-// POST /api/facturacion/:facturaId/autorizar-envio - version unificada de la que ya
-// existia en facturas.js (solo para reparaciones): funciona para cualquier factura,
-// sea de reparacion (orden_trabajo_id) o de arriendo (maquinaria_id). Acepta { asunto, cuerpo }
-// editados; sin ellos usa el texto por defecto. Ver encolarCorreoFactura (bloqueo contra la anulacion).
+// Funciona para cualquier factura, sea de reparacion (orden_trabajo_id) o de arriendo (maquinaria_id).
+// Acepta { asunto, cuerpo } editados; sin ellos usa el texto por defecto. Ver encolarCorreoFactura
+// (bloqueo contra la anulacion).
 router.post('/:facturaId/autorizar-envio', verifyToken, requireRole('administrativo'), async (req, res) => {
     if (!/^\d{1,9}$/.test(String(req.params.facturaId))) return res.status(400).json({ error: 'Id de factura inválido' });
     try {

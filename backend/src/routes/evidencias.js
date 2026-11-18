@@ -11,7 +11,6 @@ const { rutaArchivo, rutaPerteneceAOrden } = require('../utils/rutaArchivo');
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
 
-// POST /api/ordenes-trabajo/:id/evidencia/solicitar-upload
 // Genera una URL prefirmada de Supabase Storage para que el celular suba la foto directo
 // Ademas de evidencias, la app sube la firma de recepcion al cerrar la OT (carpeta 'firmas');
 // esa NO pasa por /confirmar: su path viaja en el PATCH /finalizar y queda en firmas_recepcion.
@@ -58,7 +57,6 @@ router.post('/:id/evidencia/solicitar-upload', verifyToken, requireRole('mecanic
     }
 });
 
-// POST /api/ordenes-trabajo/:id/evidencia/confirmar
 // Registra la evidencia una vez que el archivo ya fue subido directo a Supabase
 router.post('/:id/evidencia/confirmar', verifyToken, requireRole('mecanico'), async (req, res) => {
     const { id } = req.params;
@@ -66,13 +64,12 @@ router.post('/:id/evidencia/confirmar', verifyToken, requireRole('mecanico'), as
     if (!path) {
         return res.status(400).json({ error: 'path es requerido' });
     }
-    // Solo se registran fotos subidas a la carpeta de ESTA orden. Antes se aceptaba cualquier
-    // path: un mecanico podia registrar en su OT la ruta de una foto de otra orden (o una firma)
-    // y el GET le devolvia una URL firmada para verla.
+    // Solo se registran fotos subidas a la carpeta de ESTA orden: si no, un mecanico podria registrar en su OT
+    // la ruta de una foto de otra orden (o una firma) y el GET le devolveria una URL firmada para verla.
     if (!rutaPerteneceAOrden(path, `ot-${Number(id)}/`)) {
         return res.status(400).json({ error: 'La foto no corresponde a esta orden de trabajo' });
     }
-    // tipo opcional: los APK anteriores al rediseño no lo envian (default 'antes')
+    // tipo opcional: los APK antiguos no lo envian (default 'antes')
     if (tipo !== undefined && !['antes', 'despues'].includes(tipo)) {
         return res.status(400).json({ error: "tipo debe ser 'antes' o 'despues'" });
     }
@@ -104,7 +101,6 @@ router.post('/:id/evidencia/confirmar', verifyToken, requireRole('mecanico'), as
     }
 });
 
-// GET /api/ordenes-trabajo/:id/evidencia
 // Bucket privado: se genera una URL firmada temporal (1h) por cada foto, en vez de una URL publica permanente
 const URL_EXPIRACION_SEGUNDOS = 3600;
 

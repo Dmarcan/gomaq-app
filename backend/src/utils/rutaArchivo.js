@@ -1,13 +1,8 @@
 // Rutas de archivo en el bucket privado, armadas por el servidor.
 //
-// Hallazgo critico de la auditoria: el adjunto de una solicitud se guardaba en disco con
-// `multer.diskStorage` usando el nombre que enviaba el cliente. Multer hace
-// `path.join(destino, nombre)` SIN normalizar, asi que `1700-../../../../.env` escribia
-// `backend/.env` - el JWT_SECRET y las credenciales de la base. Ademas ese directorio se
-// servia con `express.static('/uploads')` sin autenticacion.
-//
-// La regla que evita toda esa clase de problema: el nombre que envia el cliente NUNCA
-// participa de la ruta. El servidor la arma entera y del original solo rescata la extension.
+// El nombre de archivo que envia el cliente NUNCA participa de la ruta: el servidor la arma entera y del
+// original solo rescata la extension. Con `multer.diskStorage` y el nombre del cliente, el `path.join`
+// sin normalizar permitiria escribir fuera de la carpeta (por ejemplo `1700-../../../../.env`).
 
 /** Extension saneada del nombre original, o 'bin' si no hay una razonable. */
 function extensionSegura(nombreOriginal) {
@@ -36,9 +31,7 @@ function segmentoSeguro(texto) {
 
 /**
  * Ruta de cualquier archivo subido: la carpeta la decide el servidor y del nombre original solo
- * se conserva la extension. Es la misma regla de rutaAdjuntoSolicitud, generalizada: la segunda
- * auditoria encontro guias, facturas, fotos de equipos, documentos de vehiculos y evidencias
- * que todavia metian el nombre enviado por el usuario dentro de la ruta.
+ * se conserva la extension (la misma regla de rutaAdjuntoSolicitud, generalizada).
  *
  * @param {Array<string|number>} carpetas  cada una se sanea con segmentoSeguro
  */

@@ -1,7 +1,7 @@
 const { PDFParse } = require('pdf-parse');
 
 // Las guias y facturas de GOMAQ tienen 1 o 2 paginas: leer mas no aporta y un PDF con decenas de
-// miles de paginas (cabe en 10 MB) consumia minutos de CPU por peticion. Se leen las primeras.
+// miles de paginas (cabe en 10 MB) consumiria minutos de CPU por peticion. Se leen las primeras.
 const MAX_PAGINAS = 5;
 const TIMEOUT_MS = 8000;
 

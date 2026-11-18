@@ -68,7 +68,7 @@ async function encolarAvisoMantencion(client, maquinaria, estado) {
     return encoladas;
 }
 
-// POST /api/horometro/maquinaria/:id - registrar una lectura.
+// registrar una lectura.
 // El origen se deriva del rol y no se acepta del cliente: la app del mecanico es 'movil',
 // el panel es 'panel', y 'guia' lo escribe internamente la subida de la guia de despacho.
 router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrativo', 'gerente'), async (req, res) => {
@@ -128,7 +128,7 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
         }
 
         // El mecanico puede registrar la lectura de cualquier equipo, en cualquier momento, y tambien
-        // reiniciar su contador de mantencion sin una orden (decision de David): no se exige orden.
+        // reiniciar su contador de mantencion sin una orden: no se exige orden.
 
         const origen = req.user.rol === 'mecanico' ? 'movil' : 'panel';
         const insercion = await client.query(
@@ -185,9 +185,9 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
     }
 });
 
-// GET /api/horometro/maquinaria/:id - historial de lecturas + estado de mantencion.
-// El historial trae el cliente de cada lectura (snapshot), que es lo que permite ver
-// "donde estuvo el equipo y cuanto se uso en cada lugar" (entrevista el jefe de taller).
+// historial de lecturas + estado de mantencion.
+// El historial trae el cliente de cada lectura (snapshot), que permite ver
+// donde estuvo el equipo y cuanto se uso en cada lugar.
 router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     const { id } = req.params;
     try {
@@ -235,7 +235,7 @@ router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativ
     }
 });
 
-// GET /api/horometro/pendientes - agenda del mes: equipos arrendados a los que todavia no se
+// agenda del mes: equipos arrendados a los que todavia no se
 // les toma el horometro este mes. Al registrar la lectura, el equipo sale solo de la lista.
 //
 // PENDIENTE DE CONFIRMAR CON GOMAQ: por ahora solo entran los equipos arrendados, porque son
@@ -268,7 +268,6 @@ router.get('/pendientes', verifyToken, requireRole('gerente', 'administrativo', 
     }
 });
 
-// GET /api/horometro/alertas - equipos que ya cumplieron el intervalo o estan por cumplirlo
 router.get('/alertas', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     try {
         const equipos = await cargarAlertasMantencion(pool);
@@ -280,7 +279,7 @@ router.get('/alertas', verifyToken, requireRole('gerente', 'administrativo', 'me
     }
 });
 
-// POST /api/horometro/maquinaria/:id/reiniciar - marcar la mantencion como hecha desde el panel.
+// marcar la mantencion como hecha desde el panel.
 // Complementa la confirmacion que hace el mecanico al cerrar la OT: sirve para corregir un
 // reinicio mal puesto y para cargar mantenciones anteriores al sistema.
 router.post('/maquinaria/:id/reiniciar', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
@@ -355,7 +354,6 @@ router.post('/maquinaria/:id/reiniciar', verifyToken, requireRole('administrativ
     }
 });
 
-// PATCH /api/horometro/maquinaria/:id/intervalo - ajustar el intervalo de un equipo puntual
 router.patch('/maquinaria/:id/intervalo', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const bruto = req.body.intervalo_mantencion_horas;
     const intervalo = typeof bruto === 'number' || typeof bruto === 'string' ? Number(bruto) : NaN;

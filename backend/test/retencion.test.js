@@ -70,8 +70,8 @@ test('ejecutarRetencion borra solo lo vencido de cada tabla y deja lo reciente, 
         await notif('enviado200', 'enviado', 200);       // terminada y vieja: se borra
         await notif('error200', 'error', 200);           // error definitivo y viejo: se borra
         await notif('enviado10', 'enviado', 10);         // reciente: se queda
-        // Decision pendiente de David: la regla actual NO borra las canceladas (solo enviado y error).
-        // Si decide que tambien se borren, cambiar este caso y el IN de utils/retencion.js.
+        // Decision pendiente: la regla actual NO borra las canceladas (solo enviado y error).
+        // Si se decide que tambien se borren, cambiar este caso y el IN de utils/retencion.js.
         await notif('cancelado200', 'cancelado', 200);
 
         const solicitud = (nombre, estado, dias) => pool.query(

@@ -48,7 +48,6 @@ const TIPOS_SERVICIO = [
     'correctivo', 'bateria_cargador', 'administrativo',
 ];
 
-// POST /api/ordenes-trabajo - crear OT
 router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { maquinaria_id, cliente_id, motivo } = req.body;
     const errCuerpo = validarCuerpo(req.body, { textos: { motivo: 2000 }, ids: ['maquinaria_id', 'cliente_id'] });
@@ -68,11 +67,11 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
         if (equipo.rows.length === 0) {
             return res.status(404).json({ error: 'Maquinaria no encontrada' });
         }
-        // facturable nace en false y ya no lo decide nadie a mano: se deriva de las lineas
-        // de repuesto de la OT (ver utils/facturableOt.js), como en el talonario de papel.
+        // facturable nace en false: se deriva de las lineas de repuesto de la OT (ver utils/facturableOt.js),
+        // como en el talonario de papel.
         // La OT y su evento de creacion van en la misma transaccion (historial, migracion 020).
         await client.query('BEGIN');
-        // el origen ya no lo manda quien llama a la API: lo da el cliente de la orden (con ejecutivo = externo)
+        // el origen lo da el cliente de la orden (con ejecutivo = externo), no quien llama a la API
         const clienteOrden = cliente_id || equipo.rows[0].cliente_id || null;
         const result = await client.query(
             `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, origen, motivo)
@@ -99,12 +98,11 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
     }
 });
 
-// POST /api/ordenes-trabajo/en-terreno - el mecanico abre una OT para un segundo equipo.
+// el mecanico abre una OT para un segundo equipo.
 //
-// Entrevista el jefe de taller, punto 1: "voy por este equipo pero veo otro... si yo le puse el repuesto
-// al otro equipo, ese repuesto queda en el aire". Se resuelve forzando una OT por equipo
-// intervenido, en vez de dejar que una linea apunte a una maquina distinta a la de su orden:
-// asi el costo por equipo queda bien atribuido sin casos especiales.
+// Si intervino otro equipo, el repuesto no puede quedar en el aire: se fuerza una OT por equipo
+// intervenido, en vez de dejar que una linea apunte a una maquina distinta a la de su orden, y asi el
+// costo por equipo queda bien atribuido sin casos especiales.
 //
 // Nace ya asignada a quien la crea y en 'en_terreno', para que pueda cargarle repuestos de
 // inmediato sin pasar por el administrativo.
@@ -182,7 +180,6 @@ router.post('/en-terreno', verifyToken, requireRole('mecanico'), async (req, res
     }
 });
 
-// GET /api/ordenes-trabajo - listar (mecanico solo ve las suyas)
 router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     const { limit, offset } = parsearPaginacion(req.query);
     const q = parsearBusqueda(req.query);
@@ -240,7 +237,7 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
     }
 });
 
-// GET /api/ordenes-trabajo/resumen - conteos de las pestanas de Ordenes del panel. Se declara antes de
+// conteos de las pestanas de Ordenes del panel. Se declara antes de
 // /:id para que "resumen" no se lea como un id. Cada conteo es el total de la lista con su filtro:
 //   sin_asignar -> ?sin_asignar=1 ; en_curso -> ?estado=<EN_CURSO_PANEL> ; finalizadas -> ?estado=finalizada
 router.get('/resumen', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
@@ -265,7 +262,6 @@ router.get('/resumen', verifyToken, requireRole('gerente', 'administrativo'), as
     }
 });
 
-// GET /api/ordenes-trabajo/mias - portal cliente: su historial de OT con facturas vinculadas
 router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     if (!req.user.cliente_id) {
         return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
@@ -333,12 +329,11 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     }
 });
 
-// GET /api/ordenes-trabajo/:id - detalle
 router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     try {
         const result = await pool.query(
             // factura_id y factura_folio: el panel avisa que una orden facturada no admite cambios de
-            // lineas (bloque 1b). Hay a lo mas una factura por OT (indice unico de la migracion 016).
+            // lineas. Hay a lo mas una factura por OT (indice unico de la migracion 016).
             `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre, um.nombre AS mecanico_nombre,
                     f.id AS factura_id, f.folio AS factura_folio,
                     ${SQL_ETA_LLEGADA_AT} AS eta_llegada_at
@@ -402,7 +397,7 @@ async function encolarAvisoAsignacion(client, orden, mecanico) {
     );
 }
 
-// PATCH /api/ordenes-trabajo/:id/tomar - el mecanico toma una orden que nadie tiene asignada.
+// el mecanico toma una orden que nadie tiene asignada.
 //
 // Atomico: el UPDATE solo prospera si la orden sigue pendiente y sin mecanico, asi que dos
 // mecanicos tomando la misma a la vez no pueden quedar los dos. El perdedor recibe 409. Un
@@ -445,7 +440,6 @@ router.patch('/:id/tomar', verifyToken, requireRole('mecanico'), async (req, res
     }
 });
 
-// PATCH /api/ordenes-trabajo/:id/asignar - asignar mecanico
 // Patron Outbox (informe 6.4.2): la misma transaccion que asigna el mecanico
 // inserta la notificacion pendiente (HU-07) para que nunca queden desincronizadas
 router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (req, res) => {
@@ -539,7 +533,6 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
     }
 });
 
-// PATCH /api/ordenes-trabajo/:id/diagnostico - mecanico registra diagnostico y avanza estado
 router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (req, res) => {
     const { diagnostico, estado, ocurrio_en } = req.body;
     const errCuerpo = validarCuerpo(req.body, { textos: { diagnostico: 20000 } });
@@ -551,8 +544,7 @@ router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (re
     // hora real del toque en el telefono (la cola offline puede enviarlo mucho despues). Opcional;
     // si falta o es invalida se usa la del servidor, y nunca queda en el futuro.
     const momento = ocurrio_en && !Number.isNaN(Date.parse(ocurrio_en)) ? new Date(ocurrio_en).toISOString() : null;
-    // uuid de la tarea de la cola de terreno: hoy llega como `uuid` (el servidor esperaba
-    // `uuid_cliente`, que el APK no manda); se aceptan los dos nombres
+    // uuid de la tarea de la cola de terreno: el APK lo manda como `uuid`; se acepta tambien `uuid_cliente`
     const uuidTarea = leerUuidTarea(req.body.uuid_cliente) || leerUuidTarea(req.body.uuid);
     let client = null;
     try {
@@ -657,7 +649,7 @@ router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (re
     }
 });
 
-// POST /api/ordenes-trabajo/:id/posicion - el mecanico envia su posicion mientras va en camino.
+// el mecanico envia su posicion mientras va en camino.
 //
 // Fuera de la cola offline a proposito: una posicion vieja no sirve, asi que no se reintenta ni
 // lleva uuid_cliente. La idempotencia es por hora de captura (solo gana la mas nueva). Solo el
@@ -711,10 +703,10 @@ router.post('/:id/posicion', verifyToken, requireRole('mecanico'), async (req, r
     }
 });
 
-// PATCH /api/ordenes-trabajo/:id/datos - cabecera de la OT tal como esta en el talonario:
+// cabecera de la OT tal como esta en el talonario:
 // tipo de servicio, observaciones iniciales y finales, y el folio del papel.
 // `diagnostico` es la observacion INICIAL (mismo concepto, ya lo leen el portal del cliente y
-// el panel); `observacion_final` es lo que se hizo. el jefe de taller pidio separarlas (entrevista, punto 5).
+// el panel); `observacion_final` es lo que se hizo.
 router.patch('/:id/datos', verifyToken, requireRole('mecanico'), async (req, res) => {
     const { tipo_servicio, diagnostico, observacion_final, folio_papel } = req.body;
     const errCuerpo = validarCuerpo(req.body, { textos: { diagnostico: 20000, observacion_final: 20000, folio_papel: 20 } });
@@ -750,7 +742,7 @@ router.patch('/:id/datos', verifyToken, requireRole('mecanico'), async (req, res
     }
 });
 
-// PUT /api/ordenes-trabajo/:id/checklist - sistemas donde SE INTERVINO (no una pauta de
+// sistemas donde SE INTERVINO (no una pauta de
 // revision). Se envia la lista completa de ids marcados y reemplaza la anterior: es
 // idempotente, que es lo que necesita la cola offline del movil ante un reintento.
 router.put('/:id/checklist', verifyToken, requireRole('mecanico'), async (req, res) => {
@@ -790,7 +782,7 @@ router.put('/:id/checklist', verifyToken, requireRole('mecanico'), async (req, r
     }
 });
 
-// POST /api/ordenes-trabajo/:id/tramos - registrar un tramo de trabajo (inicio y termino).
+// registrar un tramo de trabajo (inicio y termino).
 // El papel trae dos bloques porque el trabajo se puede retomar en otra visita; aca son N.
 router.post('/:id/tramos', verifyToken, requireRole('mecanico'), async (req, res) => {
     const { inicio, termino } = req.body;
@@ -816,10 +808,9 @@ router.post('/:id/tramos', verifyToken, requireRole('mecanico'), async (req, res
         const yaRegistrado = await buscarPorUuid(pool, 'tramos_trabajo', uuid);
         if (yaRegistrado) return res.status(200).json(yaRegistrado);
 
-        // Cerrar un tramo: la app envia primero el tramo abierto (solo inicio) y, al terminar,
-        // el mismo inicio con su termino. Antes eso insertaba un segundo tramo y el primero
-        // quedaba abierto para siempre, duplicando las horas de la visita. Si existe el tramo
-        // abierto con ese inicio, se cierra en vez de crear otro.
+        // Cerrar un tramo: la app envia primero el tramo abierto (solo inicio) y, al terminar, el mismo inicio
+        // con su termino. Si existe el tramo abierto con ese inicio, se cierra en vez de crear otro: si no,
+        // quedaria abierto para siempre y duplicaria las horas de la visita.
         if (termino) {
             const cerrado = await pool.query(
                 `UPDATE tramos_trabajo SET termino = $1
@@ -830,8 +821,8 @@ router.post('/:id/tramos', verifyToken, requireRole('mecanico'), async (req, res
             if (cerrado.rows.length > 0) return res.status(200).json(cerrado.rows[0]);
 
             // Reintento de ese mismo cierre: el UPDATE no guarda el uuid (la fila ya tiene el del
-            // tramo abierto), asi que se reconoce por los datos. Sin esto, el reintento insertaba
-            // un segundo tramo ya cerrado y duplicaba las horas de la visita.
+            // tramo abierto), asi que se reconoce por los datos. Sin esto, el reintento insertaria
+            // un segundo tramo ya cerrado y duplicaria las horas de la visita.
             const yaCerrado = await pool.query(
                 `SELECT * FROM tramos_trabajo
                  WHERE orden_trabajo_id = $1 AND usuario_id = $2 AND inicio = $3 AND termino = $4
@@ -857,8 +848,8 @@ router.post('/:id/tramos', verifyToken, requireRole('mecanico'), async (req, res
     }
 });
 
-// PATCH /api/ordenes-trabajo/:id/finalizar - mecanico cierra la OT.
-// Ya NO recibe `facturable`: en el talonario esa marca es por linea de repuesto, asi que el
+// mecanico cierra la OT.
+// No recibe `facturable`: en el talonario esa marca es por linea de repuesto, asi que el
 // campo de la orden lo deriva insumos.js al cambiar una linea (ver utils/facturableOt.js).
 router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req, res) => {
     const { persona_recibe, sin_persona, firma_path, ocurrio_en } = req.body;
@@ -871,7 +862,7 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
     }
     // hora real del cierre en el telefono (la cola offline puede enviarlo mucho despues); nunca en el futuro
     const momento = ocurrio_en && !Number.isNaN(Date.parse(ocurrio_en)) ? new Date(ocurrio_en).toISOString() : null;
-    // Datos de recepcion opcionales: los APK anteriores al rediseño no los envian.
+    // Datos de recepcion opcionales: los APK antiguos no los envian.
     const tieneRecepcion = persona_recibe !== undefined || sin_persona !== undefined || firma_path !== undefined;
     if (tieneRecepcion && !sin_persona && !persona_recibe) {
         return res.status(400).json({ error: 'Debe indicar persona_recibe o marcar sin_persona' });
@@ -892,7 +883,7 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
         const cierre = evaluarCierre(actual.rows[0].estado);
         if (cierre.yaFinalizada) {
             // reintento de la cola offline: la OT ya se cerro, con su firma y su aviso al
-            // cliente. Antes se volvia a cerrar, cambiando fecha_cierre y encolando otro aviso.
+            // cliente. Sin este caso se volveria a cerrar, cambiando fecha_cierre y encolando otro aviso.
             await client.query('ROLLBACK');
             return res.json(actual.rows[0]);
         }
@@ -921,8 +912,8 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
         }
 
         // Aviso de cierre al cliente, mismo patron Outbox que /asignar: la notificacion se
-        // inserta en la misma transaccion que cierra la OT. Cierra el par que dibuja el BPMN
-        // del informe - HU-07 avisa quien va a atender el equipo, esto avisa que quedo listo.
+        // inserta en la misma transaccion que cierra la OT. HU-07 avisa quien va a atender el equipo;
+        // esto avisa que quedo listo.
         const orden = result.rows[0];
         const contactoCierre = await contactoCliente(client, orden.cliente_id);
         if (contactoCierre) {
@@ -973,7 +964,6 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
     }
 });
 
-// PATCH /api/ordenes-trabajo/:id/valorizacion - gerente aprueba monto (HU-04)
 router.patch('/:id/valorizacion', verifyToken, requireRole('gerente'), async (req, res) => {
     const { valorizacion } = req.body;
     if (montoEnteroONulo(valorizacion) === null) {
@@ -1030,7 +1020,7 @@ router.patch('/:id/valorizacion', verifyToken, requireRole('gerente'), async (re
     }
 });
 
-// GET /api/ordenes-trabajo/:id/historial - linea de tiempo de la orden (administrativo y gerente).
+// linea de tiempo de la orden (administrativo y gerente).
 // Los eventos salen en el orden en que se escribieron (id), con la creacion siempre primero.
 // `ocurrio_en` es la hora que se muestra, pero no ordena: un telefono con el reloj mal daria
 // cadenas "de X a Y" incoherentes. Tampoco ordena `registrado_en`, que es la hora de inicio de la

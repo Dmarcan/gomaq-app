@@ -17,12 +17,12 @@ const { validarFechasFactura } = require('../utils/cobranza');
 const router = express.Router();
 validarIdsEnRuta(router, ['id', 'facturaId']);
 
-// un monto 0 es un monto valido: `monto || null` lo convertia en nulo
+// un monto 0 es un monto valido: `monto || null` lo volveria nulo
 const montoVacio = (v) => v === undefined || v === null || v === '';
 const montoONulo = (v) => (montoVacio(v) ? null : montoEnteroONulo(v));
 const URL_EXPIRACION_SEGUNDOS = 3600;
 
-// POST /api/ordenes-trabajo/:id/factura - subir PDF de factura ya emitida en el SII (va a Supabase Storage)
+// subir PDF de factura ya emitida en el SII (va a Supabase Storage)
 //
 // La fila de la OT se bloquea (FOR NO KEY UPDATE) en la misma transaccion que inserta la factura: asi un
 // cambio de linea que corre al mismo tiempo (routes/insumos.js, que tambien bloquea la OT) termina
@@ -118,7 +118,6 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPd
     }
 });
 
-// GET /api/ordenes-trabajo/:id/factura - listar facturas de una OT, con URL firmada temporal
 router.get('/:id/factura', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
         const result = await pool.query(
@@ -140,7 +139,7 @@ router.get('/:id/factura', verifyToken, requireRole('administrativo', 'gerente')
 
 const UUID_ESTRICTO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-// POST /api/ordenes-trabajo/:id/factura/:facturaId/anular - anula una factura subida por error.
+// anula una factura subida por error.
 //
 // Borra la fila de facturas y, antes, deja el evento en el historial de la OT con folio, monto,
 // archivo, motivo y quien la anulo (evento 'factura_anulada', migracion 021). El PDF NO se borra de Supabase: queda de respaldo. Desde ahi
@@ -224,10 +223,7 @@ router.post('/:id/factura/:facturaId/anular', verifyToken, requireRole('administ
     }
 });
 
-// POST /api/ordenes-trabajo/:id/factura/:facturaId/autorizar-envio
-// Encola el envio del correo con la factura al cliente (patron Outbox, igual que WhatsApp).
-// El envio real de correo aun no esta configurado, asi que quedara pendiente/error
-// hasta que se agregue el proveedor SMTP - mismo comportamiento que las notificaciones de WhatsApp.
+// Encola el envio del correo con la factura al cliente (patron Outbox: lo envia el worker de notificaciones).
 router.post('/:id/factura/:facturaId/autorizar-envio', verifyToken, requireRole('administrativo'), async (req, res) => {
     const { id, facturaId } = req.params;
     if (!esIdPositivo(id)) return res.status(400).json({ error: 'Id de orden inválido' });

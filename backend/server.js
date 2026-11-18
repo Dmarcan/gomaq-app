@@ -1,14 +1,12 @@
-// zona horaria fija del negocio: los calculos de dias de arriendo (HORA_CORTE, cortes de
-// dia calendario) usan la hora local del proceso - fijarla evita que una migracion a un
-// servidor en UTC (Railway/nube) corra silenciosamente todos los cobros 4 horas.
-// Si el negocio alguna vez opera en varias zonas, migrar a una libreria de zonas (luxon).
+// Zona horaria fija del negocio: los calculos de dias de arriendo (HORA_CORTE, cortes de dia calendario)
+// usan la hora local del proceso. Fijarla evita que un servidor en UTC (Railway/nube) corra
+// silenciosamente todos los cobros 4 horas.
 process.env.TZ = 'America/Santiago';
 
 require('dotenv').config();
 
-// Arranque a prueba de fallos, ANTES de cargar nada mas: sin estas variables el servidor
-// arrancaba igual y fallaba recien al primer login, con un 500 que no explicaba nada (o
-// reventaba con un error de Supabase sin contexto). Mejor no partir y decir cual falta.
+// Arranque a prueba de fallos, ANTES de cargar nada mas: sin estas variables el servidor arrancaria
+// igual y fallaria recien al primer login, con un 500 que no explica nada. Mejor no partir y decir cual falta.
 const VARIABLES_REQUERIDAS = ['DATABASE_URL', 'JWT_SECRET', 'SUPABASE_URL', 'SUPABASE_SERVICE_KEY'];
 const faltantes = VARIABLES_REQUERIDAS.filter((v) => !process.env[v]);
 if (faltantes.length > 0) {
@@ -60,7 +58,6 @@ const { iniciarWorker } = require('./src/workers/notificaciones');
 const { manejarErroresDeSubida } = require('./src/middleware/upload');
 const { manejarErrores, rutaApiNoEncontrada, registrarRedDeSeguridad } = require('./src/middleware/errores');
 
-// una promesa rechazada o una excepcion suelta se registra y el servidor sigue en pie
 registrarRedDeSeguridad();
 
 const app = express();
@@ -78,8 +75,6 @@ app.set('trust proxy', trustProxy === undefined ? 'loopback'
 // Railway define RAILWAY_ENVIRONMENT_NAME en cada despliegue, y ahi el trafico siempre es HTTPS.
 const detrasDeHttps = Boolean(process.env.RAILWAY_ENVIRONMENT_NAME) || process.env.FORZAR_HTTPS === '1';
 
-// Cabeceras de seguridad.
-//
 // El CSP hay que declararlo a mano: el de helmet por defecto es `default-src 'self'`, que deja
 // el panel en pantalla negra porque Flutter Web carga CanvasKit y las fuentes desde gstatic.
 // Se abre lo justo para eso y para las URL firmadas de Supabase, no mas.
@@ -129,8 +124,7 @@ app.use(cors({
 
 app.use(express.json());
 
-// build de produccion del panel web (Flutter Web), servido en la raiz para
-// reutilizar la misma URL/tunel que la API (ver `npm run build:web` / db/README)
+// build de produccion del panel web (Flutter Web), servido en la raiz: misma URL que la API
 const publicDir = path.join(__dirname, 'public');
 app.use(express.static(publicDir));
 
@@ -185,7 +179,6 @@ app.get('*', (req, res, next) => {
     });
 });
 
-// manejador final: cualquier error de una ruta responde JSON sin filtrar detalles
 app.use(manejarErrores);
 
 const PORT = process.env.PORT || 3000;

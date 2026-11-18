@@ -16,10 +16,6 @@ function lineaContacto(contacto) {
     return `Este es un envío automático: no responda a este correo. Para consultas, escriba a ${contacto}.`;
 }
 
-/**
- * @param {{asunto: string, cuerpo: string, contacto?: string}} datos
- * @returns {{asunto: string, texto: string, html: string}}
- */
 function armarCorreoFactura({ asunto, cuerpo, contacto }) {
     const contactoFinal = (typeof contacto === 'string' && contacto.trim()) || CONTACTO_POR_DEFECTO;
     const texto = `${cuerpo}\n\n--\n${lineaContacto(contactoFinal)}`;

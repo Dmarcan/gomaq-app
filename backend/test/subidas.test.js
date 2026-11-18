@@ -1,5 +1,5 @@
 // Pruebas de las subidas de archivos: el tipo se decide por el contenido (firma), no por lo que
-// declara el cliente, y la lectura de PDF tiene tope de paginas y de tiempo (auditoria H8 y H10).
+// declara el cliente, y la lectura de PDF tiene tope de paginas y de tiempo.
 // No necesitan base de datos: la comprobacion corre antes de que la ruta toque nada.
 
 process.env.DATABASE_URL = 'postgres://nadie:nada@127.0.0.1:1/ninguna';

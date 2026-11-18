@@ -41,7 +41,7 @@ async function iniciarVerificacion(solicitud) {
 
 const textoONulo = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
 
-// POST /api/registro-cliente - publico (sin verifyToken): el cliente postula su cuenta,
+// publico (sin verifyToken): el cliente postula su cuenta,
 // queda "pendiente" hasta que Administrativo/Gerente la revisen en Usuarios y la activen.
 // Nunca crea filas en usuarios ni clientes directamente.
 router.post('/', limiteRegistro, async (req, res) => {
@@ -134,7 +134,7 @@ const RESPUESTA_REENVIO = {
     mensaje: 'Si hay una solicitud pendiente con ese correo, te llegará un código nuevo en unos minutos (revisa también el spam).',
 };
 
-// POST /api/registro-cliente/verificar - el cliente escribe el codigo que le llego al correo. Marca la
+// el cliente escribe el codigo que le llego al correo. Marca la
 // solicitud como "correo verificado". Mismo error para cualquier falla: no revela si el correo existe.
 router.post('/verificar', limiteCodigo, async (req, res) => {
     const email = normalizarCorreo(req.body && req.body.email);
@@ -185,7 +185,7 @@ router.post('/verificar', limiteCodigo, async (req, res) => {
     }
 });
 
-// POST /api/registro-cliente/reenviar-codigo - un codigo nuevo para una solicitud pendiente sin verificar.
+// un codigo nuevo para una solicitud pendiente sin verificar.
 // Responde lo mismo exista o no la solicitud; el trabajo ocurre despues de responder. Tope por solicitud:
 // 1 por minuto y 5 por hora.
 router.post('/reenviar-codigo', limiteRecuperar, async (req, res) => {

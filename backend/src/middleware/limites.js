@@ -1,15 +1,13 @@
 const { rateLimit, ipKeyGenerator } = require('express-rate-limit');
 
-// Limites de peticiones para los dos endpoints publicos (sin token).
+// Limites de peticiones para los endpoints publicos (sin token).
 //
-// Hallazgo de la auditoria: no habia ninguno. El sistema se expone a internet por el tunel de
-// Cloudflare, asi que /login aceptaba intentos ilimitados de contraseña y /registro-cliente
-// permitia llenar la tabla de solicitudes desde afuera.
+// El sistema se expone a internet por el tunel de Cloudflare: sin limite, /login aceptaria intentos
+// ilimitados de contraseña y /registro-cliente permitiria llenar la tabla de solicitudes desde afuera.
 //
-// Segunda auditoria: el limite contaba por la IP de la conexion, y detras del tunel TODAS las
-// peticiones llegan desde cloudflared en el mismo equipo (127.0.0.1). El contador era uno solo
-// para todo el mundo: diez contraseñas equivocadas de cualquiera dejaban a todos sin poder
-// entrar por 15 minutos. Ahora se cuenta por la IP real de quien se conecta.
+// Se cuenta por la IP real de quien se conecta (ver ipDelCliente): detras del tunel TODAS las peticiones
+// llegan desde cloudflared en el mismo equipo (127.0.0.1), y con un solo contador diez contraseñas
+// equivocadas de cualquiera dejarian a todos sin poder entrar por 15 minutos.
 
 const LOOPBACK = new Set(['127.0.0.1', '::1', '::ffff:127.0.0.1']);
 

@@ -29,8 +29,7 @@ const MENSAJE_OT_CERRADA = 'La orden ya está cerrada y no se puede modificar';
  * Devuelve null cuando no hay forma de contactarlo, y en ese caso simplemente no se encola
  * nada (la OT igual avanza: el aviso nunca bloquea el evento de negocio).
  *
- * Se usa desde /asignar (HU-07) y desde /finalizar, que son los dos momentos que el BPMN
- * del informe marca como notificables.
+ * Se usa desde /asignar (HU-07) y desde /finalizar.
  */
 async function contactoCliente(client, clienteId) {
     if (!clienteId) return null;

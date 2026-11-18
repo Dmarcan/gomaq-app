@@ -11,7 +11,6 @@ const { cargarHistorialCliente } = require('../utils/historialCliente');
 
 const router = express.Router();
 
-// GET /api/clientes - listado
 router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
         // tiene_cuenta: hay una cuenta de portal vinculada. Su correo de inicio de sesion es otro dato: vive en usuarios
@@ -26,7 +25,6 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
     }
 });
 
-// POST /api/clientes - crear cliente
 router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { nombre, rut, email, telefono, ejecutivo_id } = req.body;
     const errCuerpo = validarCuerpo(req.body, { textos: { nombre: 150, rut: 20, email: 150, telefono: 30 }, ids: ['ejecutivo_id'] });
@@ -66,7 +64,7 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
     }
 });
 
-// GET /api/clientes/:id/historial - lo que el cliente ha arrendado y facturado, y sus ordenes de trabajo.
+// lo que el cliente ha arrendado y facturado, y sus ordenes de trabajo.
 // Solo administrativo y gerente (como el resto del recurso). Sin archivo_url: los documentos se abren
 // desde el perfil del equipo o la orden.
 router.get('/:id/historial', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
@@ -83,7 +81,7 @@ router.get('/:id/historial', verifyToken, requireRole('administrativo', 'gerente
     }
 });
 
-// PATCH /api/clientes/:id/ubicacion - fija o corrige la ubicacion de la empresa.
+// fija o corrige la ubicacion de la empresa.
 // Sin coordenadas (las dos en null) la borra. Solo cambia la ubicacion de la ficha: las OT ya
 // creadas conservan el destino con que se crearon.
 router.patch('/:id/ubicacion', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
@@ -108,7 +106,7 @@ router.patch('/:id/ubicacion', verifyToken, requireRole('administrativo', 'geren
     }
 });
 
-// PATCH /api/clientes/:id - edita la ficha: nombre, RUT, correo, telefono y direccion. Solo cambia lo que viene
+// edita la ficha: nombre, RUT, correo, telefono y direccion. Solo cambia lo que viene
 // en el cuerpo. No toca la cuenta de portal ni el correo con que el cliente inicia sesion, que viven en
 // `usuarios`. Los avisos ya encolados conservan el destinatario con que se crearon.
 router.patch('/:id', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {

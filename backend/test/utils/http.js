@@ -1,5 +1,4 @@
 // Ayudas compartidas por las pruebas que levantan rutas en memoria y las llaman por HTTP.
-// Antes cada archivo tenia su copia; aqui queda una sola, con el mismo comportamiento.
 //
 // Nota: `node --test` toma como prueba todo .js bajo test/, asi que este archivo aparece como una
 // entrada mas en el recuento (igual que _entornoPruebas.js y _sesionDePrueba.js).

@@ -1,8 +1,8 @@
 // Tipo real de un archivo subido, segun sus primeros bytes ("firma" o magic bytes).
 //
-// El `mimetype` que declara el cliente no vale como prueba: lo escribe quien sube el archivo y
-// el backend lo reenviaba tal cual a Supabase como Content-Type. Un texto declarado como PDF
-// pasaba el filtro, y un SVG o un HTML declarados como imagen quedaban guardados con ese tipo.
+// El `mimetype` que declara el cliente no vale como prueba: lo escribe quien sube el archivo y se
+// reenviaria tal cual a Supabase como Content-Type. Un texto declarado como PDF pasaria el filtro, y un
+// SVG o un HTML declarados como imagen quedarian guardados con ese tipo.
 // Aca se reconoce el contenido; el tipo que se guarda es el que sale de la firma, no el declarado.
 //
 // Lista cerrada: PDF, JPEG, PNG, WEBP y HEIC/HEIF (las fotos de iPhone). SVG no va: es XML y puede

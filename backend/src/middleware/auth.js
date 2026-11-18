@@ -6,11 +6,9 @@ const { esTokenDeSesion, hashToken, estadoSesion, REFRESCO_USO_MINUTOS } = requi
 // sesiones (migracion 036): se puede revocar y vence por tiempo absoluto o por inactividad. Los JWT
 // firmados de 12 h que ya estan en los telefonos y navegadores siguen valiendo hasta que venzan.
 //
-// La sesion es un token firmado (12 h), pero la firma sola no basta: un usuario dado de baja o con
-// el rol cambiado seguiria operando hasta que venza. Por eso cada peticion revisa en la base que la
-// cuenta siga activa y toma de ahi el rol y el cliente (lo firmado en el token es solo el id).
-//
-// Costo: una consulta por clave primaria por peticion.
+// En ambos casos la firma o el token solos no bastan: un usuario dado de baja o con el rol cambiado
+// seguiria operando. Por eso cada peticion revisa en la base (una consulta por clave primaria) que la
+// cuenta siga activa y toma de ahi el rol y el cliente.
 //
 // Un 401 NO borra la cola de sincronizacion de la app del mecanico: solo muestra "tu sesion expiro"
 // y conserva lo pendiente en el telefono. Si la base no responde se contesta 503 y no 401, para que

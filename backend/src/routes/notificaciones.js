@@ -9,7 +9,6 @@ const { envolver } = require('../utils/paginacion');
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
 
-// GET /api/notificaciones - listado (para reenvio manual / seguimiento de errores)
 router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
         // ?problemas=1: solo los avisos que cuenta el dashboard (mismo predicado), hasta 200
@@ -33,7 +32,7 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
     }
 });
 
-// POST /api/notificaciones/:id/reintentar - devuelve una notificacion en error a la cola
+// devuelve una notificacion en error a la cola
 // del worker (reinicia intentos y backoff). Solo aplica a las que ya agotaron reintentos.
 router.post('/:id/reintentar', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     if (!/^\d{1,9}$/.test(String(req.params.id))) return res.status(400).json({ error: 'Id de notificación inválido' });

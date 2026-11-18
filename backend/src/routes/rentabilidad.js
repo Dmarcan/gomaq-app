@@ -25,7 +25,7 @@ const num = (v) => (v === null || v === undefined ? null : Number(v));
 /** Por defecto los ultimos 12 meses, que es el horizonte con que se evalua un arriendo. */
 function rangoDeFechas(query) {
     // desde/hasta mal formados (texto que no es fecha, arreglo, objeto) no llegan al calculo:
-    // la ruta responde 400. Antes, Intl lanzaba un RangeError que tumbaba el proceso.
+    // la ruta responde 400 (Intl lanzaria un RangeError que tumbaria el proceso).
     const hastaLeida = fechaDeQuery(query.hasta);
     const desdeLeida = fechaDeQuery(query.desde);
     if (hastaLeida === undefined || desdeLeida === undefined) return { error: 'desde y hasta deben ser fechas válidas (AAAA-MM-DD)' };
@@ -48,8 +48,7 @@ function rangoDeFechas(query) {
 }
 
 // Gasto en repuestos por equipo. Cuenta TODAS las lineas, cobradas o no: es el costo real
-// para GOMAQ, no lo facturado al cliente (entrevista el jefe de taller, punto 1). Las anuladas no: el
-// repuesto volvio al furgon, no se gasto.
+// para GOMAQ, no lo facturado al cliente. Las anuladas no: el repuesto volvio al furgon, no se gasto.
 const SQL_LINEAS = `
     SELECT ot.maquinaria_id, mi.cantidad, mi.precio_unitario
     FROM movimientos_insumo mi
@@ -132,9 +131,8 @@ function comparadorDeOrden(orden, dir) {
     };
 }
 
-// GET /api/rentabilidad - toda la flota, con lo que hay que decidir primero arriba.
-// Responde la pregunta de el jefe de taller: "no sabemos si en los tres meses que estuvo la maquina se
-// gasto mas plata de la que dejaba el arriendo".
+// toda la flota, con lo que hay que decidir primero arriba.
+// Responde si en los meses que estuvo la maquina se gasto mas plata de la que dejaba el arriendo.
 //
 // Ademas de gasto y margen, cada equipo trae las medidas con que la industria del arriendo lo
 // evalua y que salen de datos que ya existen: que parte del ingreso se va en repuestos, cuanto
@@ -209,7 +207,6 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo'), async (re
     }
 });
 
-// GET /api/rentabilidad/maquinaria/:id - detalle de un equipo, con el desglose que lo respalda
 router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
     const rango = rangoDeFechas(req.query);
     if (rango.error) return res.status(400).json({ error: rango.error });

@@ -20,7 +20,6 @@ validarIdsEnRuta(router, ['id']);
 
 const ROLES_VALIDOS = ['gerente', 'administrativo', 'mecanico', 'cliente'];
 
-// GET /api/usuarios?rol=mecanico - listado filtrado por rol (sin exponer password_hash)
 router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { rol } = req.query;
     if (rol && !ROLES_VALIDOS.includes(rol)) {
@@ -62,7 +61,7 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
     }
 });
 
-// POST /api/usuarios - crea una cuenta interna activa con una contrasena que escribe quien la crea.
+// crea una cuenta interna activa con una contrasena que escribe quien la crea.
 // RESPALDO por un ciclo: el panel ya invita (POST /api/usuarios/invitaciones) y la persona elige su
 // clave. Se mantiene para los APK antiguos del panel; quitarlo en el proximo ciclo.
 // Las cuentas de cliente se crean con el registro y se aprueban en Solicitudes.
@@ -96,8 +95,6 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
     }
 });
 
-// ---- Invitaciones y codigos de restablecer ---------------------------------------------------------
-//
 // Quien administra escribe nombre, correo y rol; nunca la clave. La cuenta queda 'pendiente' con una
 // clave aleatoria que nadie conoce, y la persona elige la suya canjeando un codigo de 6 digitos
 // (POST /api/auth/codigo/confirmar). El codigo llega por correo o, con canal 'manual', vuelve UNA vez
@@ -161,13 +158,12 @@ const MENSAJE_CORREO_OCUPADO = {
     rechazado: 'Ese correo es de una cuenta desactivada. Reactívala desde la lista de cuentas.',
 };
 
-// GET /api/usuarios/invitaciones/config - si el canal correo esta disponible (y si no, por que)
 router.get('/invitaciones/config', verifyToken, requireRole('administrativo', 'gerente'), (req, res) => {
     const c = correoDisponible();
     res.json({ correo_disponible: c.disponible, motivo: c.motivo });
 });
 
-// POST /api/usuarios/invitaciones - invita una cuenta interna. Si el correo ya es de una cuenta que no
+// invita una cuenta interna. Si el correo ya es de una cuenta que no
 // acepta su invitacion, la reinvita (actualiza nombre y rol, y el codigo anterior deja de servir).
 router.post('/invitaciones', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const v = validarNuevaInvitacion(req.body);
@@ -305,7 +301,6 @@ async function nuevoCodigoParaCuenta(req, res, { proposito, estadoEsperado, mens
     return res.json({ ok: true, ...entrega });
 }
 
-// POST /api/usuarios/:id/invitacion {canal} - nuevo codigo de invitacion (reenviar o copiar otro mensaje)
 router.post('/:id/invitacion', verifyToken, requireRole('administrativo', 'gerente'), (req, res) =>
     nuevoCodigoParaCuenta(req, res, {
         proposito: 'invitacion',
@@ -313,7 +308,6 @@ router.post('/:id/invitacion', verifyToken, requireRole('administrativo', 'geren
         mensajeOtroEstado: 'Esta cuenta ya aceptó su invitación o está desactivada: no necesita una nueva',
     }));
 
-// POST /api/usuarios/:id/codigo-restablecer {canal} - codigo para que la persona elija una clave nueva.
 // Su clave actual sigue valiendo hasta que canjee el codigo; para cortar el acceso ya, desactivar.
 router.post('/:id/codigo-restablecer', verifyToken, requireRole('administrativo', 'gerente'), (req, res) => {
     if (Number(req.params.id) === Number(req.user.id)) {
@@ -326,7 +320,7 @@ router.post('/:id/codigo-restablecer', verifyToken, requireRole('administrativo'
     });
 });
 
-// POST /api/usuarios/:id/invitacion/revocar - revoca una invitacion no aceptada. La cuenta nunca pudo entrar,
+// revoca una invitacion no aceptada. La cuenta nunca pudo entrar,
 // asi que se borra; si algo ya la referencia (por ejemplo un vehiculo asignado), queda desactivada.
 router.post('/:id/invitacion/revocar', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     let client;
@@ -365,7 +359,7 @@ router.post('/:id/invitacion/revocar', verifyToken, requireRole('administrativo'
     }
 });
 
-// PATCH /api/usuarios/:id/estado - desactiva o reactiva una cuenta interna. Una cuenta desactivada
+// desactiva o reactiva una cuenta interna. Una cuenta desactivada
 // no puede iniciar sesion y su sesion vigente deja de valer en la siguiente peticion (verifyToken
 // la revisa en la base). No se puede desactivar la propia cuenta. Una cuenta invitada que aun no
 // acepta no se activa por aqui (no tiene clave): se le reenvia o revoca la invitacion.
@@ -406,7 +400,7 @@ router.patch('/:id/estado', verifyToken, requireRole('administrativo', 'gerente'
     }
 });
 
-// POST /api/usuarios/:id/password - restablece la contrasena de una cuenta interna (quien la olvido, o
+// restablece la contrasena de una cuenta interna (quien la olvido, o
 // una cuenta comprometida). No hay proveedor de correo: la escribe quien restablece y se la entrega a
 // la persona. Las sesiones que la cuenta ya tenia abiertas dejan de valer (password_cambiada_at). La
 // clave se guarda solo como hash y no vuelve en ninguna respuesta. Las cuentas de cliente quedan fuera.
@@ -440,7 +434,6 @@ router.post('/:id/password', verifyToken, requireRole('administrativo', 'gerente
     }
 });
 
-// GET /api/usuarios/solicitudes - solicitudes de registro de cliente pendientes de revisar
 router.get('/solicitudes', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
         const result = await pool.query(
@@ -458,7 +451,6 @@ router.get('/solicitudes', verifyToken, requireRole('administrativo', 'gerente')
     }
 });
 
-// POST /api/usuarios/solicitudes/:id/aprobar - crea (o vincula) el cliente y activa la cuenta
 router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { cliente_id } = req.body;
     const errCuerpo = validarCuerpo(req.body, { ids: ['cliente_id'] });
@@ -501,8 +493,7 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
 
         let clienteIdFinal = cliente_id || null;
         if (!clienteIdFinal) {
-            // el cliente es la empresa: antes se creaba con el nombre de la persona de contacto
-            // porque el formulario no pedia el de la empresa (las solicitudes antiguas no lo traen)
+            // el cliente es la empresa; las solicitudes antiguas no traen su nombre y usan el de la persona de contacto
             const nuevoCliente = await client.query(
                 `INSERT INTO clientes (nombre, rut, email, telefono, horario_trabajo, horario_colacion, direccion, latitud, longitud)
                  VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
@@ -547,7 +538,6 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
     }
 });
 
-// POST /api/usuarios/solicitudes/:id/rechazar
 router.post('/solicitudes/:id/rechazar', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
         const result = await pool.query(
@@ -564,7 +554,7 @@ router.post('/solicitudes/:id/rechazar', verifyToken, requireRole('administrativ
     }
 });
 
-// GET /api/usuarios/mi-perfil - los datos propios del usuario autenticado.
+// los datos propios del usuario autenticado.
 // Incluye lo que se le muestra al cliente en el aviso previo a la visita (HU-07), para que
 // el mecanico sepa exactamente que de su ficha sale de la empresa.
 router.get('/mi-perfil', verifyToken, async (req, res) => {
@@ -583,7 +573,7 @@ router.get('/mi-perfil', verifyToken, async (req, res) => {
     }
 });
 
-// PATCH /api/usuarios/mi-perfil - el usuario completa su RUT y telefono.
+// el usuario completa su RUT y telefono.
 // El RUT lo pide el bloque de firmas del talonario y se le muestra al cliente en el aviso.
 router.patch('/mi-perfil', verifyToken, async (req, res) => {
     const { rut, telefono_whatsapp } = req.body;
@@ -615,7 +605,7 @@ router.patch('/mi-perfil', verifyToken, async (req, res) => {
     }
 });
 
-// PATCH /api/usuarios/:id/alertas - quien recibe el aviso de mantencion proxima y por donde.
+// quien recibe el aviso de mantencion proxima y por donde.
 // Se configura desde el panel a proposito: cambiar el destinatario no deberia exigir entrar
 // por SSH a editar el .env del servidor.
 router.patch('/:id/alertas', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {

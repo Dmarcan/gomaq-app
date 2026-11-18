@@ -1,4 +1,4 @@
-// Estado del equipo derivado de sus ordenes de trabajo (bloque 3).
+// Estado del equipo derivado de sus ordenes de trabajo.
 //
 // El estado de la maquinaria puede cambiarlo la orden (al llegar el mecanico a terreno y al cerrar),
 // el mecanico (al cerrar dice como queda el equipo) o el panel (a mano). `estado_origen` guarda
@@ -65,7 +65,6 @@ function origenPorEjecutivo(ejecutivoId) {
     return ejecutivoId === null || ejecutivoId === undefined ? 'directo' : 'externo';
 }
 
-// ---------------------------------------------------------------------------------------------
 // Acceso a la base. Reciben el cliente de la transaccion en curso. Orden de bloqueo: primero la
 // fila de la orden (ya tomada por quien llama) y despues la del equipo, nunca al reves.
 // Las dos filas se bloquean con FOR NO KEY UPDATE, no con FOR UPDATE: guias.js y horometro.js
@@ -73,7 +72,6 @@ function origenPorEjecutivo(ejecutivoId) {
 // la fila referenciada por la clave foranea. Un FOR UPDATE choca con KEY SHARE y formaba el ciclo
 // equipo -> orden (horometro) contra orden -> equipo (cierre); FOR NO KEY UPDATE no choca con
 // KEY SHARE, y nadie modifica la clave de la orden ni la del equipo.
-// ---------------------------------------------------------------------------------------------
 
 /** Una orden llega a terreno por primera vez: un equipo operativo pasa a en_mantencion. */
 async function aplicarEntradaEquipo(client, maquinariaId) {

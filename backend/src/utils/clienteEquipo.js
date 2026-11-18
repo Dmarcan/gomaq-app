@@ -5,10 +5,9 @@
 // Es el mismo orden que usa la facturacion (utils/arriendos.js: ORDER BY fecha, id), asi el panel
 // y el cobro nunca discrepan.
 //
-// Antes cada guia pisaba maquinarias.cliente_id segun el orden de LLEGADA: una recepcion
-// atrasada (con fecha anterior a un despacho ya registrado) dejaba el equipo sin cliente, y dos
-// despachos simultaneos a clientes distintos quedaban con el del ultimo UPDATE y no el de la
-// guia mas reciente.
+// Derivarlo de la guia mas reciente por fecha, y no segun el orden de LLEGADA, evita que una recepcion
+// atrasada (con fecha anterior a un despacho ya registrado) deje el equipo sin cliente, o que dos
+// despachos simultaneos a clientes distintos queden con el del ultimo UPDATE.
 //
 // Estas funciones asumen que quien llama ya tiene bloqueada la fila del equipo en la misma
 // transaccion (FOR NO KEY UPDATE), que es lo que serializa a los escritores.

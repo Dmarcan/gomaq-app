@@ -152,8 +152,7 @@ async function procesarUna(notificacion) {
 async function procesarPendientes() {
     // Tomar el lote y correr su proximo_intento en una sola sentencia, con SKIP LOCKED: si hay
     // dos procesos (la API y el worker, o dos despliegues superpuestos), cada uno toma filas
-    // distintas y ningun aviso sale dos veces. Antes la unica proteccion era un flag en
-    // memoria, que no sirve entre procesos.
+    // distintas y ningun aviso sale dos veces. Un flag en memoria no sirve entre procesos.
     const { rows } = await pool.query(
         `UPDATE notificaciones_pendientes
          SET proximo_intento = now() + ($2 || ' seconds')::interval

@@ -2,11 +2,10 @@
 //
 //   node scripts/worker.js
 //
-// Corre el mismo worker que antes vivia dentro de la API (server.js), pero sin servidor HTTP: asi
-// un despliegue del panel o de la API no corta envios a medio camino, y un proveedor lento no
-// comparte proceso con las peticiones de los usuarios. No aplica migraciones (eso lo hace la API
-// al arrancar); si el esquema aun no esta al dia, el worker simplemente reintenta en el
-// siguiente ciclo.
+// Corre el worker de notificaciones sin servidor HTTP: asi un despliegue del panel o de la API no corta
+// envios a medio camino, y un proveedor lento no comparte proceso con las peticiones de los usuarios. No
+// aplica migraciones (eso lo hace la API al arrancar); si el esquema aun no esta al dia, el worker
+// reintenta en el siguiente ciclo.
 //
 // Arrancar con `node` directo y no con `npm start`: npm no reenvia SIGTERM al proceso hijo y el
 // cierre ordenado de abajo no correria.

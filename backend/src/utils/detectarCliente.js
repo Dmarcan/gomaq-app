@@ -7,9 +7,8 @@ const { normalizarRut } = require('./parsearDocumento');
  * Primero por RUT, que es la unica senal inequivoca: el nombre puede aparecer escrito de
  * varias formas y el documento tambien contiene el nombre y el RUT de GOMAQ (el emisor).
  *
- * Si no hay RUT se cae al nombre, pero recorriendo los candidatos del nombre mas largo al
- * mas corto. Antes se usaba el orden en que Postgres devolvia las filas (el SELECT no tenia
- * ORDER BY), asi que con "Acsa" y "Acsa International" en la tabla el mismo PDF podia
+ * Si no hay RUT se cae al nombre, recorriendo los candidatos del nombre mas largo al mas corto: sin un
+ * orden fijo, con un nombre contenido en otro ("Acme" y "Acme International") el mismo PDF podia
  * resolverse a uno u otro entre llamadas.
  */
 function elegirCliente(texto, rut, clientes) {

@@ -5,7 +5,7 @@ const { ErrorLimite, crearLimitador, normalizarTexto, buscarDirecciones, hayLlav
 const router = express.Router();
 const limitador = crearLimitador();
 
-// GET /api/geocodificar?texto=... - sugerencias de direcciones para ubicar un cliente o la bodega.
+// sugerencias de direcciones para ubicar un cliente o la bodega.
 // Solo la oficina. Devuelve [{ etiqueta, latitud, longitud }], hasta 6, solo de Chile.
 router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const texto = normalizarTexto(req.query.texto);

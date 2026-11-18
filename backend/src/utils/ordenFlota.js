@@ -1,7 +1,7 @@
 // Orden de la tabla de Flota, resuelto en el servidor.
 //
-// Antes el panel ordenaba en pantalla, pero la lista pagina: al ordenar por estado solo se
-// ordenaban los equipos ya descargados, no los 87 (o los 500). Aca el orden entra a la consulta.
+// El orden no puede resolverlo el panel en pantalla: la lista pagina, y al ordenar por estado solo se
+// ordenarian los equipos ya descargados. Por eso entra a la consulta.
 //
 // Lo que llega de la query NUNCA se interpola: solo elige entre las expresiones de abajo, asi
 // que un `orden` inventado no puede meter SQL.

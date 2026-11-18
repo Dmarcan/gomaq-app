@@ -14,7 +14,7 @@ const soloOficina = [verifyToken, requireRole('administrativo', 'gerente')];
 const SQL_BODEGA = `SELECT id, nombre, latitud, longitud, ubicacion_actualizada_at
                     FROM ubicaciones_stock WHERE tipo = 'bodega' ORDER BY id LIMIT 1`;
 
-// GET /api/mapa - equipos (arrendados y en bodega) y furgones en camino, con su ubicacion.
+// equipos (arrendados y en bodega) y furgones en camino, con su ubicacion.
 // No llama al servicio de rutas ni recalcula la ETA: solo lee lo que ya esta guardado.
 router.get('/', ...soloOficina, async (req, res) => {
     try {
@@ -74,7 +74,6 @@ router.get('/', ...soloOficina, async (req, res) => {
     }
 });
 
-// GET /api/mapa/bodega - la ubicacion de la bodega, para editarla.
 router.get('/bodega', ...soloOficina, async (req, res) => {
     try {
         const fila = (await pool.query(SQL_BODEGA)).rows[0];
@@ -86,7 +85,7 @@ router.get('/bodega', ...soloOficina, async (req, res) => {
     }
 });
 
-// PUT /api/mapa/bodega - fija la ubicacion de la bodega. Latitud y longitud juntas; las dos en
+// fija la ubicacion de la bodega. Latitud y longitud juntas; las dos en
 // null la borran (un cuerpo vacio o con una sola responde 400). Administrativo y gerente.
 router.put('/bodega', ...soloOficina, async (req, res) => {
     const coords = validarUbicacionBodega(req.body);

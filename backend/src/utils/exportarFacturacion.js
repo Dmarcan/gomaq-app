@@ -1,8 +1,8 @@
-// Exportacion de la facturacion a Excel con el formato de la hoja CLIENTES de la planilla de la administrativa (D7).
+// Exportacion de la facturacion a Excel con el formato de la hoja CLIENTES de la planilla de cobranza.
 //
 // `armarHoja` es pura: de las filas de la consulta a la matriz que escribe utils/xlsx.js. `cargarFilasExportacion`
 // hace la consulta (mismas uniones y mismo "dia de referencia" que la lista de emitidas). Todo son VALORES, no
-// formulas. Devol / Adicional, Comision y Pagada comision quedan vacias: no estan en el sistema y las llena ella.
+// formulas. Devol / Adicional, Comision y Pagada comision quedan vacias: no estan en el sistema y se llenan a mano.
 
 const { FILTROS_ESTADO, SQL_HOY, estadoCobranza, diasMora } = require('./cobranza');
 const { SQL_CLIENTE, SQL_FECHA_REF, DESDE_JOIN } = require('./facturasEmitidas');
@@ -74,7 +74,7 @@ function textoEquipo(f) {
 
 /**
  * Neto, neto del equipo y traslados de una fila. Sin monto_neto, el neto es round(monto / 1,19) y `estimado` es
- * true (hay facturas exentas, donde esa cuenta no vale). Los traslados siguen D2: con division, cada parte a su
+ * true (hay facturas exentas, donde esa cuenta no vale). Los traslados: con division, cada parte a su
  * columna; con total sin division, todo a Traslado Entrega.
  */
 function montosFila(f) {

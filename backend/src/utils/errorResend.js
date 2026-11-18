@@ -18,10 +18,6 @@ function leerEncabezado(headers, nombre) {
     return headers[nombre] ?? headers[nombre.toLowerCase()] ?? null;
 }
 
-/**
- * @param {{status: number, cuerpo?: object, headers?: object, ahora?: Date}} respuesta
- * @returns {Error}
- */
 function errorDeResend({ status, cuerpo, headers, ahora = new Date() }) {
     const nombre = (cuerpo && cuerpo.name) || '';
     const mensaje = (cuerpo && cuerpo.message) || '';

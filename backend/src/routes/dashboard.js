@@ -13,7 +13,6 @@ const { SQL_FACTURAS_VENCIDAS, SQL_FACTURAS_PROXIMAS } = require('../utils/cobra
 
 const router = express.Router();
 
-// GET /api/dashboard/resumen - estadisticas y atajos para la pantalla "Estado de la Flota"
 router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     try {
         const flota = await pool.query(`
@@ -76,18 +75,6 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
     }
 });
 
-// GET /api/dashboard/pendientes - el bloque "Pendientes" del dashboard: cada numero sale del mismo
-// predicado que la lista a la que lleva (utils/*), para que el numero y la lista no discrepen.
-//   mantencion_vencida / mantencion_proxima  GET /api/horometro/alertas
-//   ot_sin_asignar                           GET /api/ordenes-trabajo?sin_asignar=1
-//   asistencias_por_atender                  solicitudes de asistencia pendientes
-//   avisos_con_problemas                     GET /api/notificaciones?problemas=1
-//   por_facturar                             la pestana "Por facturar" (arriendos cerrados + reparaciones listas)
-//   arriendos_con_aviso                      GET /api/facturacion/arriendos-en-curso con aviso
-//   ot_por_valorizar                         la pestana "Pendiente de valorizar"
-//   guias_sin_documento                      guias registradas sin PDF
-//   descuadres                               GET /api/insumos/descuadres
-//   cuentas_por_aprobar                      solicitudes de cuenta de cliente pendientes
 // Los arriendos se arman con una consulta que recorre todas las guias (utils/arriendos.js). El dashboard se
 // refresca seguido y lo abren varios usuarios: se guarda el resultado 30 s en memoria (por configuracion
 // de cobro). El numero del dashboard puede ir hasta 30 s atrasado respecto de las pestanas de Facturacion,
@@ -109,7 +96,7 @@ async function arriendosParaDashboard(config) {
     return arriendos;
 }
 
-// GET /api/dashboard/pendientes - el bloque "Pendientes" del dashboard: cada numero sale del mismo
+// el bloque "Pendientes" del dashboard: cada numero sale del mismo
 // predicado que la lista a la que lleva (utils/*), para que el numero y la lista no discrepen.
 //   mantencion_vencida / mantencion_proxima  GET /api/horometro/alertas
 //   ot_sin_asignar                           GET /api/ordenes-trabajo?sin_asignar=1
@@ -164,15 +151,13 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
     }
 });
 
-// GET /api/dashboard/ventas-por-ejecutivo?desde=&hasta= - cuanto de lo facturado corresponde
-// a cada ejecutivo en terreno (reemplazo del comparativo manual que la administrativa arma en Excel)
+// cuanto de lo facturado corresponde a cada ejecutivo en terreno
 router.get('/ventas-por-ejecutivo', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const { desde, hasta } = req.query;
     try {
         // una factura tiene dos origenes posibles y excluyentes: reparacion (orden_trabajo_id)
-        // o arriendo (guia_recepcion_id). Ambos LEFT JOIN + COALESCE para que el reporte
-        // incluya los dos - un INNER JOIN a ordenes_trabajo botaba todos los arriendos,
-        // que son justamente el rubro principal del negocio (bug corregido en auditoria).
+        // o arriendo (guia_recepcion_id). Ambos LEFT JOIN + COALESCE para que el reporte incluya los dos:
+        // un INNER JOIN a ordenes_trabajo dejaria fuera los arriendos, que son el rubro principal.
         const result = await pool.query(
             `SELECT e.id AS ejecutivo_id, COALESCE(e.nombre, 'Directo') AS ejecutivo_nombre,
                     COALESCE(SUM(f.monto), 0) AS monto
@@ -202,7 +187,7 @@ router.get('/ventas-por-ejecutivo', verifyToken, requireRole('administrativo', '
     }
 });
 
-// GET /api/dashboard/ots-por-mes - OTs creadas por mes calendario (ultimos 6 meses)
+// OTs creadas por mes calendario (ultimos 6 meses)
 // para el grafico de linea del dashboard. generate_series rellena los meses sin OTs
 // con cero, para que la linea no "salte" meses.
 router.get('/ots-por-mes', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {

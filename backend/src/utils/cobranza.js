@@ -4,7 +4,7 @@
 // anulada_nc. El estado sale de aqui con el dia de hoy en America/Santiago:
 //   anulada          anulada_nc tiene valor (nota de credito en el SII)
 //   pagada           hay fecha_pago
-//   vencida          hoy es POSTERIOR al vencimiento (vence el dia siguiente, como la planilla de la administrativa)
+//   vencida          hoy es POSTERIOR al vencimiento (vence el dia siguiente, como la planilla de cobranza)
 //   proxima          faltan de 0 a 7 dias para el vencimiento
 //   al_dia           faltan mas de 7 dias
 //   sin_vencimiento  no hay fecha de vencimiento (las facturas cargadas antes de la 038: no se inventa una)

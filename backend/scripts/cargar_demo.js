@@ -1,54 +1,26 @@
 // Datos de DEMOSTRACION para mostrar el panel: clientes, equipos, arriendos, facturas en todos los estados
 // de cobranza, ordenes de trabajo y lecturas de horometro. Todo lleva la marca [DEMO] y se borra con una orden.
 //
-//   node scripts/cargar_demo.js --simular            # hace la carga en una transaccion y la deshace
-//   node scripts/cargar_demo.js                      # carga de verdad
-//   node scripts/cargar_demo.js --borrar --simular   # muestra lo que borraria, sin borrar
-//   node scripts/cargar_demo.js --borrar             # borra TODO lo de la demo
+// node scripts/cargar_demo.js --simular            # hace la carga en una transaccion y la deshace
+// node scripts/cargar_demo.js                      # carga de verdad
+// node scripts/cargar_demo.js --borrar --simular   # muestra lo que borraria, sin borrar
+// node scripts/cargar_demo.js --borrar             # borra TODO lo de la demo
+// En Railway la base no tiene acceso publico: railway ssh --service gomaq-app -- node scripts/cargar_demo.js --simular
 //
-// En Railway la base no tiene acceso publico, asi que se corre dentro del contenedor:
-//   railway ssh --service gomaq-app -- node scripts/cargar_demo.js --simular
+// Las fechas son relativas al dia de HOY en Santiago: los estados de cobranza se corren con los dias, asi que
+// conviene cargar el mismo dia de la demo, o borrar y volver a cargar.
 //
-// Fechas: todas relativas al dia de HOY en Santiago (lo da la base al cargar). Los estados de cobranza se
-// corren con los dias (una "proxima a vencer" pasa a vencida): cargar el mismo dia de la demo, o borrar y
-// volver a cargar.
+// Marca (sin tabla nueva ni migracion): clientes con nombre '[DEMO] ...' y RUT ficticio 99.990.00X; equipos con
+// codigo 'DEMO-...'; insumos, OT, movimientos y lecturas con '[DEMO]' en su texto; facturas con folio 'DEMO-0001'
+// (nota de credito 'DEMO-NC-0001'). Guias y stock son DEMO por su equipo o insumo.
 //
-// COMO SE MARCA (sin tabla nueva ni migracion):
-//   clientes            nombre '[DEMO] ...', RUT ficticio 99.990.00X (digito verificador valido), sin correo
-//                       ni telefono
-//   maquinarias         codigo 'DEMO-...' (unico) y descripcion '[DEMO] ...'
-//   insumos             nombre '[DEMO] ...'
-//   ordenes_trabajo     motivo, diagnostico y observacion '[DEMO] ...', siempre sobre un equipo DEMO
-//   movimientos_insumo  descripcion '[DEMO] ...', siempre de una OT DEMO
-//   lecturas_horometro  observacion '[DEMO] ...', siempre de un equipo DEMO
-//   facturas            folio 'DEMO-0001'... (el folio es texto) y nota de credito 'DEMO-NC-0001'
-//   guias, stock_ubicacion: no tienen texto libre; son DEMO por su equipo o insumo DEMO.
-//
-// DECISIONES DE SEGURIDAD:
-//   - No se usa ningun equipo real: registrar un despacho cambia maquinarias.cliente_id y el estado del equipo,
-//     y eso seria modificar la flota real. Se crean 4 equipos DEMO propios.
-//   - No se usan insumos reales: un consumo moveria su stock. Se crean 2 insumos DEMO con sus existencias en
-//     la bodega central (filas propias de stock_ubicacion).
-//   - Los ejecutivos (Freddy, Alejandra, Wenceslao, Oscar) se usan si existen; no se crean ni se modifican.
-//   - No se crean usuarios ni sesiones. Ninguna OT tiene mecanico: no aparece en la app de un mecanico real.
-//   - Sin notificaciones: todo es SQL directo. Los avisos solo los encolan las rutas (ordenes.js, horometro.js,
-//     guias.js, facturacion.js, facturas.js, usuarios.js y utils/avisos.js); ningun trigger escribe en
-//     notificaciones_pendientes. Ademas los clientes no tienen correo ni telefono y el horometro de cada equipo
-//     queda bajo su proxima mantencion (horometro_ultima_mantencion), para que una lectura nueva no avise.
-//   - No se escribe en ordenes_eventos (es de solo insercion). Si durante la demo alguien opera una OT DEMO
-//     desde el panel y se generan eventos, el borrado los quita por la via de purga (set_config de
-//     gomaq.purga, solo en esa transaccion y solo los de OT DEMO).
-//   - Facturas sin PDF: archivo_url es NOT NULL, va una ruta inexistente ('demo/sin-documento.pdf'). Abrir el
-//     PDF de una factura DEMO desde el panel da error; no se sube nada a Supabase.
-//
-// BORRADO: toma los clientes, equipos e insumos con la marca y borra, en orden inverso de dependencias, lo
-// que cuelga de ellos (facturas, lecturas, lineas, stock, filas hijas de las OT, eventos, OT, guias). Antes
-// comprueba que nada de eso toque un equipo real ni un usuario: si un cliente DEMO quedo ligado a un equipo
-// real (por ejemplo, un despacho registrado en la demo), o un usuario o solicitud de cuenta apunta a un
-// cliente DEMO, NO borra nada y dice que corregir. Clientes y equipos reales nunca se modifican ni se borran.
-//
-// Todo corre en una transaccion con pg_advisory_xact_lock. La carga es idempotente: si la demo ya esta
-// cargada, no inserta nada (0 nuevos); si esta a medias, se detiene y pide --borrar primero.
+// Seguridad: nunca se usan equipos, insumos ni usuarios reales (un despacho o un consumo cambiaria la flota o el
+// stock reales); no se crean usuarios ni sesiones; no se encolan notificaciones; no se escribe en ordenes_eventos
+// (es de solo insercion: el borrado usa la via de purga solo para eventos de OT DEMO). Las facturas llevan una ruta
+// de PDF inexistente: abrirlas desde el panel da error y no se sube nada a Supabase.
+// El borrado no borra nada si algo DEMO quedo ligado a un equipo real, un usuario o una solicitud de cuenta.
+// Todo corre en una transaccion con candado. La carga es idempotente: si la demo ya esta cargada no inserta nada;
+// si esta a medias, se detiene y pide --borrar primero.
 
 require('dotenv').config();
 const { Client } = require('pg');
@@ -335,9 +307,7 @@ function conteoPlan(plan) {
     };
 }
 
-// ----------------------------------------------------------------------------------------------------------
 // Consultas de identificacion (las comparten la carga, el borrado y las pruebas)
-// ----------------------------------------------------------------------------------------------------------
 
 const SQL_IDS_DEMO = {
     clientes: `SELECT id FROM clientes WHERE starts_with(nombre, '${MARCA}') ORDER BY id`,
@@ -368,9 +338,7 @@ function consultar(db, sql, params) {
     return db.query(texto, usados.map((n) => params[n - 1]));
 }
 
-// ----------------------------------------------------------------------------------------------------------
 // Carga
-// ----------------------------------------------------------------------------------------------------------
 
 /**
  * Carga la demo con un Client de pg ya conectado. Con simular = true deshace todo al final; con un error
@@ -556,9 +524,7 @@ async function cargarDemo(db, { simular = false } = {}) {
     return resumen;
 }
 
-// ----------------------------------------------------------------------------------------------------------
 // Borrado
-// ----------------------------------------------------------------------------------------------------------
 
 // Filas que impiden borrar sin tocar algo real. $1 clientes DEMO, $2 equipos DEMO, $3 insumos DEMO.
 const CONFLICTOS = [
@@ -698,9 +664,7 @@ async function borrarDemo(db, { simular = false } = {}) {
     return resumen;
 }
 
-// ----------------------------------------------------------------------------------------------------------
 // Salida
-// ----------------------------------------------------------------------------------------------------------
 
 const pesos = (n) => (n === null || n === undefined ? '-' : `$${Number(n).toLocaleString('es-CL')}`);
 

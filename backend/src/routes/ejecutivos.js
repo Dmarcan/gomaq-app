@@ -6,7 +6,6 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 
 const router = express.Router();
 
-// GET /api/ejecutivos - catalogo de ejecutivos en terreno (Freddy, Oscar, etc.)
 router.get('/', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
     try {
         const result = await pool.query('SELECT * FROM ejecutivos ORDER BY nombre ASC');
@@ -17,7 +16,6 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo'), async (re
     }
 });
 
-// POST /api/ejecutivos - crear ejecutivo
 router.post('/', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
     const { nombre } = req.body;
     const errCuerpo = validarCuerpo(req.body, { textos: { nombre: 150 } });
