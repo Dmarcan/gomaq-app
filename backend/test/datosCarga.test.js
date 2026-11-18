@@ -5,7 +5,14 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { validarArchivo, EJECUTIVOS_A_CREAR } = require('../src/utils/cargaClientes');
 
-const leer = (f) => JSON.parse(fs.readFileSync(path.join(__dirname, '../../db/datos', f), 'utf8'));
+const DATOS = path.join(__dirname, '../../db/datos');
+const leer = (f) => JSON.parse(fs.readFileSync(path.join(DATOS, f), 'utf8'));
+
+// clientes_gomaq.json trae RUT de personas reales y no se versiona (.gitignore): en el CI y en un clon
+// nuevo no existe. Sus pruebas solo se registran si el archivo esta (no se marcan como omitidas porque
+// el CI exige cero omitidas); el archivo de ejemplo, con datos inventados, se valida siempre.
+const HAY_CLIENTES_REALES = fs.existsSync(path.join(DATOS, 'clientes_gomaq.json'));
+const pruebaClientesReales = HAY_CLIENTES_REALES ? test : () => {};
 
 const NUEVOS = ['PL-1131', 'PL-1232', 'PL-1833', 'GH-1526', 'GH-1528', 'GH-1539', 'GH-1540', 'GH-1541', 'GH-1642'];
 const PREFIJOS = { alzahombre: ['PL', 'BR'], grua_horquilla: ['GH'], transpaleta: ['TP'], apilador: ['AP'] };
@@ -39,7 +46,7 @@ test('equipos nuevos: grua con serie y anio, plataforma sin ellos', () => {
     }
 });
 
-test('clientes: RUT validos y unicos, sin correo, telefono ni contacto', () => {
+pruebaClientesReales('clientes: RUT validos y unicos, sin correo, telefono ni contacto', () => {
     const { clientes } = leer('clientes_gomaq.json');
     assert.ok(clientes.length > 100);
     assert.deepEqual(validarArchivo(clientes).errores, []);
@@ -49,9 +56,20 @@ test('clientes: RUT validos y unicos, sin correo, telefono ni contacto', () => {
     }
 });
 
-test('clientes: el plazo, cuando viene, es un numero de dias valido', () => {
+pruebaClientesReales('clientes: el plazo, cuando viene, es un numero de dias valido', () => {
     const { clientes } = leer('clientes_gomaq.json');
     const conPlazo = clientes.filter((c) => c.plazo_pago_dias !== null);
     assert.ok(conPlazo.length > 0 && conPlazo.length < clientes.length);
     for (const c of conPlazo) assert.ok(Number.isInteger(c.plazo_pago_dias) && c.plazo_pago_dias >= 0 && c.plazo_pago_dias <= 365);
+});
+
+test('clientes (archivo de ejemplo): estructura valida, RUT validos y unicos, sin datos de contacto', () => {
+    const { clientes } = leer('clientes_gomaq.ejemplo.json');
+    assert.ok(clientes.length >= 3 && clientes.length <= 5);
+    assert.deepEqual(validarArchivo(clientes).errores, []);
+    for (const c of clientes) {
+        for (const campo of ['email', 'correo', 'telefono', 'contacto']) assert.equal(campo in c, false, `${c.rut} trae ${campo}`);
+        assert.ok(c.ejecutivo === null || EJECUTIVOS_A_CREAR.includes(c.ejecutivo));
+        assert.ok(c.plazo_pago_dias === null || (Number.isInteger(c.plazo_pago_dias) && c.plazo_pago_dias >= 0 && c.plazo_pago_dias <= 365));
+    }
 });

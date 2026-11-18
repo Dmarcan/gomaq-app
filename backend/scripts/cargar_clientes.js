@@ -119,7 +119,7 @@ async function main() {
     const simular = argv.includes('--simular');
     const i = argv.indexOf('--archivo');
     const archivo = i >= 0 ? argv[i + 1] : buscarArchivo();
-    if (!archivo || !fs.existsSync(archivo)) throw new Error('No se encontro db/datos/clientes_gomaq.json');
+    if (!archivo || !fs.existsSync(archivo)) throw new Error('No se encontro db/datos/clientes_gomaq.json (no se versiona: pidelo a David; el formato esta en clientes_gomaq.ejemplo.json)');
     if (!(process.env.DATABASE_URL_MIGRACION || process.env.DATABASE_URL)) throw new Error('Falta DATABASE_URL');
     const { clientes } = JSON.parse(fs.readFileSync(archivo, 'utf8'));
 

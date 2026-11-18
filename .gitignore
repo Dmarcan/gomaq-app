@@ -19,3 +19,7 @@ ESTADO.md
 CLAUDE.md
 AGENTS.md
 docs/tecnica/revision_pre_demo_trabajo/env.ps1
+
+# Datos personales reales de clientes (RUT y nombres): solo en disco local, nunca en el repo.
+# El formato se ve en clientes_gomaq.ejemplo.json
+db/datos/clientes_gomaq.json

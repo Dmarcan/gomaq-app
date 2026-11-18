@@ -1,0 +1,37 @@
+{
+ "origen": "Archivo de ejemplo con datos inventados. El archivo real (clientes_gomaq.json) no se versiona: contiene RUT de personas reales. Misma estructura.",
+ "clientes": [
+  {
+   "rut": "11111111-1",
+   "nombre": "JUAN PEREZ EJEMPLO",
+   "direccion": "CALLE FICTICIA 123 COMUNA DE PRUEBA",
+   "giro": "SERVICIOS DE EJEMPLO",
+   "ejecutivo": null,
+   "plazo_pago_dias": 30
+  },
+  {
+   "rut": "22222222-2",
+   "nombre": "MARIA SOTO MUESTRA",
+   "direccion": "PASAJE INVENTADO 45 CIUDAD DE PRUEBA",
+   "giro": "COMERCIO DE EJEMPLO",
+   "ejecutivo": "Freddy",
+   "plazo_pago_dias": null
+  },
+  {
+   "rut": "76111222-8",
+   "nombre": "CONSTRUCTORA DE EJEMPLO LTDA",
+   "direccion": "AVENIDA FALSA 1000 SANTIAGO",
+   "giro": "CONSTRUCCION DE EDIFICIOS",
+   "ejecutivo": "Alejandra",
+   "plazo_pago_dias": 45
+  },
+  {
+   "rut": "77333444-7",
+   "nombre": "TRANSPORTES MUESTRA SPA",
+   "direccion": "CAMINO IMAGINARIO KM 5 RANCAGUA",
+   "giro": "TRANSPORTE DE CARGA POR CARRETERA",
+   "ejecutivo": "Oscar",
+   "plazo_pago_dias": 10
+  }
+ ]
+}
