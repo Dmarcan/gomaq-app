@@ -5,6 +5,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { verificarDuenoOrden, MENSAJE_OT_CERRADA } = require('../utils/ordenes');
 const { supabase, BUCKET } = require('../config/supabase');
+const { urlFirmadaONull } = require('../utils/urlsFirmadas');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 const { rutaArchivo, rutaPerteneceAOrden } = require('../utils/rutaArchivo');
 
@@ -27,34 +28,29 @@ router.post('/:id/evidencia/solicitar-upload', verifyToken, requireRole('mecanic
     if (carpeta !== undefined && !CARPETAS_PERMITIDAS.includes(carpeta)) {
         return res.status(400).json({ error: 'carpeta invalida' });
     }
+    const check = await verificarDuenoOrden(id, req.user.id);
+    if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+    if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
+    if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
+
+    // la ruta la arma el servidor; del nombre que manda el telefono solo queda la extension
+    const carpetas = carpeta ? [carpeta, `ot-${Number(id)}`] : [`ot-${Number(id)}`];
+    const path = rutaArchivo(carpetas, nombre_archivo);
+
+    // Si falla el almacenamiento (Supabase caido o pausado) se responde 503 y no 500: es un
+    // problema pasajero del lado del servidor, y la app del mecanico lo reintenta sola sin
+    // gastar intentos. El mensaje lo puede leer el mecanico.
+    let firmada;
     try {
-        const check = await verificarDuenoOrden(id, req.user.id);
-        if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
-        if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
-
-        // la ruta la arma el servidor; del nombre que manda el telefono solo queda la extension
-        const carpetas = carpeta ? [carpeta, `ot-${Number(id)}`] : [`ot-${Number(id)}`];
-        const path = rutaArchivo(carpetas, nombre_archivo);
-
-        // Si falla el almacenamiento (Supabase caido o pausado) se responde 503 y no 500: es un
-        // problema pasajero del lado del servidor, y la app del mecanico lo reintenta sola sin
-        // gastar intentos. El mensaje lo puede leer el mecanico.
-        let firmada;
-        try {
-            const { data, error } = await supabase.storage.from(BUCKET).createSignedUploadUrl(path);
-            if (error) throw error;
-            firmada = data;
-        } catch (errAlmacenamiento) {
-            console.error(errAlmacenamiento);
-            return res.status(503).json({ error: MENSAJE_ALMACENAMIENTO_NO_DISPONIBLE });
-        }
-
-        res.json({ path: firmada.path, token: firmada.token, signedUrl: firmada.signedUrl });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al generar URL de subida' });
+        const { data, error } = await supabase.storage.from(BUCKET).createSignedUploadUrl(path);
+        if (error) throw error;
+        firmada = data;
+    } catch (errAlmacenamiento) {
+        console.error(errAlmacenamiento);
+        return res.status(503).json({ error: MENSAJE_ALMACENAMIENTO_NO_DISPONIBLE });
     }
+
+    res.json({ path: firmada.path, token: firmada.token, signedUrl: firmada.signedUrl });
 });
 
 // Registra la evidencia una vez que el archivo ya fue subido directo a Supabase
@@ -102,31 +98,24 @@ router.post('/:id/evidencia/confirmar', verifyToken, requireRole('mecanico'), as
 });
 
 // Bucket privado: se genera una URL firmada temporal (1h) por cada foto, en vez de una URL publica permanente
-const URL_EXPIRACION_SEGUNDOS = 3600;
 
 router.get('/:id/evidencia', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     const { id } = req.params;
-    try {
-        if (req.user.rol === 'mecanico') {
-            const check = await verificarDuenoOrden(id, req.user.id);
-            if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-            if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
-        }
-        const result = await pool.query(
-            'SELECT * FROM evidencias_fotograficas WHERE orden_trabajo_id = $1 ORDER BY created_at DESC',
-            [id]
-        );
-
-        const conUrlFirmada = await Promise.all(result.rows.map(async (fila) => {
-            const { data, error } = await supabase.storage.from(BUCKET).createSignedUrl(fila.path, URL_EXPIRACION_SEGUNDOS);
-            return { ...fila, url: error ? null : data.signedUrl };
-        }));
-
-        res.json(conUrlFirmada);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar evidencia' });
+    if (req.user.rol === 'mecanico') {
+        const check = await verificarDuenoOrden(id, req.user.id);
+        if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
     }
+    const result = await pool.query(
+        'SELECT * FROM evidencias_fotograficas WHERE orden_trabajo_id = $1 ORDER BY created_at DESC',
+        [id]
+    );
+
+    const conUrlFirmada = await Promise.all(result.rows.map(async (fila) => {
+        return { ...fila, url: await urlFirmadaONull(supabase, BUCKET, fila.path) };
+    }));
+
+    res.json(conUrlFirmada);
 });
 
 module.exports = router;

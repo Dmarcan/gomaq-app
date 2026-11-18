@@ -5,6 +5,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaImagen } = require('../middleware/upload');
 const { supabase, BUCKET_EQUIPOS, BUCKET_DOCUMENTOS } = require('../config/supabase');
+const { urlFirmadaONull } = require('../utils/urlsFirmadas');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 const { calcularEstadoMantencion } = require('../utils/mantencion');
@@ -17,12 +18,9 @@ const { columnaOtAbierta } = require('../utils/otAbiertaEquipo');
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
 
-const URL_EXPIRACION_SEGUNDOS = 3600;
-
 async function conFotoFirmada(fila) {
     if (!fila.foto_url) return fila;
-    const { data, error } = await supabase.storage.from(BUCKET_EQUIPOS).createSignedUrl(fila.foto_url, URL_EXPIRACION_SEGUNDOS);
-    return { ...fila, foto_url: error ? null : data.signedUrl };
+    return { ...fila, foto_url: await urlFirmadaONull(supabase, BUCKET_EQUIPOS, fila.foto_url) };
 }
 
 // Permisos (Tabla 6.1): Gerente=Lectura, Administrativo=Lectura/Escritura, Mecanico=Lectura, Cliente=Denegado
@@ -58,50 +56,40 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
 
     const where = condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : '';
 
-    try {
-        const total = await pool.query(`SELECT COUNT(*)::int AS n FROM maquinarias m ${where}`, params);
+    const total = await pool.query(`SELECT COUNT(*)::int AS n FROM maquinarias m ${where}`, params);
 
-        // marca, modelo, capacidad, altura y combustible son lo que la tabla de Flota muestra
-        // para distinguir un equipo de otro sin abrirlo
-        let sql = `SELECT m.id, m.codigo, m.tipo, m.estado, m.ubicacion, m.foto_url, m.categoria_equipo,
+    // marca, modelo, capacidad, altura y combustible son lo que la tabla de Flota muestra
+    // para distinguir un equipo de otro sin abrirlo
+    let sql = `SELECT m.id, m.codigo, m.tipo, m.estado, m.ubicacion, m.foto_url, m.categoria_equipo,
                           m.marca, m.modelo, m.capacidad_carga, m.altura_trabajo, m.tipo_combustible,
                           m.cliente_id, c.nombre AS cliente${columnaOtAbierta(req.user.rol)}
                    FROM maquinarias m
                    LEFT JOIN clientes c ON c.id = m.cliente_id
                    ${where}
                    ORDER BY ${ordenSql(req.query.orden, req.query.dir)}`;
-        const paramsPagina = [...params];
-        if (limit !== null) {
-            paramsPagina.push(limit, offset);
-            sql += ` LIMIT $${paramsPagina.length - 1} OFFSET $${paramsPagina.length}`;
-        }
-        const result = await pool.query(sql, paramsPagina);
-
-        res.json(envolver(
-            await Promise.all(result.rows.map(conFotoFirmada)),
-            total.rows[0].n,
-            { limit, offset }
-        ));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar maquinarias' });
+    const paramsPagina = [...params];
+    if (limit !== null) {
+        paramsPagina.push(limit, offset);
+        sql += ` LIMIT $${paramsPagina.length - 1} OFFSET $${paramsPagina.length}`;
     }
+    const result = await pool.query(sql, paramsPagina);
+
+    res.json(envolver(
+        await Promise.all(result.rows.map(conFotoFirmada)),
+        total.rows[0].n,
+        { limit, offset }
+    ));
 });
 
 router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     if (!req.user.cliente_id) {
         return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
     }
-    try {
-        const result = await pool.query(
-            'SELECT id, codigo, tipo, estado, ubicacion, foto_url FROM maquinarias WHERE cliente_id = $1 ORDER BY codigo',
-            [req.user.cliente_id]
-        );
-        res.json(await Promise.all(result.rows.map(conFotoFirmada)));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar tu flota' });
-    }
+    const result = await pool.query(
+        'SELECT id, codigo, tipo, estado, ubicacion, foto_url FROM maquinarias WHERE cliente_id = $1 ORDER BY codigo',
+        [req.user.cliente_id]
+    );
+    res.json(await Promise.all(result.rows.map(conFotoFirmada)));
 });
 
 // portal cliente: los equipos con documentos propios, los
@@ -113,16 +101,11 @@ router.get('/mias/historicos', verifyToken, requireRole('cliente'), async (req, 
     if (!Number.isSafeInteger(clienteId) || clienteId < 1 || clienteId > 2147483647) {
         return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
     }
-    try {
-        // sin registro de la 010 no se puede confiar en ninguna guia anterior
-        const m = await pool.query("SELECT aplicada_at FROM schema_migraciones WHERE nombre LIKE '010%' LIMIT 1");
-        const r = await pool.query(construirSqlEquiposDelCliente(), [clienteId, m.rows[0] ? m.rows[0].aplicada_at : 'infinity']);
-        res.set('Cache-Control', 'no-store');
-        res.json(r.rows);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar tus equipos anteriores' });
-    }
+    // sin registro de la 010 no se puede confiar en ninguna guia anterior
+    const m = await pool.query("SELECT aplicada_at FROM schema_migraciones WHERE nombre LIKE '010%' LIMIT 1");
+    const r = await pool.query(construirSqlEquiposDelCliente(), [clienteId, m.rows[0] ? m.rows[0].aplicada_at : 'infinity']);
+    res.set('Cache-Control', 'no-store');
+    res.json(r.rows);
 });
 
 // totales de la flota para el encabezado de Flota y sus pestanas.
@@ -130,27 +113,22 @@ router.get('/mias/historicos', verifyToken, requireRole('cliente'), async (req, 
 // "Disponibles" y "arrendados" se cuentan igual que en el Dashboard: disponible es sin cliente y
 // operativo; arrendado es tener cliente. Un equipo en mantencion sin cliente no es ninguno de los dos.
 router.get('/resumen', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
-    try {
-        const totales = await pool.query(
-            `SELECT COUNT(*)::int AS total,
+    const totales = await pool.query(
+        `SELECT COUNT(*)::int AS total,
                     COUNT(*) FILTER (WHERE cliente_id IS NULL AND estado = 'operativa')::int AS disponibles,
                     COUNT(*) FILTER (WHERE cliente_id IS NOT NULL)::int AS arrendados,
                     COUNT(*) FILTER (WHERE estado = 'en_mantencion')::int AS en_mantencion,
                     COUNT(*) FILTER (WHERE estado = 'fuera_de_servicio')::int AS fuera_de_servicio
              FROM maquinarias`
-        );
-        const porCategoria = await pool.query(
-            `SELECT categoria_equipo, COUNT(*)::int AS n FROM maquinarias
+    );
+    const porCategoria = await pool.query(
+        `SELECT categoria_equipo, COUNT(*)::int AS n FROM maquinarias
              WHERE categoria_equipo IS NOT NULL GROUP BY categoria_equipo`
-        );
-        res.json({
-            ...totales.rows[0],
-            por_categoria: Object.fromEntries(porCategoria.rows.map((r) => [r.categoria_equipo, r.n])),
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar el resumen de la flota' });
-    }
+    );
+    res.json({
+        ...totales.rows[0],
+        por_categoria: Object.fromEntries(porCategoria.rows.map((r) => [r.categoria_equipo, r.n])),
+    });
 });
 
 // guias, ordenes de trabajo y facturas del equipo.
@@ -171,53 +149,47 @@ router.get('/:id/documentos', verifyToken, requireRole('gerente', 'administrativ
     if (esCliente && !idValido(Number(req.user.cliente_id))) {
         return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
     }
-    try {
-        let params;
-        if (esCliente) {
-            // sin registro de la 010 (base armada a mano) no se puede confiar en ninguna guia anterior
-            const m = await pool.query("SELECT aplicada_at FROM schema_migraciones WHERE nombre LIKE '010%' LIMIT 1");
-            params = [equipoId, Number(req.user.cliente_id), m.rows[0] ? m.rows[0].aplicada_at : 'infinity'];
-        } else {
-            // el filtro es opcional, pero si viene tiene que ser un id: uno repetido o invalido es 400
-            const filtro = req.query.cliente_id;
-            let clienteFiltro = null;
-            if (filtro !== undefined && filtro !== '') {
-                clienteFiltro = typeof filtro === 'string' && /^\d+$/.test(filtro) ? Number(filtro) : NaN;
-                if (!idValido(clienteFiltro)) return res.status(400).json({ error: 'cliente_id inválido' });
-            }
-            const equipo = await pool.query('SELECT 1 FROM maquinarias WHERE id = $1', [equipoId]);
-            if (equipo.rows.length === 0) return res.status(404).json({ error: 'Equipo no encontrado' });
-            params = [equipoId, clienteFiltro];
+    let params;
+    if (esCliente) {
+        // sin registro de la 010 (base armada a mano) no se puede confiar en ninguna guia anterior
+        const m = await pool.query("SELECT aplicada_at FROM schema_migraciones WHERE nombre LIKE '010%' LIMIT 1");
+        params = [equipoId, Number(req.user.cliente_id), m.rows[0] ? m.rows[0].aplicada_at : 'infinity'];
+    } else {
+        // el filtro es opcional, pero si viene tiene que ser un id: uno repetido o invalido es 400
+        const filtro = req.query.cliente_id;
+        let clienteFiltro = null;
+        if (filtro !== undefined && filtro !== '') {
+            clienteFiltro = typeof filtro === 'string' && /^\d+$/.test(filtro) ? Number(filtro) : NaN;
+            if (!idValido(clienteFiltro)) return res.status(400).json({ error: 'cliente_id inválido' });
         }
-        const r = await pool.query(construirSqlDocumentos({ rol }), params);
-        const filas = r.rows.filter((d) => visiblePara(d, req.user) || (!esCliente && d.cliente_id === null));
-        // el cliente recibe el MISMO 404 exista o no el equipo y tenga otros clientes documentos o no:
-        // asi no puede descubrir que ids de equipo existen
-        if (esCliente && filas.length === 0) return res.status(404).json({ error: 'No hay documentos de este equipo' });
-
-        const equipo = await pool.query('SELECT id, codigo, tipo FROM maquinarias WHERE id = $1', [equipoId]);
-        const ids = [...new Set(filas.map((d) => d.cliente_id).filter((x) => x !== null))];
-        const nombres = ids.length
-            ? Object.fromEntries((await pool.query('SELECT id, nombre FROM clientes WHERE id = ANY($1)', [ids])).rows.map((c) => [c.id, c.nombre]))
-            : {};
-        const documentos = await Promise.all(filas.map(async (d) => {
-            let urlFirmada = null;
-            if (d.archivo_url) {
-                // un archivo que no se pueda firmar deja ese documento sin enlace, no tumba la lista
-                try {
-                    const { data, error } = await supabase.storage.from(BUCKET_DOCUMENTOS).createSignedUrl(d.archivo_url, URL_EXPIRACION_SEGUNDOS);
-                    urlFirmada = error ? null : data.signedUrl;
-                } catch (errFirma) {
-                    console.error('No se pudo firmar un documento del equipo:', errFirma.message);
-                }
-            }
-            return { ...filaPublica(d, { rol, urlFirmada }), cliente_nombre: d.cliente_id === null ? null : (nombres[d.cliente_id] || null) };
-        }));
-        res.json({ maquinaria: equipo.rows[0], documentos });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar los documentos del equipo' });
+        const equipo = await pool.query('SELECT 1 FROM maquinarias WHERE id = $1', [equipoId]);
+        if (equipo.rows.length === 0) return res.status(404).json({ error: 'Equipo no encontrado' });
+        params = [equipoId, clienteFiltro];
     }
+    const r = await pool.query(construirSqlDocumentos({ rol }), params);
+    const filas = r.rows.filter((d) => visiblePara(d, req.user) || (!esCliente && d.cliente_id === null));
+    // el cliente recibe el MISMO 404 exista o no el equipo y tenga otros clientes documentos o no:
+    // asi no puede descubrir que ids de equipo existen
+    if (esCliente && filas.length === 0) return res.status(404).json({ error: 'No hay documentos de este equipo' });
+
+    const equipo = await pool.query('SELECT id, codigo, tipo FROM maquinarias WHERE id = $1', [equipoId]);
+    const ids = [...new Set(filas.map((d) => d.cliente_id).filter((x) => x !== null))];
+    const nombres = ids.length
+        ? Object.fromEntries((await pool.query('SELECT id, nombre FROM clientes WHERE id = ANY($1)', [ids])).rows.map((c) => [c.id, c.nombre]))
+        : {};
+    const documentos = await Promise.all(filas.map(async (d) => {
+        let urlFirmada = null;
+        if (d.archivo_url) {
+            // un archivo que no se pueda firmar deja ese documento sin enlace, no tumba la lista
+            try {
+                urlFirmada = await urlFirmadaONull(supabase, BUCKET_DOCUMENTOS, d.archivo_url);
+            } catch (errFirma) {
+                console.error('No se pudo firmar un documento del equipo:', errFirma.message);
+            }
+        }
+        return { ...filaPublica(d, { rol, urlFirmada }), cliente_nombre: d.cliente_id === null ? null : (nombres[d.cliente_id] || null) };
+    }));
+    res.json({ maquinaria: equipo.rows[0], documentos });
 });
 
 // guias, ordenes de trabajo, facturas y lecturas de horometro del
@@ -228,63 +200,48 @@ router.get('/:id/documentos', verifyToken, requireRole('gerente', 'administrativ
 router.get('/:id/linea-tiempo', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
     const equipoId = /^\d+$/.test(req.params.id) ? Number(req.params.id) : NaN;
     if (!idValido(equipoId)) return res.status(400).json({ error: 'Id de equipo inválido' });
-    try {
-        const equipo = await pool.query('SELECT id, codigo, tipo FROM maquinarias WHERE id = $1', [equipoId]);
-        if (equipo.rows.length === 0) return res.status(404).json({ error: 'Equipo no encontrado' });
-        res.json({ maquinaria: equipo.rows[0], ...(await leerLineaTiempo(pool, equipoId)) });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar la línea de tiempo del equipo' });
-    }
+    const equipo = await pool.query('SELECT id, codigo, tipo FROM maquinarias WHERE id = $1', [equipoId]);
+    if (equipo.rows.length === 0) return res.status(404).json({ error: 'Equipo no encontrado' });
+    res.json({ maquinaria: equipo.rows[0], ...(await leerLineaTiempo(pool, equipoId)) });
 });
 
 router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
-    try {
-        const result = await pool.query(
-            `SELECT m.*, c.nombre AS cliente
+    const result = await pool.query(
+        `SELECT m.*, c.nombre AS cliente
              FROM maquinarias m
              LEFT JOIN clientes c ON c.id = m.cliente_id
              WHERE m.id = $1`,
-            [req.params.id]
-        );
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Maquinaria no encontrada' });
-        }
-        const equipo = result.rows[0];
-        // cuanto falta para la preventiva, para mostrarlo en la cabecera del perfil
-        const lectura = await pool.query(
-            'SELECT valor FROM lecturas_horometro WHERE maquinaria_id = $1 ORDER BY fecha DESC LIMIT 1',
-            [req.params.id]
-        );
-        const ultima = lectura.rows[0] ? Number(lectura.rows[0].valor) : null;
-        const mantencion = {
-            ultima_lectura: ultima,
-            intervalo_horas: Number(equipo.intervalo_mantencion_horas),
-            ...calcularEstadoMantencion({
-                ultimaLectura: ultima,
-                horometroUltimaMantencion: equipo.horometro_ultima_mantencion === null ? null : Number(equipo.horometro_ultima_mantencion),
-                intervaloHoras: Number(equipo.intervalo_mantencion_horas),
-            }),
-        };
-        res.json({ ...(await conFotoFirmada(equipo)), mantencion });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar la maquinaria' });
+        [req.params.id]
+    );
+    if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Maquinaria no encontrada' });
     }
+    const equipo = result.rows[0];
+    // cuanto falta para la preventiva, para mostrarlo en la cabecera del perfil
+    const lectura = await pool.query(
+        'SELECT valor FROM lecturas_horometro WHERE maquinaria_id = $1 ORDER BY fecha DESC LIMIT 1',
+        [req.params.id]
+    );
+    const ultima = lectura.rows[0] ? Number(lectura.rows[0].valor) : null;
+    const mantencion = {
+        ultima_lectura: ultima,
+        intervalo_horas: Number(equipo.intervalo_mantencion_horas),
+        ...calcularEstadoMantencion({
+            ultimaLectura: ultima,
+            horometroUltimaMantencion: equipo.horometro_ultima_mantencion === null ? null : Number(equipo.horometro_ultima_mantencion),
+            intervaloHoras: Number(equipo.intervalo_mantencion_horas),
+        }),
+    };
+    res.json({ ...(await conFotoFirmada(equipo)), mantencion });
 });
 
 router.get('/:id/ordenes-trabajo', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
-    try {
-        const result = await pool.query(
-            `SELECT id, estado, motivo, diagnostico, fecha_creacion, fecha_cierre
+    const result = await pool.query(
+        `SELECT id, estado, motivo, diagnostico, fecha_creacion, fecha_cierre
              FROM ordenes_trabajo WHERE maquinaria_id = $1 ORDER BY fecha_creacion DESC`,
-            [req.params.id]
-        );
-        res.json(result.rows);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar el historial de la maquinaria' });
-    }
+        [req.params.id]
+    );
+    res.json(result.rows);
 });
 
 // Permisos: Administrativo tiene Lectura/Escritura sobre Control de Flota
@@ -349,9 +306,8 @@ router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res
     } = req.body;
     const errCuerpo = validarCuerpo(req.body, { textos: { codigo: 20, tipo: 100, ubicacion: 150, marca: 100, modelo: 100, descripcion: 2000, numero_serie: 100, numero_motor: 100, numero_chasis: 100, numero_mastil: 100 }, ids: ['cliente_id'], numeros: { anio: [1900, 2200], capacidad_carga: [0, 99999999], altura_trabajo: [0, 99999999] } });
     if (errCuerpo) return res.status(400).json({ error: errCuerpo });
-    try {
-        const result = await pool.query(
-            `UPDATE maquinarias SET
+    const result = await pool.query(
+        `UPDATE maquinarias SET
                 tipo = COALESCE($1, tipo),
                 ubicacion = COALESCE($2, ubicacion),
                 categoria_equipo = COALESCE($3::categoria_equipo, categoria_equipo),
@@ -367,21 +323,17 @@ router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res
                 altura_trabajo = COALESCE($13, altura_trabajo),
                 tipo_combustible = COALESCE($14::tipo_combustible_maquinaria, tipo_combustible)
              WHERE id = $15 RETURNING *`,
-            [
-                tipo || null, ubicacion || null, categoria_equipo || null, marca || null, modelo || null,
-                anio || null, descripcion || null, numero_serie || null, numero_motor || null,
-                numero_chasis || null, numero_mastil || null, capacidad_carga || null, altura_trabajo || null,
-                tipo_combustible || null, req.params.id,
-            ]
-        );
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Maquinaria no encontrada' });
-        }
-        res.json(await conFotoFirmada(result.rows[0]));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al actualizar la maquinaria' });
+        [
+            tipo || null, ubicacion || null, categoria_equipo || null, marca || null, modelo || null,
+            anio || null, descripcion || null, numero_serie || null, numero_motor || null,
+            numero_chasis || null, numero_mastil || null, capacidad_carga || null, altura_trabajo || null,
+            tipo_combustible || null, req.params.id,
+        ]
+    );
+    if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Maquinaria no encontrada' });
     }
+    res.json(await conFotoFirmada(result.rows[0]));
 });
 
 router.patch('/:id/foto', verifyToken, requireRole('administrativo'), subidaImagen.single('archivo'), async (req, res) => {
@@ -420,20 +372,15 @@ router.patch('/:id/estado', verifyToken, requireRole('mecanico', 'administrativo
     if (!validos.includes(estado)) {
         return res.status(400).json({ error: 'Estado inválido' });
     }
-    try {
-        const result = await pool.query(
-            // quien lo fijo: el cierre de una orden no pisa un estado puesto a mano desde el panel
-            'UPDATE maquinarias SET estado = $1, estado_origen = $3 WHERE id = $2 RETURNING *',
-            [estado, id, req.user.rol === 'mecanico' ? 'mecanico' : 'panel']
-        );
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Maquinaria no encontrada' });
-        }
-        res.json(result.rows[0]);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al actualizar estado' });
+    const result = await pool.query(
+        // quien lo fijo: el cierre de una orden no pisa un estado puesto a mano desde el panel
+        'UPDATE maquinarias SET estado = $1, estado_origen = $3 WHERE id = $2 RETURNING *',
+        [estado, id, req.user.rol === 'mecanico' ? 'mecanico' : 'panel']
+    );
+    if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Maquinaria no encontrada' });
     }
+    res.json(result.rows[0]);
 });
 
 module.exports = router;

@@ -176,6 +176,6 @@ async function buscarDirecciones(texto, opciones = {}) {
 }
 
 module.exports = {
-    BASE_URL_POR_DEFECTO, MIN_LETRAS, MAX_LETRAS, MAX_SUGERENCIAS, LIMITE_POR_USUARIO_MINUTO, LIMITE_DIARIO,
+    BASE_URL_POR_DEFECTO, MIN_LETRAS, MAX_SUGERENCIAS,
     ErrorLimite, crearLimitador, normalizarTexto, simplificarACalle, interpretarSugerencias, buscarDirecciones, hayLlave,
 };

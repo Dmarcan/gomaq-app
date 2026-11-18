@@ -22,6 +22,7 @@ const fs = require('fs');
 const path = require('path');
 const { spawnSync } = require('child_process');
 const { Client } = require('pg');
+const { urlBaseDeScript } = require('./_conexion');
 
 const VERSION_BASE = process.env.MIGRACIONES_VERSION_BASE || '042';
 // nombre unico por ejecucion: nunca se borra una base que ya existia en el servidor
@@ -46,7 +47,7 @@ function migrar(url, args) {
 }
 
 async function main() {
-    const urlServidor = process.env.DATABASE_URL_MIGRACION || process.env.DATABASE_URL;
+    const urlServidor = urlBaseDeScript();
     if (!urlServidor) throw new Error('Falta DATABASE_URL');
     const todas = fs.readdirSync(path.join(DB, 'migrations')).filter((f) => /^\d{3}_.*\.sql$/.test(f)).sort();
     if (!todas.some((f) => f.startsWith(`${VERSION_BASE}_`))) {

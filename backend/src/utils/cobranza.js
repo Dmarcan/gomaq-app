@@ -44,7 +44,7 @@ const FILTROS_ESTADO = {
     todas: 'TRUE',
 };
 
-const MS_DIA = 86400000;
+const { MS_DIA } = require('./tiempo');
 const aUtc = (dia) => Date.parse(`${dia}T00:00:00Z`);
 /** Dias de b menos a (dos fechas YYYY-MM-DD). */
 const diasEntreFechas = (a, b) => Math.round((aUtc(b) - aUtc(a)) / MS_DIA);

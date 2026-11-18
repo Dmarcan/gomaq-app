@@ -16,6 +16,7 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const { Client } = require('pg');
+const { urlBaseDeScript } = require('./_conexion');
 
 const ARCHIVO = [path.join(__dirname, '../../db/datos'), '/db/datos']
     .map((d) => path.join(d, 'equipos_gomaq.json'))
@@ -23,11 +24,12 @@ const ARCHIVO = [path.join(__dirname, '../../db/datos'), '/db/datos']
 
 async function main() {
     if (!ARCHIVO) throw new Error('No se encontro db/datos/equipos_gomaq.json');
-    if (!(process.env.DATABASE_URL_MIGRACION || process.env.DATABASE_URL)) throw new Error('Falta DATABASE_URL');
+    const url = urlBaseDeScript();
+    if (!url) throw new Error('Falta DATABASE_URL');
     const simular = process.argv.includes('--simular');
     const { equipos } = JSON.parse(fs.readFileSync(ARCHIVO, 'utf8'));
 
-    const cliente = new Client({ connectionString: (process.env.DATABASE_URL_MIGRACION || process.env.DATABASE_URL) });
+    const cliente = new Client({ connectionString: url });
     await cliente.connect();
     let nuevos = 0;
     const existentes = [];

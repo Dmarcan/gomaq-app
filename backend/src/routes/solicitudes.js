@@ -5,6 +5,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaImagen } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
+const { urlFirmadaONull } = require('../utils/urlsFirmadas');
 const { rutaAdjuntoSolicitud } = require('../utils/rutaArchivo');
 const { dejarEvento } = require('../utils/eventosOt');
 const { validarCoordenadasFormulario } = require('../utils/geo');
@@ -16,16 +17,12 @@ const router = express.Router();
 validarIdsEnRuta(router, ['id']);
 
 const TIPOS_VALIDOS = ['falla', 'mantencion_preventiva'];
-const URL_EXPIRACION_SEGUNDOS = 3600;
 
 /** El bucket es privado: la ruta guardada se cambia por una URL firmada temporal al leer. */
 async function conUrlFirmada(filas) {
     return Promise.all(filas.map(async (fila) => {
         if (!fila.evidencia_url) return fila;
-        const { data, error } = await supabase.storage
-            .from(BUCKET_DOCUMENTOS)
-            .createSignedUrl(fila.evidencia_url, URL_EXPIRACION_SEGUNDOS);
-        return { ...fila, evidencia_url: error ? null : data.signedUrl };
+        return { ...fila, evidencia_url: await urlFirmadaONull(supabase, BUCKET_DOCUMENTOS, fila.evidencia_url) };
     }));
 }
 
@@ -44,41 +41,36 @@ router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archi
     if (!req.user.cliente_id) {
         return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
     }
-    try {
-        const maquinaria = await pool.query(
-            'SELECT id FROM maquinarias WHERE id = $1 AND cliente_id = $2',
-            [maquinaria_id, req.user.cliente_id]
-        );
-        if (maquinaria.rows.length === 0) {
-            return res.status(403).json({ error: 'Ese equipo no pertenece a tu empresa' });
-        }
-        let evidenciaUrl = null;
-        if (req.file) {
-            // la ruta la arma el servidor: el nombre del cliente solo aporta la extension
-            evidenciaUrl = rutaAdjuntoSolicitud(req.user.cliente_id, req.file.originalname);
-            const { error: errorSubida } = await supabase.storage
-                .from(BUCKET_DOCUMENTOS)
-                .upload(evidenciaUrl, req.file.buffer, { contentType: req.file.mimetype });
-            if (errorSubida) throw errorSubida;
-        }
+    const maquinaria = await pool.query(
+        'SELECT id FROM maquinarias WHERE id = $1 AND cliente_id = $2',
+        [maquinaria_id, req.user.cliente_id]
+    );
+    if (maquinaria.rows.length === 0) {
+        return res.status(403).json({ error: 'Ese equipo no pertenece a tu empresa' });
+    }
+    let evidenciaUrl = null;
+    if (req.file) {
+        // la ruta la arma el servidor: el nombre del cliente solo aporta la extension
+        evidenciaUrl = rutaAdjuntoSolicitud(req.user.cliente_id, req.file.originalname);
+        const { error: errorSubida } = await supabase.storage
+            .from(BUCKET_DOCUMENTOS)
+            .upload(evidenciaUrl, req.file.buffer, { contentType: req.file.mimetype });
+        if (errorSubida) throw errorSubida;
+    }
 
-        try {
-            const result = await pool.query(
-                `INSERT INTO solicitudes (cliente_id, maquinaria_id, descripcion, tipo, evidencia_url, latitud, longitud)
+    try {
+        const result = await pool.query(
+            `INSERT INTO solicitudes (cliente_id, maquinaria_id, descripcion, tipo, evidencia_url, latitud, longitud)
                  VALUES ($1, $2, $3, $4::tipo_solicitud, $5, $6, $7) RETURNING *`,
-                [req.user.cliente_id, maquinaria_id, descripcion, tipoFinal, evidenciaUrl, coords.latitud, coords.longitud]
-            );
-            res.status(201).json(result.rows[0]);
-        } catch (errorBd) {
-            // compensacion: si el archivo subio pero la BD fallo, no dejarlo huerfano
-            if (evidenciaUrl) {
-                await supabase.storage.from(BUCKET_DOCUMENTOS).remove([evidenciaUrl]).catch(() => {});
-            }
-            throw errorBd;
+            [req.user.cliente_id, maquinaria_id, descripcion, tipoFinal, evidenciaUrl, coords.latitud, coords.longitud]
+        );
+        res.status(201).json(result.rows[0]);
+    } catch (errorBd) {
+        // compensacion: si el archivo subio pero la BD fallo, no dejarlo huerfano
+        if (evidenciaUrl) {
+            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([evidenciaUrl]).catch(() => {});
         }
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al crear solicitud' });
+        throw errorBd;
     }
 });
 
@@ -86,9 +78,8 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     if (!req.user.cliente_id) {
         return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
     }
-    try {
-        const result = await pool.query(
-            `SELECT s.*, m.codigo AS maquinaria_codigo,
+    const result = await pool.query(
+        `SELECT s.*, m.codigo AS maquinaria_codigo,
                     ot.id AS ot_id, ot.estado AS ot_estado,
                     u.nombre AS mecanico_nombre
              FROM solicitudes s
@@ -97,13 +88,9 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
              LEFT JOIN usuarios u ON u.id = ot.mecanico_id
              WHERE s.cliente_id = $1
              ORDER BY s.created_at DESC`,
-            [req.user.cliente_id]
-        );
-        res.json(await conUrlFirmada(result.rows));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar tus solicitudes' });
-    }
+        [req.user.cliente_id]
+    );
+    res.json(await conUrlFirmada(result.rows));
 });
 
 router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
@@ -112,21 +99,16 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
     if (filtro !== undefined && !['pendiente', 'convertida', 'rechazada'].includes(filtro)) {
         return res.status(400).json({ error: 'Estado inválido. Valores posibles: pendiente, convertida, rechazada' });
     }
-    try {
-        const result = await pool.query(
-            `SELECT s.*, c.nombre AS cliente_nombre, m.codigo AS maquinaria_codigo
+    const result = await pool.query(
+        `SELECT s.*, c.nombre AS cliente_nombre, m.codigo AS maquinaria_codigo
              FROM solicitudes s
              JOIN clientes c ON c.id = s.cliente_id
              JOIN maquinarias m ON m.id = s.maquinaria_id
              ${filtro ? 'WHERE s.estado = $1::estado_solicitud' : ''}
              ORDER BY s.created_at DESC`,
-            filtro ? [filtro] : []
-        );
-        res.json(await conUrlFirmada(result.rows));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar solicitudes' });
-    }
+        filtro ? [filtro] : []
+    );
+    res.json(await conUrlFirmada(result.rows));
 });
 
 router.patch('/:id/convertir', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {

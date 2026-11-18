@@ -6,7 +6,6 @@ const crypto = require('node:crypto');
 const { validarPassword } = require('./cuentasInternas');
 const { normalizarCorreo } = require('./correo');
 
-const PROPOSITOS = ['recuperar_password', 'invitacion', 'verificar_correo'];
 const CANALES = ['correo', 'manual'];
 const MAX_INTENTOS = 5;
 const DIGITOS = 6;
@@ -205,7 +204,7 @@ function validarCanal(canal) {
 }
 
 module.exports = {
-    PROPOSITOS, CANALES, MAX_INTENTOS, VIGENCIA_MINUTOS,
+    CANALES, MAX_INTENTOS, VIGENCIA_MINUTOS,
     vigenciaMinutos, generarCodigo, normalizarCodigo, hmacCodigo, hmacIguales, evaluarCanje, canjePermitido, estadoInvitacion,
     correoDisponible, urlPanel, textoCodigo, asuntoCodigo, textoVence, validarConfirmacion, validarCanal,
 };

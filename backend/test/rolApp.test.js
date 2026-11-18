@@ -17,10 +17,12 @@ test('migracion 041: crea el rol sin login y no usa permisos amplios', () => {
 });
 
 test('migrar.js y los scripts de carga prefieren DATABASE_URL_MIGRACION', () => {
+    const conexion = fs.readFileSync(path.join(__dirname, '..', 'scripts', '_conexion.js'), 'utf8');
+    assert.match(conexion, /DATABASE_URL_MIGRACION \|\| process\.env\.DATABASE_URL/);
     for (const f of ['migrar.js', 'cargar_demo.js', 'cargar_clientes.js', 'cargar_equipos.js']) {
         const texto = fs.readFileSync(path.join(__dirname, '..', 'scripts', f), 'utf8');
-        assert.match(texto, /DATABASE_URL_MIGRACION \|\| process\.env\.DATABASE_URL/, f);
-        assert.doesNotMatch(texto.replace(/DATABASE_URL_MIGRACION \|\| process\.env\.DATABASE_URL/g, ''), /new Client\(\{ connectionString: process\.env\.DATABASE_URL/, f);
+        assert.match(texto, /urlBaseDeScript\(\)/, f);
+        assert.doesNotMatch(texto, /new Client\(\{ connectionString: process\.env\.DATABASE_URL/, f);
     }
 });
 

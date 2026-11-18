@@ -4,7 +4,7 @@
 // y perdido solo la respuesta. Cada tarea trae un UUID generado en el telefono: si ya existe una
 // fila con ese UUID, la tarea ya se hizo y se devuelve esa fila en vez de crear otra.
 
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const { UUID } = require('./validacion');
 
 /**
  * Lee `uuid_cliente` del cuerpo. Es opcional (el panel y los APK anteriores no lo envian), pero

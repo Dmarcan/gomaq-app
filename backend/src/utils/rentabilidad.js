@@ -10,12 +10,10 @@
 // fuera hasta que esos datos existan.
 
 const { ingresoSinTraslado } = require('./trasladoFactura');
-const { inicioCobroDia, finCobroDia, sumarDias, diaCalendarioUtc } = require('./diasArriendo');
-
-const MS_DIA = 24 * 60 * 60 * 1000;
+const { inicioCobroDia, finCobroDia, sumarDias, diaCalendarioUtc, diaSantiago } = require('./diasArriendo');
+const { MS_DIA } = require('./tiempo');
 
 // dia de calendario 'YYYY-MM-DD' en Santiago de un instante (o de un texto ya en ese formato)
-const { diaSantiago } = require('./diasArriendo');
 const diaIso = (instante) => (typeof instante === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(instante) ? instante : diaSantiago(instante));
 
 /**

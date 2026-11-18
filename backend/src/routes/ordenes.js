@@ -9,6 +9,7 @@ const { verificarDuenoOrden, contactoCliente, MENSAJE_OT_CERRADA, SQL_OT_SIN_ASI
 const { cobroParaCliente } = require('../utils/cobroCliente');
 const { estadoTrasAsignar, evaluarCambioEstado, evaluarCierre, parsearEstados, EN_CURSO_PANEL, ESTADOS } = require('../utils/estadosOt');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
+const { urlFirmadaONull } = require('../utils/urlsFirmadas');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 const { rutaPerteneceAOrden } = require('../utils/rutaArchivo');
@@ -191,86 +192,75 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
         estados = parseado.estados;
     }
     const ascendente = req.query.dir === 'asc';
-    try {
-        const condiciones = [];
-        const params = [];
-        if (req.query.sin_asignar === '1') {
-            // ordenes creadas por la oficina o por un cliente que todavia no tienen mecanico: el
-            // mecanico las ve para poder tomarlas (PATCH /:id/tomar) y el panel las lista en
-            // "Sin asignar" (las mismas que cuenta el dashboard)
-            condiciones.push(SQL_OT_SIN_ASIGNAR);
-        } else if (req.user.rol === 'mecanico') {
-            params.push(req.user.id);
-            condiciones.push(`ot.mecanico_id = $${params.length}`);
-        }
-        if (q) {
-            params.push(`%${q}%`);
-            condiciones.push(`(m.codigo ILIKE $${params.length} OR c.nombre ILIKE $${params.length}
+    const condiciones = [];
+    const params = [];
+    if (req.query.sin_asignar === '1') {
+        // ordenes creadas por la oficina o por un cliente que todavia no tienen mecanico: el
+        // mecanico las ve para poder tomarlas (PATCH /:id/tomar) y el panel las lista en
+        // "Sin asignar" (las mismas que cuenta el dashboard)
+        condiciones.push(SQL_OT_SIN_ASIGNAR);
+    } else if (req.user.rol === 'mecanico') {
+        params.push(req.user.id);
+        condiciones.push(`ot.mecanico_id = $${params.length}`);
+    }
+    if (q) {
+        params.push(`%${q}%`);
+        condiciones.push(`(m.codigo ILIKE $${params.length} OR c.nombre ILIKE $${params.length}
                                OR ot.motivo ILIKE $${params.length})`);
-        }
-        if (estados) {
-            params.push(estados);
-            condiciones.push(`ot.estado = ANY($${params.length}::estado_orden[])`);
-        }
-        const where = condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : '';
+    }
+    if (estados) {
+        params.push(estados);
+        condiciones.push(`ot.estado = ANY($${params.length}::estado_orden[])`);
+    }
+    const where = condiciones.length ? `WHERE ${condiciones.join(' AND ')}` : '';
 
-        const base = `FROM ordenes_trabajo ot
+    const base = `FROM ordenes_trabajo ot
                       JOIN maquinarias m ON m.id = ot.maquinaria_id
                       LEFT JOIN clientes c ON c.id = ot.cliente_id
                       LEFT JOIN usuarios um ON um.id = ot.mecanico_id
                       ${where}`;
-        const total = await pool.query(`SELECT COUNT(*)::int AS n ${base}`, params);
+    const total = await pool.query(`SELECT COUNT(*)::int AS n ${base}`, params);
 
-        // desempate por id: la paginacion no debe repetir ni saltarse filas con la misma fecha
-        let sql = `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre, um.nombre AS mecanico_nombre
+    // desempate por id: la paginacion no debe repetir ni saltarse filas con la misma fecha
+    let sql = `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre, um.nombre AS mecanico_nombre
                    ${base} ORDER BY ot.fecha_creacion ${ascendente ? 'ASC' : 'DESC'}, ot.id ${ascendente ? 'ASC' : 'DESC'}`;
-        const paramsPagina = [...params];
-        if (limit !== null) {
-            paramsPagina.push(limit, offset);
-            sql += ` LIMIT $${paramsPagina.length - 1} OFFSET $${paramsPagina.length}`;
-        }
-        const result = await pool.query(sql, paramsPagina);
-        res.json(envolver(result.rows.map(sinInternosEta), total.rows[0].n, { limit, offset }));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar órdenes de trabajo' });
+    const paramsPagina = [...params];
+    if (limit !== null) {
+        paramsPagina.push(limit, offset);
+        sql += ` LIMIT $${paramsPagina.length - 1} OFFSET $${paramsPagina.length}`;
     }
+    const result = await pool.query(sql, paramsPagina);
+    res.json(envolver(result.rows.map(sinInternosEta), total.rows[0].n, { limit, offset }));
 });
 
 // conteos de las pestanas de Ordenes del panel. Se declara antes de
 // /:id para que "resumen" no se lea como un id. Cada conteo es el total de la lista con su filtro:
 //   sin_asignar -> ?sin_asignar=1 ; en_curso -> ?estado=<EN_CURSO_PANEL> ; finalizadas -> ?estado=finalizada
 router.get('/resumen', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
-    try {
-        const r = await pool.query(
-            `SELECT COUNT(*)::int AS todas,
+    const r = await pool.query(
+        `SELECT COUNT(*)::int AS todas,
                     COUNT(*) FILTER (WHERE ${SQL_OT_SIN_ASIGNAR})::int AS sin_asignar,
                     COUNT(*) FILTER (WHERE ot.estado = ANY($1::estado_orden[]))::int AS en_curso,
                     COUNT(*) FILTER (WHERE ot.estado = 'finalizada')::int AS finalizadas
              FROM ordenes_trabajo ot`,
-            [EN_CURSO_PANEL]
-        );
-        const porEstado = await pool.query('SELECT estado, COUNT(*)::int AS n FROM ordenes_trabajo GROUP BY estado');
-        res.json({
-            ...r.rows[0],
-            // todos los estados, con 0 los que no tienen ordenes: el panel no tiene que adivinar cuales faltan
-            por_estado: { ...Object.fromEntries(ESTADOS.map((e) => [e, 0])), ...Object.fromEntries(porEstado.rows.map((f) => [f.estado, f.n])) },
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al contar las órdenes de trabajo' });
-    }
+        [EN_CURSO_PANEL]
+    );
+    const porEstado = await pool.query('SELECT estado, COUNT(*)::int AS n FROM ordenes_trabajo GROUP BY estado');
+    res.json({
+        ...r.rows[0],
+        // todos los estados, con 0 los que no tienen ordenes: el panel no tiene que adivinar cuales faltan
+        por_estado: { ...Object.fromEntries(ESTADOS.map((e) => [e, 0])), ...Object.fromEntries(porEstado.rows.map((f) => [f.estado, f.n])) },
+    });
 });
 
 router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     if (!req.user.cliente_id) {
         return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
     }
-    try {
-        // datos del cliente que cambian con cada avance de la orden: nada de caches intermedios
-        res.set('Cache-Control', 'no-store');
-        const result = await pool.query(
-            `SELECT ot.id, ot.estado, ot.motivo, ot.diagnostico, ot.fecha_creacion, ot.fecha_cierre,
+    // datos del cliente que cambian con cada avance de la orden: nada de caches intermedios
+    res.set('Cache-Control', 'no-store');
+    const result = await pool.query(
+        `SELECT ot.id, ot.estado, ot.motivo, ot.diagnostico, ot.fecha_creacion, ot.fecha_cierre,
                     ot.aceptada_at, ot.en_camino_at, ot.llegada_at, ot.facturable, ot.valorizacion,
                     -- cuando se le asigno el tecnico de ahora: la ULTIMA asignacion o toma que de verdad se aplico, y no
                     -- posterior a la aceptacion (si se reasigna, aceptada_at/en_camino_at/llegada_at se borran y la linea
@@ -306,35 +296,29 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
              LEFT JOIN vehiculos v ON v.usuario_id = ot.mecanico_id AND v.activo AND ot.estado <> 'finalizada'
              WHERE ot.cliente_id = $1
              ORDER BY ot.fecha_creacion DESC`,
-            [req.user.cliente_id]
-        );
+        [req.user.cliente_id]
+    );
 
-        // factura_url guarda la ruta dentro del bucket privado, no una URL directa;
-        // se reemplaza por una URL firmada temporal (1h) antes de responder
-        const conUrlFirmada = await Promise.all(result.rows.map(async ({ facturable, lineas_pendientes: lineasPendientes, valorizacion, ...resto }) => {
-            // al cliente se le dice si hay cobro, nunca montos ni la marca interna de facturable
-            const fila = { ...resto, cobro: cobroParaCliente({ estado: resto.estado, facturable, lineasPendientes, valorizacion }) };
-            const firmar = async (ruta) => {
-                if (!ruta) return null;
-                const { data, error } = await supabase.storage.from(BUCKET_DOCUMENTOS).createSignedUrl(ruta, 3600);
-                return error ? null : data.signedUrl;
-            };
-            return { ...fila, factura_url: await firmar(fila.factura_url), comprobante_url: await firmar(fila.comprobante_url) };
-        }));
+    // factura_url guarda la ruta dentro del bucket privado, no una URL directa;
+    // se reemplaza por una URL firmada temporal (1h) antes de responder
+    const conUrlFirmada = await Promise.all(result.rows.map(async ({ facturable, lineas_pendientes: lineasPendientes, valorizacion, ...resto }) => {
+        // al cliente se le dice si hay cobro, nunca montos ni la marca interna de facturable
+        const fila = { ...resto, cobro: cobroParaCliente({ estado: resto.estado, facturable, lineasPendientes, valorizacion }) };
+        const firmar = async (ruta) => {
+            if (!ruta) return null;
+            return urlFirmadaONull(supabase, BUCKET_DOCUMENTOS, ruta);
+        };
+        return { ...fila, factura_url: await firmar(fila.factura_url), comprobante_url: await firmar(fila.comprobante_url) };
+    }));
 
-        res.json(conUrlFirmada);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar tu historial' });
-    }
+    res.json(conUrlFirmada);
 });
 
 router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
-    try {
-        const result = await pool.query(
-            // factura_id y factura_folio: el panel avisa que una orden facturada no admite cambios de
-            // lineas. Hay a lo mas una factura por OT (indice unico de la migracion 016).
-            `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre, um.nombre AS mecanico_nombre,
+    const result = await pool.query(
+        // factura_id y factura_folio: el panel avisa que una orden facturada no admite cambios de
+        // lineas. Hay a lo mas una factura por OT (indice unico de la migracion 016).
+        `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre, um.nombre AS mecanico_nombre,
                     f.id AS factura_id, f.folio AS factura_folio,
                     ${SQL_ETA_LLEGADA_AT} AS eta_llegada_at
              FROM ordenes_trabajo ot
@@ -343,32 +327,28 @@ router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecani
              LEFT JOIN usuarios um ON um.id = ot.mecanico_id
              LEFT JOIN facturas f ON f.orden_trabajo_id = ot.id
              WHERE ot.id = $1`,
-            [req.params.id]
-        );
-        const orden = result.rows[0];
-        if (!orden) {
-            return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        }
-        if (req.user.rol === 'mecanico' && orden.mecanico_id !== req.user.id) {
-            return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
-        }
-
-        // el resto del talonario: sistemas intervenidos y tramos de trabajo
-        const [servicios, tramos] = await Promise.all([
-            pool.query('SELECT servicio_id FROM ot_servicios WHERE orden_trabajo_id = $1', [orden.id]),
-            pool.query('SELECT * FROM tramos_trabajo WHERE orden_trabajo_id = $1 ORDER BY inicio', [orden.id]),
-        ]);
-
-        res.json({
-            // eta_llegada_at solo para administrativo y gerente con la OT en camino (utils/etaLlegada.js)
-            ...conLlegadaEstimada(sinInternosEta(orden), req.user.rol),
-            servicio_ids: servicios.rows.map((s) => s.servicio_id),
-            tramos: tramos.rows,
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar orden de trabajo' });
+        [req.params.id]
+    );
+    const orden = result.rows[0];
+    if (!orden) {
+        return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
     }
+    if (req.user.rol === 'mecanico' && orden.mecanico_id !== req.user.id) {
+        return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
+    }
+
+    // el resto del talonario: sistemas intervenidos y tramos de trabajo
+    const [servicios, tramos] = await Promise.all([
+        pool.query('SELECT servicio_id FROM ot_servicios WHERE orden_trabajo_id = $1', [orden.id]),
+        pool.query('SELECT * FROM tramos_trabajo WHERE orden_trabajo_id = $1 ORDER BY inicio', [orden.id]),
+    ]);
+
+    res.json({
+        // eta_llegada_at solo para administrativo y gerente con la OT en camino (utils/etaLlegada.js)
+        ...conLlegadaEstimada(sinInternosEta(orden), req.user.rol),
+        servicio_ids: servicios.rows.map((s) => s.servicio_id),
+        tramos: tramos.rows,
+    });
 });
 
 /**
@@ -403,7 +383,6 @@ async function encolarAvisoAsignacion(client, orden, mecanico) {
 // mecanicos tomando la misma a la vez no pueden quedar los dos. El perdedor recibe 409. Un
 // reintento del mismo mecanico (la respuesta se perdio) responde bien con la orden ya suya.
 router.patch('/:id/tomar', verifyToken, requireRole('mecanico'), async (req, res) => {
-    if (!Number.isInteger(Number(req.params.id))) return res.status(400).json({ error: 'Id de orden inválido' });
     let client = null;
     try {
         client = await pool.connect();
@@ -658,7 +637,6 @@ router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (re
 // bloquea con FOR UPDATE: asi una reasignacion o un cambio a en_terreno concurrente no deja una
 // posicion colgada.
 router.post('/:id/posicion', verifyToken, requireRole('mecanico'), async (req, res) => {
-    if (!Number.isInteger(Number(req.params.id))) return res.status(400).json({ error: 'Id de orden inválido' });
     let client = null;
     try {
         client = await pool.connect();
@@ -714,32 +692,27 @@ router.patch('/:id/datos', verifyToken, requireRole('mecanico'), async (req, res
     if (tipo_servicio !== undefined && tipo_servicio !== null && !TIPOS_SERVICIO.includes(tipo_servicio)) {
         return res.status(400).json({ error: `tipo_servicio debe ser uno de: ${TIPOS_SERVICIO.join(', ')}` });
     }
-    try {
-        const check = await verificarDuenoOrden(req.params.id, req.user.id);
-        if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
-        if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
+    const check = await verificarDuenoOrden(req.params.id, req.user.id);
+    if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+    if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
+    if (!check.editable) return res.status(409).json({ error: MENSAJE_OT_CERRADA });
 
-        const result = await pool.query(
-            `UPDATE ordenes_trabajo
+    const result = await pool.query(
+        `UPDATE ordenes_trabajo
              SET tipo_servicio = COALESCE($1::tipo_servicio_ot, tipo_servicio),
                  diagnostico = COALESCE($2, diagnostico),
                  observacion_final = COALESCE($3, observacion_final),
                  folio_papel = COALESCE($4, folio_papel)
              WHERE id = $5 RETURNING *`,
-            [
-                tipo_servicio || null,
-                diagnostico === undefined ? null : diagnostico,
-                observacion_final === undefined ? null : observacion_final,
-                folio_papel === undefined ? null : folio_papel,
-                req.params.id,
-            ]
-        );
-        res.json(result.rows[0]);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al actualizar los datos de la orden' });
-    }
+        [
+            tipo_servicio || null,
+            diagnostico === undefined ? null : diagnostico,
+            observacion_final === undefined ? null : observacion_final,
+            folio_papel === undefined ? null : folio_papel,
+            req.params.id,
+        ]
+    );
+    res.json(result.rows[0]);
 });
 
 // sistemas donde SE INTERVINO (no una pauta de
@@ -1030,11 +1003,10 @@ router.patch('/:id/valorizacion', verifyToken, requireRole('gerente'), async (re
 // registrado_en es la fecha de la migracion, no un atraso).
 router.get('/:id/historial', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     if (!/^[1-9]\d{0,8}$/.test(req.params.id)) return res.status(400).json({ error: 'Id de orden inválido' });
-    try {
-        const orden = await pool.query('SELECT id FROM ordenes_trabajo WHERE id = $1', [req.params.id]);
-        if (orden.rows.length === 0) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        const result = await pool.query(
-            `SELECT e.id, e.orden_trabajo_id, e.tipo, e.estado_anterior, e.estado_nuevo, e.usuario_id,
+    const orden = await pool.query('SELECT id FROM ordenes_trabajo WHERE id = $1', [req.params.id]);
+    if (orden.rows.length === 0) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+    const result = await pool.query(
+        `SELECT e.id, e.orden_trabajo_id, e.tipo, e.estado_anterior, e.estado_nuevo, e.usuario_id,
                     u.nombre AS usuario_nombre, e.rol, e.ocurrio_en, e.registrado_en, e.origen,
                     e.aplicado, e.hora_dudosa, e.detalle
              FROM ordenes_eventos e
@@ -1044,16 +1016,12 @@ router.get('/:id/historial', verifyToken, requireRole('administrativo', 'gerente
              -- sincronizacion, despues de eventos que el telefono ya habia vivido); el resto por
              -- orden de escritura (id), decidido por David: llegada al servidor
              ORDER BY (e.tipo = 'creacion') DESC, e.id`,
-            [req.params.id]
-        );
-        res.json(result.rows.map((e) => ({
-            ...e,
-            sincronizado_tarde: e.origen !== 'migracion' && sincronizadoTarde(e.ocurrio_en, e.registrado_en),
-        })));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar el historial de la orden' });
-    }
+        [req.params.id]
+    );
+    res.json(result.rows.map((e) => ({
+        ...e,
+        sincronizado_tarde: e.origen !== 'migracion' && sincronizadoTarde(e.ocurrio_en, e.registrado_en),
+    })));
 });
 
 module.exports = router;

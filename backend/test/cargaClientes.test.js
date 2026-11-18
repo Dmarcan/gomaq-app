@@ -1,19 +1,19 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {
-    EJECUTIVOS_A_CREAR, normalizarRut, sinAcentos, validarCliente, validarArchivo, resolverEjecutivo, plazoConstante,
+    EJECUTIVOS_A_CREAR, normalizarRutValido, normalizarNombre, validarCliente, validarArchivo, resolverEjecutivo, plazoConstante,
 } = require('../src/utils/cargaClientes');
 
 const base = { rut: '11111111-1', nombre: 'Empresa Ficticia SpA', direccion: 'Calle 1', giro: 'Servicios', ejecutivo: null, plazo_pago_dias: null };
 
-test('normalizarRut quita puntos y espacios y deja el guion', () => {
-    assert.equal(normalizarRut('11.111.111-1'), '11111111-1');
-    assert.equal(normalizarRut(' 111111111 '), '11111111-1');
-    assert.equal(normalizarRut('10.000.013-k'), '10000013-K');
+test('normalizarRutValido quita puntos y espacios y deja el guion', () => {
+    assert.equal(normalizarRutValido('11.111.111-1'), '11111111-1');
+    assert.equal(normalizarRutValido(' 111111111 '), '11111111-1');
+    assert.equal(normalizarRutValido('10.000.013-k'), '10000013-K');
 });
 
-test('normalizarRut rechaza digito verificador malo o formato roto', () => {
-    for (const r of ['11111111-2', '', 'abc', null, undefined, 11111111, '1-9']) assert.equal(normalizarRut(r), null, String(r));
+test('normalizarRutValido rechaza digito verificador malo o formato roto', () => {
+    for (const r of ['11111111-2', '', 'abc', null, undefined, 11111111, '1-9']) assert.equal(normalizarRutValido(r), null, String(r));
 });
 
 test('un registro correcto no trae errores, con y sin datos opcionales', () => {
@@ -73,5 +73,5 @@ test('plazoConstante: solo si todas las facturas tuvieron el mismo plazo', () =>
 
 test('la lista de ejecutivos a crear no incluye a Carlos ni a el jefe de taller', () => {
     assert.deepEqual(EJECUTIVOS_A_CREAR, ['Freddy', 'Alejandra', 'Wenceslao', 'Oscar']);
-    assert.equal(sinAcentos('  ÁÉ  Íó '), 'ae io');
+    assert.equal(normalizarNombre('  ÁÉ  Íó '), 'ae io');
 });

@@ -190,49 +190,44 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
 // donde estuvo el equipo y cuanto se uso en cada lugar.
 router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     const { id } = req.params;
-    try {
-        const maquinariaResult = await pool.query(
-            `SELECT id, codigo, tipo, intervalo_mantencion_horas, horometro_ultima_mantencion
+    const maquinariaResult = await pool.query(
+        `SELECT id, codigo, tipo, intervalo_mantencion_horas, horometro_ultima_mantencion
              FROM maquinarias WHERE id = $1`,
-            [id]
-        );
-        const maquinaria = maquinariaResult.rows[0];
-        if (!maquinaria) {
-            return res.status(404).json({ error: 'Maquinaria no encontrada' });
-        }
+        [id]
+    );
+    const maquinaria = maquinariaResult.rows[0];
+    if (!maquinaria) {
+        return res.status(404).json({ error: 'Maquinaria no encontrada' });
+    }
 
-        const lecturas = await pool.query(
-            `SELECT l.id, l.valor, l.origen, l.fecha, l.observacion,
+    const lecturas = await pool.query(
+        `SELECT l.id, l.valor, l.origen, l.fecha, l.observacion,
                     c.nombre AS cliente_nombre, u.nombre AS usuario_nombre
              FROM lecturas_horometro l
              LEFT JOIN clientes c ON c.id = l.cliente_id
              LEFT JOIN usuarios u ON u.id = l.usuario_id
              WHERE l.maquinaria_id = $1
              ORDER BY l.fecha DESC`,
-            [id]
-        );
+        [id]
+    );
 
-        const ultima = lecturas.rows[0] ? num(lecturas.rows[0].valor) : null;
-        res.json({
-            maquinaria: {
-                id: maquinaria.id,
-                codigo: maquinaria.codigo,
-                tipo: maquinaria.tipo,
-                intervalo_mantencion_horas: num(maquinaria.intervalo_mantencion_horas),
-                horometro_ultima_mantencion: num(maquinaria.horometro_ultima_mantencion),
-            },
-            ultima_lectura: ultima,
-            estado_mantencion: calcularEstadoMantencion({
-                ultimaLectura: ultima,
-                horometroUltimaMantencion: num(maquinaria.horometro_ultima_mantencion),
-                intervaloHoras: num(maquinaria.intervalo_mantencion_horas),
-            }),
-            lecturas: lecturas.rows.map((l) => ({ ...l, valor: num(l.valor) })),
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar el historial de horómetro' });
-    }
+    const ultima = lecturas.rows[0] ? num(lecturas.rows[0].valor) : null;
+    res.json({
+        maquinaria: {
+            id: maquinaria.id,
+            codigo: maquinaria.codigo,
+            tipo: maquinaria.tipo,
+            intervalo_mantencion_horas: num(maquinaria.intervalo_mantencion_horas),
+            horometro_ultima_mantencion: num(maquinaria.horometro_ultima_mantencion),
+        },
+        ultima_lectura: ultima,
+        estado_mantencion: calcularEstadoMantencion({
+            ultimaLectura: ultima,
+            horometroUltimaMantencion: num(maquinaria.horometro_ultima_mantencion),
+            intervaloHoras: num(maquinaria.intervalo_mantencion_horas),
+        }),
+        lecturas: lecturas.rows.map((l) => ({ ...l, valor: num(l.valor) })),
+    });
 });
 
 // agenda del mes: equipos arrendados a los que todavia no se
@@ -242,9 +237,8 @@ router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativ
 // los que acumulan horas de uso; falta confirmar si tambien quieren medir los que estan en
 // taller o en patio.
 router.get('/pendientes', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
-    try {
-        const result = await pool.query(
-            `SELECT m.id, m.codigo, m.tipo, m.ubicacion, c.nombre AS cliente_nombre,
+    const result = await pool.query(
+        `SELECT m.id, m.codigo, m.tipo, m.ubicacion, c.nombre AS cliente_nombre,
                     u.valor AS ultima_lectura, u.fecha AS ultima_fecha
              FROM maquinarias m
              JOIN clientes c ON c.id = m.cliente_id
@@ -260,23 +254,14 @@ router.get('/pendientes', verifyToken, requireRole('gerente', 'administrativo', 
                      AND date_trunc('month', l2.fecha) = date_trunc('month', now())
                )
              ORDER BY c.nombre, m.codigo`
-        );
-        res.json(result.rows.map((f) => ({ ...f, ultima_lectura: num(f.ultima_lectura) })));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar los equipos pendientes de medición' });
-    }
+    );
+    res.json(result.rows.map((f) => ({ ...f, ultima_lectura: num(f.ultima_lectura) })));
 });
 
 router.get('/alertas', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
-    try {
-        const equipos = await cargarAlertasMantencion(pool);
+    const equipos = await cargarAlertasMantencion(pool);
 
-        res.json({ horas_aviso: HORAS_AVISO_MANTENCION, equipos });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar las alertas de mantención' });
-    }
+    res.json({ horas_aviso: HORAS_AVISO_MANTENCION, equipos });
 });
 
 // marcar la mantencion como hecha desde el panel.
@@ -360,19 +345,14 @@ router.patch('/maquinaria/:id/intervalo', verifyToken, requireRole('administrati
     if (!Number.isFinite(intervalo) || intervalo <= 0 || intervalo > MAX_HORAS) {
         return res.status(400).json({ error: 'El intervalo de mantención debe ser mayor a 0 horas' });
     }
-    try {
-        const result = await pool.query(
-            'UPDATE maquinarias SET intervalo_mantencion_horas = $1 WHERE id = $2 RETURNING id, codigo, intervalo_mantencion_horas',
-            [intervalo, req.params.id]
-        );
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Maquinaria no encontrada' });
-        }
-        res.json({ ...result.rows[0], intervalo_mantencion_horas: num(result.rows[0].intervalo_mantencion_horas) });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al actualizar el intervalo de mantención' });
+    const result = await pool.query(
+        'UPDATE maquinarias SET intervalo_mantencion_horas = $1 WHERE id = $2 RETURNING id, codigo, intervalo_mantencion_horas',
+        [intervalo, req.params.id]
+    );
+    if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Maquinaria no encontrada' });
     }
+    res.json({ ...result.rows[0], intervalo_mantencion_horas: num(result.rows[0].intervalo_mantencion_horas) });
 });
 
 module.exports = { router, encolarAvisoMantencion };

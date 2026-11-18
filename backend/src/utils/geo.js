@@ -13,7 +13,7 @@ const VELOCIDAD_MEDIA_KMH = 40;
 
 // Una posicion con hora del futuro (reloj del telefono mal puesto) bloquearia las siguientes,
 // que siempre serian "mas viejas". Se tolera un desfase chico y se rechaza el resto.
-const TOLERANCIA_FUTURO_MS = 2 * 60 * 1000;
+const { TOLERANCIA_FUTURO_MS } = require('./tiempo');
 const ANTIGUEDAD_MAXIMA_MS = 10 * 60 * 1000;
 
 function esNumeroFinito(x) {

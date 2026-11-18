@@ -3,6 +3,9 @@
 // (un numero donde se espera texto, un arreglo, un objeto) hacia caer la API con un 500 o,
 // peor, con una excepcion que terminaba el proceso.
 
+/** UUID en texto (cualquier version), como lo genera la app y como lo acepta el cast de Postgres. */
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Tope de un monto en pesos: las columnas son NUMERIC(12,2), es decir, 10 digitos enteros. */
 const MAX_MONTO_PESOS = 9999999999;
 
@@ -17,11 +20,6 @@ const MAX_TEXTO_LARGO = 2000;
 function textoInvalido(valor, max = MAX_TEXTO_LARGO) {
     if (valor === undefined || valor === null) return false;
     return typeof valor !== 'string' || valor.length > max;
-}
-
-/** Texto obligatorio: string no vacio (tras recortar) de hasta `max` caracteres. */
-function textoRequeridoValido(valor, max = MAX_TEXTO_CORTO) {
-    return typeof valor === 'string' && valor.trim().length > 0 && valor.length <= max;
 }
 
 /** Fecha de calendario 'YYYY-MM-DD' que existe de verdad (rechaza 2026-02-31). */
@@ -104,7 +102,7 @@ function fechaHoraInvalida(valor) {
 module.exports = {
     fechaHoraInvalida,
     validarCuerpo,
-    esIdDeRuta, validarIdsEnRuta,
+    esIdDeRuta, validarIdsEnRuta, UUID,
     MAX_MONTO_PESOS, MAX_TEXTO_CORTO, MAX_TEXTO_LARGO,
-    textoInvalido, textoRequeridoValido, esDiaValido, fechaDeQuery, esNumeroFinito,
+    textoInvalido, esDiaValido, fechaDeQuery, esNumeroFinito,
 };

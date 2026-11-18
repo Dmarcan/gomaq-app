@@ -45,56 +45,51 @@ router.post('/login', limiteLogin, async (req, res) => {
         return res.status(400).json({ error: 'Escribe tu correo y tu contraseña' });
     }
 
-    try {
-        const result = await pool.query(
-            'SELECT id, nombre, email, password_hash, rol, cliente_id, estado_cuenta, password_cambiada_at FROM usuarios WHERE lower(email) = lower($1)',
+    const result = await pool.query(
+        'SELECT id, nombre, email, password_hash, rol, cliente_id, estado_cuenta, password_cambiada_at FROM usuarios WHERE lower(email) = lower($1)',
+        [email]
+    );
+    const usuario = result.rows[0];
+    if (!usuario) {
+        // Si no existe en usuarios puede ser un cliente registrado cuya solicitud sigue pendiente. Se le da un
+        // mensaje claro SOLO tras validar su contrasena: si no, se podria averiguar que correos estan
+        // registrados probando uno por uno (enumeracion de usuarios).
+        const solicitud = await pool.query(
+            `SELECT password_hash FROM solicitudes_cliente WHERE lower(email) = lower($1) AND estado = 'pendiente'`,
             [email]
         );
-        const usuario = result.rows[0];
-        if (!usuario) {
-            // Si no existe en usuarios puede ser un cliente registrado cuya solicitud sigue pendiente. Se le da un
-            // mensaje claro SOLO tras validar su contrasena: si no, se podria averiguar que correos estan
-            // registrados probando uno por uno (enumeracion de usuarios).
-            const solicitud = await pool.query(
-                `SELECT password_hash FROM solicitudes_cliente WHERE lower(email) = lower($1) AND estado = 'pendiente'`,
-                [email]
-            );
-            const pendiente = solicitud.rows[0];
-            if (pendiente && await bcrypt.compare(password, pendiente.password_hash)) {
-                return res.status(403).json({ error: 'Tu cuenta está en revisión. GOMAQ la aprueba en horario hábil; podrás entrar con este correo apenas quede lista' });
-            }
-            return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
-        }
-
-        // una cuenta invitada (pendiente) tiene una clave aleatoria que nadie conoce: no pasa de aqui
-        const passwordOk = await bcrypt.compare(password, usuario.password_hash);
-        if (!passwordOk) {
-            return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
-        }
-
-        // defensa en profundidad: hoy los usuarios solo se crean ya activos, pero si
-        // alguna vez queda uno pendiente/rechazado en la tabla, no debe poder entrar
-        if (usuario.estado_cuenta === 'pendiente') {
+        const pendiente = solicitud.rows[0];
+        if (pendiente && await bcrypt.compare(password, pendiente.password_hash)) {
             return res.status(403).json({ error: 'Tu cuenta está en revisión. GOMAQ la aprueba en horario hábil; podrás entrar con este correo apenas quede lista' });
         }
-        if (usuario.estado_cuenta === 'rechazado') {
-            return res.status(403).json({ error: 'Tu cuenta está desactivada. Contacta a GOMAQ' });
-        }
-
-        res.json({
-            token: await emitirSesion(usuario, req),
-            usuario: {
-                id: usuario.id,
-                nombre: usuario.nombre,
-                email: usuario.email,
-                rol: usuario.rol,
-                cliente_id: usuario.cliente_id,
-            },
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al iniciar sesión' });
+        return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
     }
+
+    // una cuenta invitada (pendiente) tiene una clave aleatoria que nadie conoce: no pasa de aqui
+    const passwordOk = await bcrypt.compare(password, usuario.password_hash);
+    if (!passwordOk) {
+        return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
+    }
+
+    // defensa en profundidad: hoy los usuarios solo se crean ya activos, pero si
+    // alguna vez queda uno pendiente/rechazado en la tabla, no debe poder entrar
+    if (usuario.estado_cuenta === 'pendiente') {
+        return res.status(403).json({ error: 'Tu cuenta está en revisión. GOMAQ la aprueba en horario hábil; podrás entrar con este correo apenas quede lista' });
+    }
+    if (usuario.estado_cuenta === 'rechazado') {
+        return res.status(403).json({ error: 'Tu cuenta está desactivada. Contacta a GOMAQ' });
+    }
+
+    res.json({
+        token: await emitirSesion(usuario, req),
+        usuario: {
+            id: usuario.id,
+            nombre: usuario.nombre,
+            email: usuario.email,
+            rol: usuario.rol,
+            cliente_id: usuario.cliente_id,
+        },
+    });
 });
 
 const RESPUESTA_RECUPERAR = {
@@ -158,7 +153,7 @@ async function procesarRecuperacion(email) {
         if (client) client.release();
     }
 
-    if (envio) enviarCodigoPorCorreo(pool, envio).catch(() => {});
+    if (envio) enviarCodigoPorCorreo(pool, envio).catch((err) => console.error('No se pudo enviar el codigo por correo:', err && err.message));
 }
 
 const ERROR_CODIGO = 'El código no es válido o ya venció. Revisa el correo y el código, o pide uno nuevo';
@@ -232,25 +227,15 @@ router.post('/codigo/confirmar', limiteCodigo, async (req, res) => {
 // cierra la sesion actual en el servidor (el cliente igual borra su token). Con un
 // token antiguo (JWT) no hay nada que revocar y responde igual.
 router.post('/logout', verifyToken, async (req, res) => {
-    try {
-        if (req.user.sid) {
-            await pool.query(`UPDATE sesiones SET revocada_at = now(), motivo = 'logout' WHERE id = $1 AND revocada_at IS NULL`, [req.user.sid]);
-        }
-        res.status(204).end();
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'No se pudo cerrar la sesión' });
+    if (req.user.sid) {
+        await pool.query(`UPDATE sesiones SET revocada_at = now(), motivo = 'logout' WHERE id = $1 AND revocada_at IS NULL`, [req.user.sid]);
     }
+    res.status(204).end();
 });
 
 router.post('/logout-todas', verifyToken, async (req, res) => {
-    try {
-        await revocarSesiones(pool, req.user.id, { motivo: 'logout_todas' });
-        res.status(204).end();
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'No se pudo cerrar las sesiones' });
-    }
+    await revocarSesiones(pool, req.user.id, { motivo: 'logout_todas' });
+    res.status(204).end();
 });
 
 // la persona cambia su propia clave con la sesion abierta. Las demas
@@ -266,15 +251,14 @@ router.post('/cambiar-password', limiteLogin, verifyToken, async (req, res) => {
     if (actual === nueva) {
         return res.status(400).json({ error: 'La contraseña nueva debe ser distinta de la actual' });
     }
-    try {
-        const r = await pool.query('SELECT password_hash FROM usuarios WHERE id = $1', [req.user.id]);
-        if (r.rows.length === 0 || !(await bcrypt.compare(actual, r.rows[0].password_hash))) {
-            return res.status(400).json({ error: 'La contraseña actual no es correcta' });
-        }
-        const hash = await bcrypt.hash(nueva, 10);
-        // la clave nueva y el cierre de las otras sesiones van en UNA sentencia: o ocurren las dos o ninguna
-        const u = await pool.query(
-            `WITH cambio AS (
+    const r = await pool.query('SELECT password_hash FROM usuarios WHERE id = $1', [req.user.id]);
+    if (r.rows.length === 0 || !(await bcrypt.compare(actual, r.rows[0].password_hash))) {
+        return res.status(400).json({ error: 'La contraseña actual no es correcta' });
+    }
+    const hash = await bcrypt.hash(nueva, 10);
+    // la clave nueva y el cierre de las otras sesiones van en UNA sentencia: o ocurren las dos o ninguna
+    const u = await pool.query(
+        `WITH cambio AS (
                  UPDATE usuarios SET password_hash = $1, password_cambiada_at = now()
                  WHERE id = $2
                  RETURNING id, rol, cliente_id, password_cambiada_at
@@ -284,21 +268,17 @@ router.post('/cambiar-password', limiteLogin, verifyToken, async (req, res) => {
                  RETURNING id
              )
              SELECT * FROM cambio`,
-            [hash, req.user.id, req.user.sid || null]
-        );
-        // la sesion actual sigue; las demas de la cuenta se cierran. Un token antiguo (JWT) ya no vale tras
-        // el cambio de clave, asi que ese caso recibe una sesion nueva.
-        let token;
-        if (req.user.sid) {
-            token = req.headers.authorization.slice('Bearer '.length);
-        } else {
-            token = await emitirSesion(u.rows[0], req);
-        }
-        res.json({ ok: true, token });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'No se pudo cambiar la contraseña' });
+        [hash, req.user.id, req.user.sid || null]
+    );
+    // la sesion actual sigue; las demas de la cuenta se cierran. Un token antiguo (JWT) ya no vale tras
+    // el cambio de clave, asi que ese caso recibe una sesion nueva.
+    let token;
+    if (req.user.sid) {
+        token = req.headers.authorization.slice('Bearer '.length);
+    } else {
+        token = await emitirSesion(u.rows[0], req);
     }
+    res.json({ ok: true, token });
 });
 
 module.exports = router;

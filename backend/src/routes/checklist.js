@@ -9,16 +9,11 @@ const router = express.Router();
 // El movil lo descarga y lo cachea en SQLite (igual que el catalogo de insumos) para poder
 // llenar la OT en terreno sin señal.
 router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
-    try {
-        const result = await pool.query(
-            `SELECT id, grupo, nombre, orden FROM servicios_checklist
+    const result = await pool.query(
+        `SELECT id, grupo, nombre, orden FROM servicios_checklist
              WHERE activo = true ORDER BY orden`
-        );
-        res.json(result.rows);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar el checklist de servicios' });
-    }
+    );
+    res.json(result.rows);
 });
 
 module.exports = router;

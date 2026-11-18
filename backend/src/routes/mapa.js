@@ -17,10 +17,9 @@ const SQL_BODEGA = `SELECT id, nombre, latitud, longitud, ubicacion_actualizada_
 // equipos (arrendados y en bodega) y furgones en camino, con su ubicacion.
 // No llama al servicio de rutas ni recalcula la ETA: solo lee lo que ya esta guardado.
 router.get('/', ...soloOficina, async (req, res) => {
-    try {
-        const [bodega, equipos, furgones, alertas] = await Promise.all([
-            pool.query(SQL_BODEGA),
-            pool.query(`
+    const [bodega, equipos, furgones, alertas] = await Promise.all([
+        pool.query(SQL_BODEGA),
+        pool.query(`
                 SELECT m.id, m.codigo, m.tipo, m.marca, m.modelo, m.estado, m.cliente_id,
                        c.nombre AS cliente_nombre, c.direccion, c.latitud AS c_lat, c.longitud AS c_lng,
                        g.tipo AS g_tipo, g.cliente_id AS g_cliente_id, g.latitud AS g_lat, g.longitud AS g_lng,
@@ -41,9 +40,9 @@ router.get('/', ...soloOficina, async (req, res) => {
                     ORDER BY fecha DESC, id DESC LIMIT 1
                 ) g ON true
                 ORDER BY m.codigo`),
-            // Solo OT en camino. La posicion se une por la OT Y por el mecanico dueno: una fila vieja
-            // de otra OT o de otro tecnico nunca se mezcla. Sin posicion sigue en la lista (coordenadas null).
-            pool.query(`
+        // Solo OT en camino. La posicion se une por la OT Y por el mecanico dueno: una fila vieja
+        // de otra OT o de otro tecnico nunca se mezcla. Sin posicion sigue en la lista (coordenadas null).
+        pool.query(`
                 SELECT ot.id AS orden_trabajo_id, u.nombre AS mecanico_nombre,
                        v.patente AS vehiculo_patente, v.marca AS vehiculo_marca, v.modelo AS vehiculo_modelo,
                        c.nombre AS cliente_nombre, m.id AS maquinaria_id, m.codigo AS maquinaria_codigo,
@@ -60,29 +59,20 @@ router.get('/', ...soloOficina, async (req, res) => {
                 LEFT JOIN posiciones_mecanico p ON p.usuario_id = ot.mecanico_id AND p.orden_trabajo_id = ot.id
                 WHERE ot.estado = 'en_camino'
                 ORDER BY ot.id`),
-            cargarAlertasMantencion(pool),
-        ]);
-        res.json(armarRespuestaMapa({
-            bodega: bodega.rows[0] || null,
-            equipos: equipos.rows,
-            furgones: furgones.rows,
-            alertas,
-        }));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al cargar el mapa' });
-    }
+        cargarAlertasMantencion(pool),
+    ]);
+    res.json(armarRespuestaMapa({
+        bodega: bodega.rows[0] || null,
+        equipos: equipos.rows,
+        furgones: furgones.rows,
+        alertas,
+    }));
 });
 
 router.get('/bodega', ...soloOficina, async (req, res) => {
-    try {
-        const fila = (await pool.query(SQL_BODEGA)).rows[0];
-        if (!fila) return res.status(409).json({ error: 'No hay una bodega registrada' });
-        res.json({ ...armarBodega(fila), ubicacion_actualizada_at: fila.ubicacion_actualizada_at });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al leer la bodega' });
-    }
+    const fila = (await pool.query(SQL_BODEGA)).rows[0];
+    if (!fila) return res.status(409).json({ error: 'No hay una bodega registrada' });
+    res.json({ ...armarBodega(fila), ubicacion_actualizada_at: fila.ubicacion_actualizada_at });
 });
 
 // fija la ubicacion de la bodega. Latitud y longitud juntas; las dos en
@@ -90,20 +80,15 @@ router.get('/bodega', ...soloOficina, async (req, res) => {
 router.put('/bodega', ...soloOficina, async (req, res) => {
     const coords = validarUbicacionBodega(req.body);
     if (!coords.ok) return res.status(400).json({ error: coords.error });
-    try {
-        const r = await pool.query(
-            `UPDATE ubicaciones_stock
+    const r = await pool.query(
+        `UPDATE ubicaciones_stock
              SET latitud = $1, longitud = $2, ubicacion_actualizada_por = $3, ubicacion_actualizada_at = now()
              WHERE id = (SELECT id FROM ubicaciones_stock WHERE tipo = 'bodega' ORDER BY id LIMIT 1)
              RETURNING id, nombre, latitud, longitud, ubicacion_actualizada_at`,
-            [coords.latitud, coords.longitud, req.user.id]
-        );
-        if (r.rows.length === 0) return res.status(409).json({ error: 'No hay una bodega registrada' });
-        res.json({ ...armarBodega(r.rows[0]), ubicacion_actualizada_at: r.rows[0].ubicacion_actualizada_at });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al guardar la ubicación de la bodega' });
-    }
+        [coords.latitud, coords.longitud, req.user.id]
+    );
+    if (r.rows.length === 0) return res.status(409).json({ error: 'No hay una bodega registrada' });
+    res.json({ ...armarBodega(r.rows[0]), ubicacion_actualizada_at: r.rows[0].ubicacion_actualizada_at });
 });
 
 module.exports = router;

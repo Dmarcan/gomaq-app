@@ -13,7 +13,7 @@ const MESES = {
     noviembre: 11, diciembre: 12,
 };
 
-function sinAcentos(texto) {
+function quitarAcentos(texto) {
     return texto.normalize('NFD').replace(/[̀-ͯ]/g, '');
 }
 
@@ -37,7 +37,7 @@ function aFechaIso(anio, mes, dia) {
  */
 function parsearFechaEmision(texto) {
     if (!texto) return null;
-    const etiqueta = sinAcentos(texto).match(/fecha\s*(?:de\s*)?emision\s*:?\s*([^\n]{0,80})/i);
+    const etiqueta = quitarAcentos(texto).match(/fecha\s*(?:de\s*)?emision\s*:?\s*([^\n]{0,80})/i);
     if (!etiqueta) return null;
     const segmento = etiqueta[1];
 
@@ -88,7 +88,7 @@ function parsearHora(texto) {
  */
 function detectarTipoGuia(texto) {
     if (!texto) return null;
-    const plano = sinAcentos(texto);
+    const plano = quitarAcentos(texto);
 
     const tipoTraslado = plano.match(/tipo\s*(?:de\s*)?traslado\s*:?\s*([^\n]{0,60})/i);
     if (tipoTraslado && /devolucion|recepcion|retiro/i.test(tipoTraslado[1])) return 'recepcion';
@@ -105,12 +105,12 @@ function detectarTipoGuia(texto) {
  */
 function parsearFolio(texto) {
     if (!texto) return null;
-    const match = sinAcentos(texto).match(/electronica\s*N[°º]\s*(\d+)/i);
+    const match = quitarAcentos(texto).match(/electronica\s*N[°º]\s*(\d+)/i);
     return match ? match[1] : null;
 }
 
 /** '12.345.678- 5' -> '12345678-5'. El PDF trae el digito verificador separado por un espacio. */
-function normalizarRut(rut) {
+function normalizarRutSinValidar(rut) {
     if (!rut) return null;
     const limpio = String(rut).replace(/[^0-9kK]/g, '').toUpperCase();
     if (limpio.length < 2) return null;
@@ -125,11 +125,11 @@ function normalizarRut(rut) {
  */
 function parsearRutReceptor(texto) {
     if (!texto) return null;
-    const plano = sinAcentos(texto);
+    const plano = quitarAcentos(texto);
     const inicio = plano.search(/senor\(es\)/i);
     if (inicio === -1) return null;
     const match = plano.slice(inicio).match(/R\.?\s*U\.?\s*T\.?\s*:?\s*([\d.]{7,12}\s*-\s*[\dkK])/i);
-    return match ? normalizarRut(match[1]) : null;
+    return match ? normalizarRutSinValidar(match[1]) : null;
 }
 
 /** Monto total de una factura. Se conserva la heuristica original, que funciona en los DTE de GOMAQ. */
@@ -149,7 +149,7 @@ function parsearMonto(texto) {
  */
 function parsearHorometro(texto) {
     if (!texto) return null;
-    const match = sinAcentos(texto).match(/hor[oO]metro\s*:?\s*([\d.,]+)/i);
+    const match = quitarAcentos(texto).match(/hor[oO]metro\s*:?\s*([\d.,]+)/i);
     if (!match) return null;
     // el separador de miles chileno es el punto: "1.156" son 1156 horas, no 1,156
     const numero = parseFloat(match[1].replace(/\./g, '').replace(',', '.'));
@@ -163,7 +163,7 @@ function parsearHorometro(texto) {
  */
 function parsearNumeroInterno(texto) {
     if (!texto) return null;
-    const match = sinAcentos(texto).match(/\bN\s*(?:[°ºo]\.?|\.)?\s*interno\s*:?\s*(\d{1,8})\b/i);
+    const match = quitarAcentos(texto).match(/\bN\s*(?:[°ºo]\.?|\.)?\s*interno\s*:?\s*(\d{1,8})\b/i);
     if (!match) return null;
     const numero = match[1].replace(/^0+/, '');
     return numero || null;
@@ -195,7 +195,7 @@ function aPesos(crudo) {
 /** "MONTO NETO $ 210.000" -> 210000, o null. */
 function parsearMontoNeto(texto) {
     if (!texto) return null;
-    const match = sinAcentos(texto).match(/monto\s+neto\s*:?\s*\$?\s*([\d.]+(?:,\d+)?)/i);
+    const match = quitarAcentos(texto).match(/monto\s+neto\s*:?\s*\$?\s*([\d.]+(?:,\d+)?)/i);
     return match ? aPesos(match[1]) : null;
 }
 
@@ -209,7 +209,7 @@ function parsearMontoNeto(texto) {
 function parsearVencimiento(texto) {
     const vacio = { fecha: null, varias_cuotas: false };
     if (!texto) return vacio;
-    const plano = sinAcentos(texto);
+    const plano = quitarAcentos(texto);
     const ancla = plano.match(/\bpagos\s*:/i);
     if (!ancla) return vacio;
     let tramo = plano.slice(ancla.index + ancla[0].length);
@@ -245,7 +245,7 @@ const LINEA_VALOR = /^\s*\d+(?:[.,]\d+)?\s+[A-Za-z]{1,10}\.?\s+(?:[\d.,%-]+\s+)*
  */
 function parsearTraslado(texto) {
     if (!texto) return null;
-    const lineas = sinAcentos(texto).split(/\r?\n/);
+    const lineas = quitarAcentos(texto).split(/\r?\n/);
     let inicio = lineas.findIndex((l) => /codigo\s+descripcion/i.test(l));
     inicio = inicio === -1 ? 0 : inicio + 1;
     const bloques = [];
@@ -319,7 +319,7 @@ module.exports = {
     parsearMonto,
     parsearHorometro,
     parsearNumeroInterno,
-    normalizarRut,
+    normalizarRutSinValidar,
     parsearMontoNeto,
     parsearVencimiento,
     parsearTraslado,

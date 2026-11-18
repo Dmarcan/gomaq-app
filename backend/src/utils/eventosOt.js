@@ -14,6 +14,9 @@
 //
 // Las funciones de armado son puras (test/eventosOt.test.js); solo registrarEvento toca la base.
 
+const { UUID } = require('./validacion');
+const { TOLERANCIA_FUTURO_MS } = require('./tiempo');
+
 const TIPOS_EVENTO = [
     'creacion', 'asignacion', 'toma', 'cambio_estado', 'cierre', 'valorizacion',
     'linea_agregada', 'linea_modificada', 'linea_anulada', 'factura_cargada', 'factura_anulada',
@@ -22,11 +25,6 @@ const ORIGENES_EVENTO = ['terreno', 'panel', 'sistema', 'migracion'];
 
 // una diferencia mayor entre ocurrio_en y registrado_en marca el evento como sincronizado tarde
 const MINUTOS_SINCRONIZADO_TARDE = 10;
-
-// margen para el reloj del telefono adelantado: una hora un poco en el futuro no es dudosa
-const TOLERANCIA_FUTURO_MS = 2 * 60 * 1000;
-
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function esTipoValido(tipo) {
     return TIPOS_EVENTO.includes(tipo);

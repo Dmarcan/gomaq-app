@@ -8,10 +8,8 @@
 // Funciones puras: la regla queda testeable sin base de datos (ver test/estadoEquipo.test.js).
 // "Abierta" quiere decir en_terreno o en_reparacion (ver estadosOt.EN_CURSO).
 
-const ESTADOS_EQUIPO = ['operativa', 'en_mantencion', 'fuera_de_servicio'];
 // lo que puede pedir el mecanico al cerrar una orden
 const ESTADOS_CIERRE = ['operativa', 'fuera_de_servicio'];
-const ORIGENES_ESTADO = ['ot', 'mecanico', 'panel'];
 
 /** `estado_equipo` del cierre: ausente (APK antiguo) es valido; otro valor no. */
 function validarEstadoEquipoCierre(valor) {
@@ -112,7 +110,7 @@ async function origenDeCliente(db, clienteId) {
 }
 
 module.exports = {
-    ESTADOS_EQUIPO, ESTADOS_CIERRE, ORIGENES_ESTADO,
+    ESTADOS_CIERRE,
     validarEstadoEquipoCierre, estadoTrasEntrada, estadoTrasCierre, origenPorEjecutivo,
     aplicarEntradaEquipo, aplicarCierreEquipo, origenDeCliente,
 };

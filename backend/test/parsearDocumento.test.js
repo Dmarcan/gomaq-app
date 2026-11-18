@@ -11,7 +11,7 @@ const {
     parsearRutReceptor,
     parsearMonto,
     parsearHorometro,
-    normalizarRut,
+    normalizarRutSinValidar,
     parsearGuia,
     parsearFactura,
 } = require('../src/utils/parsearDocumento');
@@ -106,16 +106,16 @@ describe('parsearFolio', () => {
     });
 });
 
-describe('normalizarRut', () => {
+describe('normalizarRutSinValidar', () => {
     test('quita puntos, espacios y normaliza el digito verificador', () => {
-        assert.strictEqual(normalizarRut('12.345.678- 5'), '12345678-5');
-        assert.strictEqual(normalizarRut('12345678-k'), '12345678-K');
-        assert.strictEqual(normalizarRut('77.089.584- 7'), '77089584-7');
+        assert.strictEqual(normalizarRutSinValidar('12.345.678- 5'), '12345678-5');
+        assert.strictEqual(normalizarRutSinValidar('12345678-k'), '12345678-K');
+        assert.strictEqual(normalizarRutSinValidar('77.089.584- 7'), '77089584-7');
     });
 
     test('devuelve null con entrada vacia', () => {
-        assert.strictEqual(normalizarRut(null), null);
-        assert.strictEqual(normalizarRut('   '), null);
+        assert.strictEqual(normalizarRutSinValidar(null), null);
+        assert.strictEqual(normalizarRutSinValidar('   '), null);
     });
 });
 

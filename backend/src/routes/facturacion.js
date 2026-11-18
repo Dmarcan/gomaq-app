@@ -6,6 +6,10 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf, subidaComprobante } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
+const { URL_EXPIRACION_SEGUNDOS, firmarUrl } = require('../utils/urlsFirmadas');
+
+// borrar un archivo ya subido es un intento de limpieza: si falla no se cambia la respuesta, pero queda en el log
+const avisarArchivoHuerfano = (err) => console.error('No se pudo borrar el archivo subido de una factura que no se guardo:', err && err.message);
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { diasEntre } = require('../utils/diasArriendo');
 const { validarPeriodo } = require('../utils/periodosArriendo');
@@ -49,39 +53,38 @@ const conFechasTexto = (fila) => ({
 // arriendos con ciclo despacho+recepcion cerrado, reparaciones esperando que el Gerente
 // les ponga monto, y reparaciones ya valorizadas listas para emitir factura.
 router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
-    try {
-        // un arriendo es un despacho; lo cierra la recepcion siguiente o, si falta, el despacho siguiente
-        // (utils/arriendos.js). El cliente es el del despacho (el de la recepcion sale de
-        // maquinarias.cliente_id, que con dos despachos seguidos ya seria el del segundo)
-        const config = await leerConfiguracion(pool);
-        const todos = await cargarArriendos(pool, config);
-        // un arriendo facturado de mas (recepcion registrada con fecha anterior a lo ya facturado)
-        // se muestra con su aviso: pide nota de credito en el SII y no se puede subir otra factura
-        const arriendos = filtrarPorFacturar(todos)
-            .map((a) => ({
-                guia_recepcion_id: a.guia_recepcion_id,
-                guia_despacho_id: a.guia_despacho_id,
-                maquinaria_id: a.maquinaria_id,
-                maquinaria_codigo: a.maquinaria_codigo,
-                cliente_id: a.cliente_id,
-                cliente_nombre: a.cliente_nombre,
-                cliente_email: a.cliente_email,
-                fecha_despacho: a.fecha_despacho,
-                fecha_recepcion: a.fecha_fin,
-                desde: a.desde,
-                fin: a.fin,
-                hasta_sugerido: a.hasta_sugerido,
-                es_final: a.es_final,
-                falta_recepcion: a.falta_recepcion,
-                facturado_de_mas: a.facturado_de_mas === true,
-                facturado_hasta: a.facturado_hasta || null,
-                // dias que quedan por facturar del arriendo, y dias del primer periodo propuesto
-                dias: a.facturado_de_mas ? 0 : diasEntre(a.desde, a.fin),
-                dias_periodo: a.dias,
-            }))
-            .sort((x, y) => new Date(y.fecha_recepcion) - new Date(x.fecha_recepcion));
+    // un arriendo es un despacho; lo cierra la recepcion siguiente o, si falta, el despacho siguiente
+    // (utils/arriendos.js). El cliente es el del despacho (el de la recepcion sale de
+    // maquinarias.cliente_id, que con dos despachos seguidos ya seria el del segundo)
+    const config = await leerConfiguracion(pool);
+    const todos = await cargarArriendos(pool, config);
+    // un arriendo facturado de mas (recepcion registrada con fecha anterior a lo ya facturado)
+    // se muestra con su aviso: pide nota de credito en el SII y no se puede subir otra factura
+    const arriendos = filtrarPorFacturar(todos)
+        .map((a) => ({
+            guia_recepcion_id: a.guia_recepcion_id,
+            guia_despacho_id: a.guia_despacho_id,
+            maquinaria_id: a.maquinaria_id,
+            maquinaria_codigo: a.maquinaria_codigo,
+            cliente_id: a.cliente_id,
+            cliente_nombre: a.cliente_nombre,
+            cliente_email: a.cliente_email,
+            fecha_despacho: a.fecha_despacho,
+            fecha_recepcion: a.fecha_fin,
+            desde: a.desde,
+            fin: a.fin,
+            hasta_sugerido: a.hasta_sugerido,
+            es_final: a.es_final,
+            falta_recepcion: a.falta_recepcion,
+            facturado_de_mas: a.facturado_de_mas === true,
+            facturado_hasta: a.facturado_hasta || null,
+            // dias que quedan por facturar del arriendo, y dias del primer periodo propuesto
+            dias: a.facturado_de_mas ? 0 : diasEntre(a.desde, a.fin),
+            dias_periodo: a.dias,
+        }))
+        .sort((x, y) => new Date(y.fecha_recepcion) - new Date(x.fecha_recepcion));
 
-        const pendientesValorizarResult = await pool.query(`
+    const pendientesValorizarResult = await pool.query(`
             SELECT ot.id, ot.motivo, ot.diagnostico, ot.fecha_creacion,
                    m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre
             FROM ordenes_trabajo ot
@@ -92,7 +95,7 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
             ORDER BY ot.fecha_creacion DESC
         `);
 
-        const listasResult = await pool.query(`
+    const listasResult = await pool.query(`
             SELECT ot.id, ot.motivo, ot.diagnostico, ot.valorizacion, ot.fecha_creacion,
                    m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre, c.email AS cliente_email
             FROM ordenes_trabajo ot
@@ -102,15 +105,11 @@ router.get('/pendientes', verifyToken, requireRole('administrativo', 'gerente'),
             ORDER BY ot.fecha_creacion DESC
         `);
 
-        res.json({
-            arriendos,
-            reparaciones_pendientes_valorizar: pendientesValorizarResult.rows,
-            reparaciones_listas: listasResult.rows,
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar pendientes de facturación' });
-    }
+    res.json({
+        arriendos,
+        reparaciones_pendientes_valorizar: pendientesValorizarResult.rows,
+        reparaciones_listas: listasResult.rows,
+    });
 });
 
 // lee el texto del PDF de una factura para adivinar monto, folio, cliente,
@@ -121,37 +120,32 @@ router.post('/detectar', verifyToken, requireRole('administrativo'), subidaPdf.s
     if (!req.file) {
         return res.status(400).json({ error: 'archivo (PDF) es requerido' });
     }
-    try {
-        const texto = await leerTextoPdf(req.file.buffer);
-        const leido = parsearFactura(texto);
-        const cliente = await detectarCliente(texto, leido.rut_detectado);
-        let plazo = null;
-        if (cliente) {
-            const r = await pool.query('SELECT plazo_pago_dias FROM clientes WHERE id = $1', [cliente.id]);
-            plazo = r.rows[0] && r.rows[0].plazo_pago_dias !== null ? Number(r.rows[0].plazo_pago_dias) : null;
-        }
-        const vencimiento = vencimientoPropuesto({
-            emision: leido.fecha_emision_detectada, vencimientoPdf: leido.vencimiento_detectado, plazoCliente: plazo,
-        });
-
-        res.json({
-            monto_detectado: leido.monto_detectado,
-            folio_detectado: leido.folio_detectado,
-            cliente_detectado: cliente,
-            texto_legible: texto.trim().length > 0,
-            monto_neto_detectado: leido.monto_neto_detectado,
-            fecha_emision_detectada: leido.fecha_emision_detectada,
-            vencimiento_detectado: leido.vencimiento_detectado,
-            varias_cuotas: leido.varias_cuotas,
-            traslado_detectado: leido.traslado_detectado,
-            plazo_cliente_dias: plazo,
-            vencimiento,
-            avisos: avisosPrecarga(leido, vencimiento),
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al leer el PDF' });
+    const texto = await leerTextoPdf(req.file.buffer);
+    const leido = parsearFactura(texto);
+    const cliente = await detectarCliente(texto, leido.rut_detectado);
+    let plazo = null;
+    if (cliente) {
+        const r = await pool.query('SELECT plazo_pago_dias FROM clientes WHERE id = $1', [cliente.id]);
+        plazo = r.rows[0] && r.rows[0].plazo_pago_dias !== null ? Number(r.rows[0].plazo_pago_dias) : null;
     }
+    const vencimiento = vencimientoPropuesto({
+        emision: leido.fecha_emision_detectada, vencimientoPdf: leido.vencimiento_detectado, plazoCliente: plazo,
+    });
+
+    res.json({
+        monto_detectado: leido.monto_detectado,
+        folio_detectado: leido.folio_detectado,
+        cliente_detectado: cliente,
+        texto_legible: texto.trim().length > 0,
+        monto_neto_detectado: leido.monto_neto_detectado,
+        fecha_emision_detectada: leido.fecha_emision_detectada,
+        vencimiento_detectado: leido.vencimiento_detectado,
+        varias_cuotas: leido.varias_cuotas,
+        traslado_detectado: leido.traslado_detectado,
+        plazo_cliente_dias: plazo,
+        vencimiento,
+        avisos: avisosPrecarga(leido, vencimiento),
+    });
 });
 
 // el periodo que el sistema propone
@@ -160,15 +154,10 @@ router.post('/detectar', verifyToken, requireRole('administrativo'), subidaPdf.s
 router.get('/arriendos/:guiaDespachoId/propuesta', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const id = Number(req.params.guiaDespachoId);
     if (!Number.isInteger(id) || id <= 0) return res.status(404).json({ error: 'Arriendo no encontrado' });
-    try {
-        const config = await leerConfiguracion(pool);
-        const [arriendo] = await cargarArriendos(pool, config, { despachoId: id });
-        if (!arriendo) return res.status(404).json({ error: 'Arriendo no encontrado' });
-        res.json(respuestaPropuesta(arriendo, config));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al calcular el período a facturar' });
-    }
+    const config = await leerConfiguracion(pool);
+    const [arriendo] = await cargarArriendos(pool, config, { despachoId: id });
+    if (!arriendo) return res.status(404).json({ error: 'Arriendo no encontrado' });
+    res.json(respuestaPropuesta(arriendo, config));
 });
 
 function respuestaPropuesta(a, config) {
@@ -236,7 +225,7 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
     let client = null;
     const rechazar = async (estado, cuerpo) => {
         await client.query('ROLLBACK');
-        if (rutaStorage) await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+        if (rutaStorage) await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(avisarArchivoHuerfano);
         rutaStorage = null;
         return res.status(estado).json(cuerpo);
     };
@@ -303,7 +292,7 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
     } catch (err) {
         if (client) await client.query('ROLLBACK').catch(() => {});
         if (rutaStorage) {
-            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(avisarArchivoHuerfano);
         }
         if (err.code === '23505') {
             return res.status(409).json({
@@ -322,21 +311,16 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
 // reglas de cobro vigentes (dia de facturacion, hora de corte
 // del despacho, si el dia de la recepcion cuenta). Las rutas fijas van antes de /:facturaId.
 router.get('/configuracion', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
-    try {
-        const config = await leerConfiguracion(pool);
-        const ultimo = await pool.query(
-            `SELECT c.actualizado_at, u.nombre AS actualizado_por
+    const config = await leerConfiguracion(pool);
+    const ultimo = await pool.query(
+        `SELECT c.actualizado_at, u.nombre AS actualizado_por
              FROM configuracion c LEFT JOIN usuarios u ON u.id = c.actualizado_por
              WHERE c.actualizado_por IS NOT NULL ORDER BY c.actualizado_at DESC LIMIT 1`);
-        res.json({
-            ...config,
-            actualizado_por: ultimo.rows[0] ? ultimo.rows[0].actualizado_por : null,
-            actualizado_at: ultimo.rows[0] ? ultimo.rows[0].actualizado_at : null,
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al leer la configuración' });
-    }
+    res.json({
+        ...config,
+        actualizado_por: ultimo.rows[0] ? ultimo.rows[0].actualizado_por : null,
+        actualizado_at: ultimo.rows[0] ? ultimo.rows[0].actualizado_at : null,
+    });
 });
 
 // solo el gerente. Cambia las claves enviadas; no reescribe
@@ -376,29 +360,24 @@ router.put('/configuracion', verifyToken, requireRole('gerente'), async (req, re
 // Sale de las guias, no de maquinarias.cliente_id: un equipo con cliente cargado a mano y sin
 // despacho no aparece. Un equipo tiene a lo mas un arriendo en curso: el del ultimo despacho.
 router.get('/arriendos-en-curso', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
-    try {
-        const config = await leerConfiguracion(pool);
-        const todos = await cargarArriendos(pool, config);
-        const arriendos = todos
-            .filter((a) => a.en_curso)
-            .map((a) => ({
-                guia_despacho_id: a.guia_despacho_id,
-                maquinaria_id: a.maquinaria_id,
-                maquinaria_codigo: a.maquinaria_codigo,
-                cliente_id: a.cliente_id,
-                cliente_nombre: a.cliente_nombre,
-                fecha_despacho: a.fecha_despacho,
-                inicio_cobro: a.inicio_cobro,
-                facturado_hasta: a.facturado_hasta,
-                opciones_hasta: a.opciones_hasta,
-                ...resumenEnCurso(a, config),
-            }));
-        arriendos.sort((a, b) => b.periodos_sin_facturar - a.periodos_sin_facturar || b.dias - a.dias);
-        res.json({ arriendos, configuracion: config });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar los arriendos en curso' });
-    }
+    const config = await leerConfiguracion(pool);
+    const todos = await cargarArriendos(pool, config);
+    const arriendos = todos
+        .filter((a) => a.en_curso)
+        .map((a) => ({
+            guia_despacho_id: a.guia_despacho_id,
+            maquinaria_id: a.maquinaria_id,
+            maquinaria_codigo: a.maquinaria_codigo,
+            cliente_id: a.cliente_id,
+            cliente_nombre: a.cliente_nombre,
+            fecha_despacho: a.fecha_despacho,
+            inicio_cobro: a.inicio_cobro,
+            facturado_hasta: a.facturado_hasta,
+            opciones_hasta: a.opciones_hasta,
+            ...resumenEnCurso(a, config),
+        }));
+    arriendos.sort((a, b) => b.periodos_sin_facturar - a.periodos_sin_facturar || b.dias - a.dias);
+    res.json({ arriendos, configuracion: config });
 });
 
 const ESTADOS_LISTA = Object.keys(FILTROS_ESTADO);
@@ -426,14 +405,9 @@ router.get('/emitidas', verifyToken, requireRole('administrativo', 'gerente'), a
     if (desde === undefined || hasta === undefined) return res.status(400).json({ error: 'desde y hasta deben ser fechas válidas (AAAA-MM-DD)' });
     const { limit, offset } = parsearPaginacion(req.query);
     const q = parsearBusqueda(req.query);
-    try {
-        const r = await cargarEmitidas(pool, { estado, clienteId, q: q ? q.slice(0, 100) : null, desde, hasta, limit, offset });
-        res.set('Cache-Control', 'no-store');
-        res.json({ estado, hoy: r.hoy, ...envolver(r.items, r.total, { limit, offset }) });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar las facturas emitidas' });
-    }
+    const r = await cargarEmitidas(pool, { estado, clienteId, q: q ? q.slice(0, 100) : null, desde, hasta, limit, offset });
+    res.set('Cache-Control', 'no-store');
+    res.json({ estado, hoy: r.hoy, ...envolver(r.items, r.total, { limit, offset }) });
 });
 
 // Excel con el formato de la hoja CLIENTES de la planilla de cobranza (una fila
@@ -472,7 +446,7 @@ router.post('/exportar', verifyToken, requireRole('administrativo', 'gerente'), 
             console.error('Error al subir la exportación:', errorSubida.message);
             return res.status(500).json({ error: 'No se pudo guardar el archivo de la exportación' });
         }
-        const { data, error: errorUrl } = await almacen.createSignedUrl(ruta, 3600);
+        const { data, error: errorUrl } = await almacen.createSignedUrl(ruta, URL_EXPIRACION_SEGUNDOS);
         if (errorUrl || !data || !data.signedUrl) {
             console.error('Error al firmar la exportación:', errorUrl && errorUrl.message);
             return res.status(500).json({ error: 'No se pudo generar el enlace de descarga' });
@@ -512,7 +486,7 @@ router.patch('/:facturaId/pago', verifyToken, requireRole('administrativo'), sub
     let client;
     let rutaNueva = null;
     const borrarArchivo = async (ruta) => {
-        if (ruta) await supabase.storage.from(BUCKET_DOCUMENTOS).remove([ruta]).catch(() => {});
+        if (ruta) await supabase.storage.from(BUCKET_DOCUMENTOS).remove([ruta]).catch(avisarArchivoHuerfano);
     };
     try {
         // el archivo se sube ANTES de tomar la conexion de la base: una subida lenta no la deja retenida
@@ -577,22 +551,17 @@ router.patch('/:facturaId/pago', verifyToken, requireRole('administrativo'), sub
 // URL firmada (1 hora) del comprobante de pago. 404 si la
 // factura no existe o no tiene comprobante (las pagadas antes de existir esta regla no lo tienen).
 router.get('/:facturaId/comprobante', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
-    try {
-        const r = await pool.query('SELECT comprobante_pago_ruta FROM facturas WHERE id = $1', [Number(req.params.facturaId)]);
-        if (r.rows.length === 0) return res.status(404).json({ error: 'Factura no encontrada' });
-        const ruta = r.rows[0].comprobante_pago_ruta;
-        if (!ruta) return res.status(404).json({ error: 'Esta factura no tiene comprobante de pago' });
-        const { data, error } = await supabase.storage.from(BUCKET_DOCUMENTOS).createSignedUrl(ruta, 3600);
-        if (error || !data || !data.signedUrl) {
-            console.error('Error al firmar el comprobante:', error && error.message);
-            return res.status(500).json({ error: 'No se pudo generar el enlace del comprobante' });
-        }
-        res.set('Cache-Control', 'no-store');
-        res.json({ url: data.signedUrl });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar el comprobante' });
+    const r = await pool.query('SELECT comprobante_pago_ruta FROM facturas WHERE id = $1', [Number(req.params.facturaId)]);
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Factura no encontrada' });
+    const ruta = r.rows[0].comprobante_pago_ruta;
+    if (!ruta) return res.status(404).json({ error: 'Esta factura no tiene comprobante de pago' });
+    const { data, error } = await firmarUrl(supabase, BUCKET_DOCUMENTOS, ruta);
+    if (error || !data || !data.signedUrl) {
+        console.error('Error al firmar el comprobante:', error && error.message);
+        return res.status(500).json({ error: 'No se pudo generar el enlace del comprobante' });
     }
+    res.set('Cache-Control', 'no-store');
+    res.json({ url: data.signedUrl });
 });
 
 // corrige folio/monto despues de creada la factura
@@ -711,24 +680,19 @@ router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (r
 // facturado y si ya hay un envio pendiente. El texto por defecto vive solo aca (utils/correoFactura.js).
 router.get('/:facturaId/vista-previa', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     if (!/^\d{1,9}$/.test(String(req.params.facturaId))) return res.status(400).json({ error: 'Id de factura inválido' });
-    try {
-        const factura = await leerFacturaParaCorreo(pool, req.params.facturaId);
-        if (!factura) return res.status(404).json({ error: 'Factura no encontrada' });
-        const texto = textoPorDefecto(factura);
-        res.json({
-            ...texto,
-            folio: factura.folio,
-            periodo_desde: factura.periodo_desde,
-            periodo_hasta: factura.periodo_hasta,
-            orden_trabajo_id: factura.orden_trabajo_id,
-            cliente_nombre: factura.cliente_nombre,
-            cliente_email: factura.cliente_email,
-            envio_pendiente: await hayEnvioPendiente(pool, factura.id),
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al armar la vista previa' });
-    }
+    const factura = await leerFacturaParaCorreo(pool, req.params.facturaId);
+    if (!factura) return res.status(404).json({ error: 'Factura no encontrada' });
+    const texto = textoPorDefecto(factura);
+    res.json({
+        ...texto,
+        folio: factura.folio,
+        periodo_desde: factura.periodo_desde,
+        periodo_hasta: factura.periodo_hasta,
+        orden_trabajo_id: factura.orden_trabajo_id,
+        cliente_nombre: factura.cliente_nombre,
+        cliente_email: factura.cliente_email,
+        envio_pendiente: await hayEnvioPendiente(pool, factura.id),
+    });
 });
 
 // Funciona para cualquier factura, sea de reparacion (orden_trabajo_id) o de arriendo (maquinaria_id).
@@ -736,16 +700,11 @@ router.get('/:facturaId/vista-previa', verifyToken, requireRole('administrativo'
 // (bloqueo contra la anulacion).
 router.post('/:facturaId/autorizar-envio', verifyToken, requireRole('administrativo'), async (req, res) => {
     if (!/^\d{1,9}$/.test(String(req.params.facturaId))) return res.status(400).json({ error: 'Id de factura inválido' });
-    try {
-        const cuerpoPeticion = req.body || {};
-        const r = await encolarCorreoFactura(pool, {
-            facturaId: req.params.facturaId, asunto: cuerpoPeticion.asunto, cuerpo: cuerpoPeticion.cuerpo,
-        });
-        res.status(r.status).json(r.body);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al autorizar el envío de la factura' });
-    }
+    const cuerpoPeticion = req.body || {};
+    const r = await encolarCorreoFactura(pool, {
+        facturaId: req.params.facturaId, asunto: cuerpoPeticion.asunto, cuerpo: cuerpoPeticion.cuerpo,
+    });
+    res.status(r.status).json(r.body);
 });
 
 module.exports = router;

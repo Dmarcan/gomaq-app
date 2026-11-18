@@ -147,64 +147,59 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo'), async (re
     const { limit, offset } = parsearPaginacion(req.query);
     const q = parsearBusqueda(req.query);
     const filtroResultado = RESULTADOS.includes(req.query.resultado) ? req.query.resultado : null;
-    try {
-        const [equipos, lineas, facturas, guias, lecturas] = await Promise.all([
-            pool.query('SELECT id, codigo, tipo, marca, modelo, estado FROM maquinarias'),
-            pool.query(SQL_LINEAS, [desde, hasta]),
-            pool.query(SQL_FACTURAS, [desde, hasta]),
-            pool.query(SQL_GUIAS, [hasta]),
-            pool.query(SQL_LECTURAS, [hasta]),
-        ]);
+    const [equipos, lineas, facturas, guias, lecturas] = await Promise.all([
+        pool.query('SELECT id, codigo, tipo, marca, modelo, estado FROM maquinarias'),
+        pool.query(SQL_LINEAS, [desde, hasta]),
+        pool.query(SQL_FACTURAS, [desde, hasta]),
+        pool.query(SQL_GUIAS, [hasta]),
+        pool.query(SQL_LECTURAS, [hasta]),
+    ]);
 
-        const lineasPorEquipo = agruparPorMaquinaria(lineas.rows);
-        const facturasPorEquipo = agruparPorMaquinaria(facturas.rows);
-        const guiasPorEquipo = agruparPorMaquinaria(guias.rows);
-        const lecturasPorEquipo = agruparPorMaquinaria(lecturas.rows);
-        const diasPeriodo = diasDelPeriodo(desde, hasta);
-        const config = await leerConfiguracion(pool);
+    const lineasPorEquipo = agruparPorMaquinaria(lineas.rows);
+    const facturasPorEquipo = agruparPorMaquinaria(facturas.rows);
+    const guiasPorEquipo = agruparPorMaquinaria(guias.rows);
+    const lecturasPorEquipo = agruparPorMaquinaria(lecturas.rows);
+    const diasPeriodo = diasDelPeriodo(desde, hasta);
+    const config = await leerConfiguracion(pool);
 
-        // se calcula sobre TODA la flota y despues se filtra: el resumen de arriba no debe cambiar
-        // al buscar un equipo, ni el "3 a perdida" al pulsar "cargar mas"
-        const todos = equipos.rows.map((equipo) => {
-            const base = calcularRentabilidad({
-                lineas: lineasPorEquipo.get(equipo.id) || [],
-                facturas: facturasPorEquipo.get(equipo.id) || [],
-            });
-            const horas = calcularHorasEnPeriodo(lecturasPorEquipo.get(equipo.id) || [], desde, hasta);
-            const dias = calcularDiasArrendado(guiasPorEquipo.get(equipo.id) || [], desdeDia, hastaDia, { horaCorte: config.hora_corte_despacho });
-            return {
-                ...equipo,
-                ...base,
-                resultado: clasificarResultado(base),
-                // sin ingreso el porcentaje no significa nada: null y no una division por cero
-                gasto_sobre_ingreso: base.ingreso > 0 ? (base.gasto / base.ingreso) * 100 : null,
-                horas_uso: horas,
-                gasto_por_hora: horas ? base.gasto / horas : null,
-                dias_arrendado: dias,
-            };
+    // se calcula sobre TODA la flota y despues se filtra: el resumen de arriba no debe cambiar
+    // al buscar un equipo, ni el "3 a perdida" al pulsar "cargar mas"
+    const todos = equipos.rows.map((equipo) => {
+        const base = calcularRentabilidad({
+            lineas: lineasPorEquipo.get(equipo.id) || [],
+            facturas: facturasPorEquipo.get(equipo.id) || [],
         });
-        const resumen = { ...resumirFlota(todos, { diasPeriodo }), dias_periodo: diasPeriodo };
+        const horas = calcularHorasEnPeriodo(lecturasPorEquipo.get(equipo.id) || [], desde, hasta);
+        const dias = calcularDiasArrendado(guiasPorEquipo.get(equipo.id) || [], desdeDia, hastaDia, { horaCorte: config.hora_corte_despacho });
+        return {
+            ...equipo,
+            ...base,
+            resultado: clasificarResultado(base),
+            // sin ingreso el porcentaje no significa nada: null y no una division por cero
+            gasto_sobre_ingreso: base.ingreso > 0 ? (base.gasto / base.ingreso) * 100 : null,
+            horas_uso: horas,
+            gasto_por_hora: horas ? base.gasto / horas : null,
+            dias_arrendado: dias,
+        };
+    });
+    const resumen = { ...resumirFlota(todos, { diasPeriodo }), dias_periodo: diasPeriodo };
 
-        const buscado = q ? q.toLowerCase() : null;
-        const visibles = todos
-            .filter((e) => !filtroResultado || e.resultado === filtroResultado)
-            .filter((e) => !buscado || [e.codigo, e.tipo, e.marca, e.modelo].some((t) => t && String(t).toLowerCase().includes(buscado)))
-            .sort(comparadorDeOrden(req.query.orden, req.query.dir));
+    const buscado = q ? q.toLowerCase() : null;
+    const visibles = todos
+        .filter((e) => !filtroResultado || e.resultado === filtroResultado)
+        .filter((e) => !buscado || [e.codigo, e.tipo, e.marca, e.modelo].some((t) => t && String(t).toLowerCase().includes(buscado)))
+        .sort(comparadorDeOrden(req.query.orden, req.query.dir));
 
-        // el resultado se calcula en memoria (cruza lineas, facturas, guias y lecturas), asi que
-        // la pagina se recorta despues de ordenar: paginar en SQL daria otro orden
-        const pagina = limit === null ? visibles : visibles.slice(offset, offset + limit);
+    // el resultado se calcula en memoria (cruza lineas, facturas, guias y lecturas), asi que
+    // la pagina se recorta despues de ordenar: paginar en SQL daria otro orden
+    const pagina = limit === null ? visibles : visibles.slice(offset, offset + limit);
 
-        res.json({
-            desde: desde.toISOString(),
-            hasta: hasta.toISOString(),
-            resumen,
-            ...envolver(pagina, visibles.length, { limit, offset }),
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al calcular la rentabilidad de la flota' });
-    }
+    res.json({
+        desde: desde.toISOString(),
+        hasta: hasta.toISOString(),
+        resumen,
+        ...envolver(pagina, visibles.length, { limit, offset }),
+    });
 });
 
 router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativo'), async (req, res) => {
@@ -212,15 +207,14 @@ router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativ
     if (rango.error) return res.status(400).json({ error: rango.error });
     const { desde, hasta } = rango;
     const { id } = req.params;
-    try {
-        const equipo = await pool.query('SELECT id, codigo, tipo, estado FROM maquinarias WHERE id = $1', [id]);
-        if (equipo.rows.length === 0) {
-            return res.status(404).json({ error: 'Maquinaria no encontrada' });
-        }
+    const equipo = await pool.query('SELECT id, codigo, tipo, estado FROM maquinarias WHERE id = $1', [id]);
+    if (equipo.rows.length === 0) {
+        return res.status(404).json({ error: 'Maquinaria no encontrada' });
+    }
 
-        const [lineas, facturas] = await Promise.all([
-            pool.query(
-                `SELECT mi.id, mi.cantidad, mi.precio_unitario, mi.descripcion, mi.facturable,
+    const [lineas, facturas] = await Promise.all([
+        pool.query(
+            `SELECT mi.id, mi.cantidad, mi.precio_unitario, mi.descripcion, mi.facturable,
                         mi.created_at, mi.orden_trabajo_id, i.nombre AS insumo_nombre,
                         ot.cliente_id, c.nombre AS cliente_nombre
                  FROM movimientos_insumo mi
@@ -230,10 +224,10 @@ router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativ
                  WHERE mi.tipo = 'salida' AND mi.anulada_at IS NULL AND ot.maquinaria_id = $1
                    AND mi.created_at BETWEEN $2 AND $3
                  ORDER BY mi.created_at DESC`,
-                [id, desde, hasta]
-            ),
-            pool.query(
-                `SELECT f.id, f.folio, f.monto, f.monto_traslado, f.monto_neto, f.anulada_nc, f.created_at, f.orden_trabajo_id,
+            [id, desde, hasta]
+        ),
+        pool.query(
+            `SELECT f.id, f.folio, f.monto, f.monto_traslado, f.monto_neto, f.anulada_nc, f.created_at, f.orden_trabajo_id,
                         COALESCE(f.cliente_id, ot.cliente_id) AS cliente_id, c.nombre AS cliente_nombre
                  FROM facturas f
                  LEFT JOIN ordenes_trabajo ot ON ot.id = f.orden_trabajo_id
@@ -241,33 +235,29 @@ router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativ
                  WHERE COALESCE(f.maquinaria_id, ot.maquinaria_id) = $1
                    AND f.created_at BETWEEN $2 AND $3
                  ORDER BY f.created_at DESC`,
-                [id, desde, hasta]
-            ),
-        ]);
+            [id, desde, hasta]
+        ),
+    ]);
 
-        res.json({
-            maquinaria: equipo.rows[0],
-            desde: desde.toISOString(),
-            hasta: hasta.toISOString(),
-            ...calcularRentabilidad({ lineas: lineas.rows, facturas: facturas.rows }),
-            lineas: lineas.rows.map((l) => ({
-                ...l,
-                cantidad: num(l.cantidad),
-                precio_unitario: num(l.precio_unitario),
-            })),
-            // `ingreso` es lo que esa factura aporta al equipo (0 si se anulo con nota de credito)
-            facturas: facturas.rows.map((f) => ({
-                ...f,
-                monto: num(f.monto),
-                monto_traslado: num(f.monto_traslado),
-                monto_neto: num(f.monto_neto),
-                ingreso: ingresoFactura(f),
-            })),
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al calcular la rentabilidad del equipo' });
-    }
+    res.json({
+        maquinaria: equipo.rows[0],
+        desde: desde.toISOString(),
+        hasta: hasta.toISOString(),
+        ...calcularRentabilidad({ lineas: lineas.rows, facturas: facturas.rows }),
+        lineas: lineas.rows.map((l) => ({
+            ...l,
+            cantidad: num(l.cantidad),
+            precio_unitario: num(l.precio_unitario),
+        })),
+        // `ingreso` es lo que esa factura aporta al equipo (0 si se anulo con nota de credito)
+        facturas: facturas.rows.map((f) => ({
+            ...f,
+            monto: num(f.monto),
+            monto_traslado: num(f.monto_traslado),
+            monto_neto: num(f.monto_neto),
+            ingreso: ingresoFactura(f),
+        })),
+    });
 });
 
 module.exports = router;

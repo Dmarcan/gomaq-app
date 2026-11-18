@@ -68,9 +68,13 @@ async function main() {
         console.log('Usuario creado:', result.rows[0]);
     } catch (err) {
         console.error('Error al crear usuario:', err.message);
+        process.exitCode = 1;
     } finally {
         await pool.end();
     }
 }
 
-main();
+main().catch((err) => {
+    console.error('Error:', err.message);
+    process.exitCode = 1;
+});

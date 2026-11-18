@@ -24,7 +24,8 @@
 
 require('dotenv').config();
 const { Client } = require('pg');
-const { rutValido } = require('../src/utils/rut');
+const { urlBaseDeScript } = require('./_conexion');
+const { rutValido, digitoVerificador } = require('../src/utils/rut');
 const { sumarDias, diasEntre } = require('../src/utils/diasArriendo');
 const { calcularFacturableOt, calcularTotalFacturable } = require('../src/utils/facturableOt');
 const { resolverEjecutivo } = require('../src/utils/cargaClientes');
@@ -43,19 +44,6 @@ const DESCRIPCION_EQUIPO = `${MARCA} Equipo ficticio para la demostracion. Se bo
 
 // topes de cordura del borrado: la demo crea 6 clientes, 4 equipos y 2 insumos
 const TOPE_BORRADO = { clientes: 20, equipos: 20, insumos: 10 };
-
-/** Digito verificador de un RUT (modulo 11). */
-function digitoVerificador(cuerpo) {
-    const texto = String(cuerpo);
-    let suma = 0;
-    let factor = 2;
-    for (let i = texto.length - 1; i >= 0; i--) {
-        suma += Number(texto[i]) * factor;
-        factor = factor === 7 ? 2 : factor + 1;
-    }
-    const resto = 11 - (suma % 11);
-    return resto === 11 ? '0' : resto === 10 ? 'K' : String(resto);
-}
 
 /** RUT con el formato que usa el sistema (sin puntos, con guion): 99990001-X. */
 function rutConDigito(cuerpo) {
@@ -710,9 +698,10 @@ async function main() {
     const borrar = argv.includes('--borrar');
     const desconocidos = argv.filter((a) => !['--simular', '--borrar'].includes(a));
     if (desconocidos.length) throw new Error(`Opciones desconocidas: ${desconocidos.join(' ')} (validas: --simular, --borrar)`);
-    if (!(process.env.DATABASE_URL_MIGRACION || process.env.DATABASE_URL)) throw new Error('Falta DATABASE_URL');
+    const url = urlBaseDeScript();
+    if (!url) throw new Error('Falta DATABASE_URL');
 
-    const db = new Client({ connectionString: (process.env.DATABASE_URL_MIGRACION || process.env.DATABASE_URL) });
+    const db = new Client({ connectionString: url });
     await db.connect();
     try {
         imprimir(borrar ? await borrarDemo(db, { simular }) : await cargarDemo(db, { simular }));

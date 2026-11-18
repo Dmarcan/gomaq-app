@@ -17,7 +17,7 @@ function manejarErrores(err, req, res, next) {
     if (err && Number.isInteger(err.status) && err.status >= 400 && err.status < 500) {
         return res.status(err.status).json({ error: 'Petición no válida' });
     }
-    console.error(err);
+    console.error(`${req.method} ${req.originalUrl}`, err);
     return res.status(500).json({ error: 'Error interno del servidor' });
 }
 

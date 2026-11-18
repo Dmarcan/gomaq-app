@@ -16,7 +16,7 @@ const CAMPOS_PROHIBIDOS = ['email', 'correo', 'telefono', 'contacto', 'fono', 'c
 const CAMPOS_PERMITIDOS = ['rut', 'nombre', 'direccion', 'giro', 'ejecutivo', 'plazo_pago_dias'];
 
 /** '76.123.456-0' -> '76123456-0'. Devuelve null si no tiene la forma de un RUT valido. */
-function normalizarRut(rut) {
+function normalizarRutValido(rut) {
     if (typeof rut !== 'string') return null;
     const limpio = rut.replace(/[\s.\-]/g, '').toUpperCase();
     if (!rutValido(limpio)) return null;
@@ -24,7 +24,7 @@ function normalizarRut(rut) {
 }
 
 /** Texto en minusculas, sin acentos y sin espacios sobrantes (para comparar nombres). */
-function sinAcentos(texto) {
+function normalizarNombre(texto) {
     return String(texto ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim().replace(/\s+/g, ' ');
 }
 
@@ -45,8 +45,8 @@ function validarCliente(c) {
     for (const campo of Object.keys(c)) {
         if (!CAMPOS_PROHIBIDOS.includes(campo) && !CAMPOS_PERMITIDOS.includes(campo)) errores.push(`campo desconocido "${campo}"`);
     }
-    if (normalizarRut(c.rut) === null) errores.push('rut: dígito verificador o formato inválido');
-    else if (c.rut !== normalizarRut(c.rut)) errores.push('rut: debe venir normalizado (12345678-9)');
+    if (normalizarRutValido(c.rut) === null) errores.push('rut: dígito verificador o formato inválido');
+    else if (c.rut !== normalizarRutValido(c.rut)) errores.push('rut: debe venir normalizado (12345678-9)');
     if (typeof c.nombre !== 'string' || c.nombre.length < 1 || c.nombre.length > 150 || c.nombre !== c.nombre.trim()) {
         errores.push('nombre: de 1 a 150 caracteres, sin espacios sobrantes');
     }
@@ -73,7 +73,7 @@ function validarArchivo(clientes) {
     const repetidos = new Set();
     clientes.forEach((c, i) => {
         for (const e of validarCliente(c)) errores.push(`registro ${i + 1}: ${e}`);
-        const rut = normalizarRut(c && c.rut);
+        const rut = normalizarRutValido(c && c.rut);
         if (rut) {
             if (vistos.has(rut)) repetidos.add(rut);
             vistos.add(rut);
@@ -89,10 +89,10 @@ function validarArchivo(clientes) {
  * { estado: 'ninguno' | 'uno' | 'ambiguo', id }
  */
 function resolverEjecutivo(nombre, ejecutivos) {
-    const buscado = sinAcentos(nombre);
+    const buscado = normalizarNombre(nombre);
     if (!buscado) return { estado: 'ninguno', id: null };
     const coinciden = (ejecutivos || []).filter((e) => {
-        const n = sinAcentos(e.nombre);
+        const n = normalizarNombre(e.nombre);
         return n === buscado || n.startsWith(`${buscado} `);
     });
     if (coinciden.length === 0) return { estado: 'ninguno', id: null };
@@ -111,4 +111,4 @@ function plazoConstante(plazos) {
     return new Set(validos).size === 1 ? validos[0] : null;
 }
 
-module.exports = { EJECUTIVOS_A_CREAR, normalizarRut, sinAcentos, validarCliente, validarArchivo, resolverEjecutivo, plazoConstante };
+module.exports = { EJECUTIVOS_A_CREAR, normalizarRutValido, normalizarNombre, validarCliente, validarArchivo, resolverEjecutivo, plazoConstante };

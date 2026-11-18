@@ -1,5 +1,5 @@
 const pool = require('../config/db');
-const { normalizarRut } = require('./parsearDocumento');
+const { normalizarRutSinValidar } = require('./parsearDocumento');
 
 /**
  * Elige que cliente conocido corresponde a un documento. Funcion pura para poder probarla.
@@ -12,9 +12,9 @@ const { normalizarRut } = require('./parsearDocumento');
  * resolverse a uno u otro entre llamadas.
  */
 function elegirCliente(texto, rut, clientes) {
-    const rutBuscado = normalizarRut(rut);
+    const rutBuscado = normalizarRutSinValidar(rut);
     if (rutBuscado) {
-        const porRut = clientes.find((c) => normalizarRut(c.rut) === rutBuscado);
+        const porRut = clientes.find((c) => normalizarRutSinValidar(c.rut) === rutBuscado);
         if (porRut) return porRut;
     }
 

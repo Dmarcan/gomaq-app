@@ -4,13 +4,13 @@ const { validarIdsEnRuta, validarCuerpo } = require('../utils/validacion');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
+const { urlFirmadaONull } = require('../utils/urlsFirmadas');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { subidaDocumento } = require('../middleware/upload');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
 
-const URL_EXPIRACION_SEGUNDOS = 3600;
 const TIPOS_DOCUMENTO = ['permiso_circulacion', 'revision_tecnica', 'seguro', 'padron', 'otro'];
 
 // El documento de un vehiculo puede ser un PDF (permiso de circulacion) o una foto del papel,
@@ -23,26 +23,18 @@ async function documentosConUrl(vehiculoId) {
     );
     // el bucket es privado: se entrega una URL firmada temporal, igual que guias y facturas
     return Promise.all(result.rows.map(async (doc) => {
-        const { data, error } = await supabase.storage
-            .from(BUCKET_DOCUMENTOS)
-            .createSignedUrl(doc.archivo_path, URL_EXPIRACION_SEGUNDOS);
-        return { ...doc, url: error ? null : data.signedUrl };
+        return { ...doc, url: await urlFirmadaONull(supabase, BUCKET_DOCUMENTOS, doc.archivo_path) };
     }));
 }
 
 router.get('/mio', verifyToken, requireRole('mecanico'), async (req, res) => {
-    try {
-        const result = await pool.query('SELECT * FROM vehiculos WHERE usuario_id = $1 AND activo = true', [req.user.id]);
-        if (result.rows.length === 0) {
-            // no es un error: puede que todavia no le hayan asignado furgon
-            return res.json({ vehiculo: null, documentos: [] });
-        }
-        const vehiculo = result.rows[0];
-        res.json({ vehiculo, documentos: await documentosConUrl(vehiculo.id) });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar tu vehículo' });
+    const result = await pool.query('SELECT * FROM vehiculos WHERE usuario_id = $1 AND activo = true', [req.user.id]);
+    if (result.rows.length === 0) {
+        // no es un error: puede que todavia no le hayan asignado furgon
+        return res.json({ vehiculo: null, documentos: [] });
     }
+    const vehiculo = result.rows[0];
+    res.json({ vehiculo, documentos: await documentosConUrl(vehiculo.id) });
 });
 
 router.patch('/mio', verifyToken, requireRole('mecanico'), async (req, res) => {
@@ -54,34 +46,24 @@ router.patch('/mio', verifyToken, requireRole('mecanico'), async (req, res) => {
     if (!Number.isFinite(km) || km < 0 || km > 2147483647) {
         return res.status(400).json({ error: 'El kilometraje debe ser un número mayor o igual a 0' });
     }
-    try {
-        const result = await pool.query(
-            'UPDATE vehiculos SET kilometraje = $1 WHERE usuario_id = $2 AND activo = true RETURNING *',
-            [km, req.user.id]
-        );
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'No tienes un vehículo asignado' });
-        }
-        res.json(result.rows[0]);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al actualizar el vehículo' });
+    const result = await pool.query(
+        'UPDATE vehiculos SET kilometraje = $1 WHERE usuario_id = $2 AND activo = true RETURNING *',
+        [km, req.user.id]
+    );
+    if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'No tienes un vehículo asignado' });
     }
+    res.json(result.rows[0]);
 });
 
 router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
-    try {
-        const result = await pool.query(
-            `SELECT v.*, u.nombre AS usuario_nombre
+    const result = await pool.query(
+        `SELECT v.*, u.nombre AS usuario_nombre
              FROM vehiculos v
              LEFT JOIN usuarios u ON u.id = v.usuario_id
              ORDER BY v.patente`
-        );
-        res.json(result.rows);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar vehículos' });
-    }
+    );
+    res.json(result.rows);
 });
 
 // crear un vehiculo y, si corresponde, asignarlo a un mecanico.

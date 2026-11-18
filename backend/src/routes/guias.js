@@ -6,6 +6,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
+const { urlFirmadaONull } = require('../utils/urlsFirmadas');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
 const { detectarCliente } = require('../utils/detectarCliente');
@@ -28,43 +29,37 @@ router.post('/guias/detectar', verifyToken, requireRole('administrativo'), subid
     if (!req.file) {
         return res.status(400).json({ error: 'archivo (PDF) es requerido' });
     }
-    try {
-        const texto = await leerTextoPdf(req.file.buffer);
-        const { fecha_detectada, hora_detectada, tipo_detectado, rut_detectado, horometro_detectado, numero_interno_detectado } = parsearGuia(texto);
+    const texto = await leerTextoPdf(req.file.buffer);
+    const { fecha_detectada, hora_detectada, tipo_detectado, rut_detectado, horometro_detectado, numero_interno_detectado } = parsearGuia(texto);
 
-        // el panel maneja un instante completo, asi que si el PDF no trae hora se compone
-        // con 00:00 - pero se informa aparte en hora_detectada para que la UI no la de por
-        // buena: con HORA_CORTE (utils/diasArriendo) un 00:00 inventado cobraria el dia del
-        // despacho. Las guias de GOMAQ no traen hora, se pone siempre a mano.
-        let fechaHoraDetectada = null;
-        if (fecha_detectada) {
-            const fecha = new Date(`${fecha_detectada}T${hora_detectada || '00:00'}:00`);
-            if (!isNaN(fecha.getTime())) fechaHoraDetectada = fecha.toISOString();
-        }
-
-        res.json({
-            fecha_hora_detectada: fechaHoraDetectada,
-            hora_detectada: hora_detectada !== null,
-            tipo_detectado,
-            horometro_detectado,
-            cliente_detectado: await detectarCliente(texto, rut_detectado),
-            equipo_detectado: await detectarEquipo(numero_interno_detectado),
-            texto_legible: texto.trim().length > 0,
-        });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al leer el PDF' });
+    // el panel maneja un instante completo, asi que si el PDF no trae hora se compone
+    // con 00:00 - pero se informa aparte en hora_detectada para que la UI no la de por
+    // buena: con HORA_CORTE (utils/diasArriendo) un 00:00 inventado cobraria el dia del
+    // despacho. Las guias de GOMAQ no traen hora, se pone siempre a mano.
+    let fechaHoraDetectada = null;
+    if (fecha_detectada) {
+        const fecha = new Date(`${fecha_detectada}T${hora_detectada || '00:00'}:00`);
+        if (!isNaN(fecha.getTime())) fechaHoraDetectada = fecha.toISOString();
     }
+
+    res.json({
+        fecha_hora_detectada: fechaHoraDetectada,
+        hora_detectada: hora_detectada !== null,
+        tipo_detectado,
+        horometro_detectado,
+        cliente_detectado: await detectarCliente(texto, rut_detectado),
+        equipo_detectado: await detectarEquipo(numero_interno_detectado),
+        texto_legible: texto.trim().length > 0,
+    });
 });
 
 // las ultimas guias subidas, con su PDF.
 // Con ?sin_documento=1 lista solo las guias que aun no tienen PDF (sin tope de 20: no pueden
 // quedar olvidadas), de la mas antigua a la mas nueva.
 router.get('/guias/recientes', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
-    try {
-        const soloSinDocumento = req.query.sin_documento === '1';
-        const result = await pool.query(
-            `SELECT g.id, g.tipo, g.fecha, g.fallido, g.archivo_url, g.created_at,
+    const soloSinDocumento = req.query.sin_documento === '1';
+    const result = await pool.query(
+        `SELECT g.id, g.tipo, g.fecha, g.fallido, g.archivo_url, g.created_at,
                     g.archivo_url IS NULL AS falta_documento,
                     m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre,
                     u.nombre AS registrada_por_nombre
@@ -73,17 +68,12 @@ router.get('/guias/recientes', verifyToken, requireRole('administrativo', 'geren
              LEFT JOIN clientes c ON c.id = g.cliente_id
              LEFT JOIN usuarios u ON u.id = g.registrada_por
              ${soloSinDocumento ? `WHERE ${sqlGuiasSinDocumento('g')} ORDER BY g.created_at ASC` : 'ORDER BY g.created_at DESC LIMIT 20'}`
-        );
-        const conUrl = await Promise.all(result.rows.map(async ({ archivo_url: ruta, ...fila }) => {
-            if (!ruta) return { ...fila, url: null };
-            const { data, error } = await supabase.storage.from(BUCKET_DOCUMENTOS).createSignedUrl(ruta, 3600);
-            return { ...fila, url: error ? null : data.signedUrl };
-        }));
-        res.json(conUrl);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar las guías recientes' });
-    }
+    );
+    const conUrl = await Promise.all(result.rows.map(async ({ archivo_url: ruta, ...fila }) => {
+        if (!ruta) return { ...fila, url: null };
+        return { ...fila, url: await urlFirmadaONull(supabase, BUCKET_DOCUMENTOS, ruta) };
+    }));
+    res.json(conUrl);
 });
 
 // subir guia de despacho o recepcion (PDF va a Supabase Storage)
@@ -299,7 +289,6 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
 // documento. Solo si todavia no lo tiene: reemplazar un documento ya cargado cambiaria la
 // evidencia de un despacho, y eso no se hace en silencio.
 router.post('/guias/:guiaId/archivo', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
-    if (!Number.isInteger(Number(req.params.guiaId))) return res.status(400).json({ error: 'Id de guía inválido' });
     if (!req.file) {
         return res.status(400).json({ error: 'archivo (PDF) es requerido' });
     }

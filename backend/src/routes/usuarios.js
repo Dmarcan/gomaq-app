@@ -50,15 +50,10 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
             LIMIT 1
         ) inv ON u.estado_cuenta = 'pendiente'
     `;
-    try {
-        const result = rol
-            ? await pool.query(`${selectConOtAbiertas} WHERE u.rol = $1 ORDER BY u.nombre`, [rol])
-            : await pool.query(`${selectConOtAbiertas} ORDER BY u.nombre`);
-        res.json(result.rows.map(conInvitacion));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar usuarios' });
-    }
+    const result = rol
+        ? await pool.query(`${selectConOtAbiertas} WHERE u.rol = $1 ORDER BY u.nombre`, [rol])
+        : await pool.query(`${selectConOtAbiertas} ORDER BY u.nombre`);
+    res.json(result.rows.map(conInvitacion));
 });
 
 // crea una cuenta interna activa con una contrasena que escribe quien la crea.
@@ -366,11 +361,10 @@ router.post('/:id/invitacion/revocar', verifyToken, requireRole('administrativo'
 router.patch('/:id/estado', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const v = validarCambioDeEstado(req.body, req.params.id, req.user.id);
     if (!v.ok) return res.status(v.codigo).json({ error: v.error });
-    try {
-        // cambiar el estado cierra sus sesiones en la misma sentencia: reactivar una cuenta no revive las que
-        // tenia abiertas, ni siquiera si algo falla a medias
-        const result = await pool.query(
-            `WITH cambio AS (
+    // cambiar el estado cierra sus sesiones en la misma sentencia: reactivar una cuenta no revive las que
+    // tenia abiertas, ni siquiera si algo falla a medias
+    const result = await pool.query(
+        `WITH cambio AS (
                  UPDATE usuarios SET estado_cuenta = $1
                  WHERE id = $2 AND rol = ANY($3::rol_usuario[]) AND estado_cuenta <> 'pendiente'
                  RETURNING id, nombre, email, rol, estado_cuenta
@@ -380,24 +374,20 @@ router.patch('/:id/estado', verifyToken, requireRole('administrativo', 'gerente'
                  RETURNING id
              )
              SELECT * FROM cambio`,
-            [v.estado, req.params.id, ROLES_INTERNOS]
+        [v.estado, req.params.id, ROLES_INTERNOS]
+    );
+    if (result.rows.length === 0) {
+        const pendiente = await pool.query(
+            `SELECT 1 FROM usuarios WHERE id = $1 AND rol = ANY($2::rol_usuario[]) AND estado_cuenta = 'pendiente'`,
+            [req.params.id, ROLES_INTERNOS]
         );
-        if (result.rows.length === 0) {
-            const pendiente = await pool.query(
-                `SELECT 1 FROM usuarios WHERE id = $1 AND rol = ANY($2::rol_usuario[]) AND estado_cuenta = 'pendiente'`,
-                [req.params.id, ROLES_INTERNOS]
-            );
-            if (pendiente.rows.length > 0) {
-                return res.status(409).json({ error: 'La cuenta aún no acepta su invitación: reenvíala o revócala' });
-            }
-            return res.status(404).json({ error: 'Usuario interno no encontrado' });
+        if (pendiente.rows.length > 0) {
+            return res.status(409).json({ error: 'La cuenta aún no acepta su invitación: reenvíala o revócala' });
         }
-        console.log(`Cuenta ${result.rows[0].id} pasó a ${v.estado} por el usuario ${req.user.id}`);
-        res.json(result.rows[0]);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al cambiar el estado de la cuenta' });
+        return res.status(404).json({ error: 'Usuario interno no encontrado' });
     }
+    console.log(`Cuenta ${result.rows[0].id} pasó a ${v.estado} por el usuario ${req.user.id}`);
+    res.json(result.rows[0]);
 });
 
 // restablece la contrasena de una cuenta interna (quien la olvido, o
@@ -407,11 +397,10 @@ router.patch('/:id/estado', verifyToken, requireRole('administrativo', 'gerente'
 router.post('/:id/password', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const v = validarCambioDePassword(req.body);
     if (!v.ok) return res.status(400).json({ error: v.error });
-    try {
-        const hash = await bcrypt.hash(v.password, 10);
-        // la clave nueva y el cierre de las sesiones de esa cuenta van en una sola sentencia
-        const result = await pool.query(
-            `WITH cambio AS (
+    const hash = await bcrypt.hash(v.password, 10);
+    // la clave nueva y el cierre de las sesiones de esa cuenta van en una sola sentencia
+    const result = await pool.query(
+        `WITH cambio AS (
                  UPDATE usuarios SET password_hash = $1, password_cambiada_at = now()
                  WHERE id = $2 AND rol = ANY($3::rol_usuario[])
                  RETURNING id, nombre, email, rol
@@ -421,34 +410,25 @@ router.post('/:id/password', verifyToken, requireRole('administrativo', 'gerente
                  RETURNING id
              )
              SELECT * FROM cambio`,
-            [hash, req.params.id, ROLES_INTERNOS]
-        );
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Usuario interno no encontrado' });
-        }
-        console.log(`Contraseña de la cuenta ${result.rows[0].id} restablecida por el usuario ${req.user.id}`);
-        res.json({ ok: true, id: result.rows[0].id });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al restablecer la contraseña' });
+        [hash, req.params.id, ROLES_INTERNOS]
+    );
+    if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Usuario interno no encontrado' });
     }
+    console.log(`Contraseña de la cuenta ${result.rows[0].id} restablecida por el usuario ${req.user.id}`);
+    res.json({ ok: true, id: result.rows[0].id });
 });
 
 router.get('/solicitudes', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
-    try {
-        const result = await pool.query(
-            `SELECT id, nombre_contacto, nombre_empresa, email, rut_empresa, telefono_whatsapp, horario_trabajo,
+    const result = await pool.query(
+        `SELECT id, nombre_contacto, nombre_empresa, email, rut_empresa, telefono_whatsapp, horario_trabajo,
                     horario_colacion, direccion, latitud, longitud, estado, created_at,
                     (correo_verificado_at IS NOT NULL) AS correo_verificado
              FROM solicitudes_cliente WHERE ${SQL_CUENTAS_POR_APROBAR} ORDER BY created_at ASC`
-        );
-        // el panel solo pide confirmar "sin verificar" cuando el envio de correos esta configurado
-        const disponible = correoDisponible().disponible;
-        res.json(result.rows.map((f) => ({ ...f, correo_verificacion_disponible: disponible })));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar solicitudes' });
-    }
+    );
+    // el panel solo pide confirmar "sin verificar" cuando el envio de correos esta configurado
+    const disponible = correoDisponible().disponible;
+    res.json(result.rows.map((f) => ({ ...f, correo_verificacion_disponible: disponible })));
 });
 
 router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
@@ -539,38 +519,28 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
 });
 
 router.post('/solicitudes/:id/rechazar', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
-    try {
-        const result = await pool.query(
-            `UPDATE solicitudes_cliente SET estado = 'rechazada' WHERE id = $1 AND estado = 'pendiente' RETURNING id`,
-            [req.params.id]
-        );
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Solicitud de cuenta no encontrada o ya procesada' });
-        }
-        res.json({ ok: true });
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al rechazar la solicitud' });
+    const result = await pool.query(
+        `UPDATE solicitudes_cliente SET estado = 'rechazada' WHERE id = $1 AND estado = 'pendiente' RETURNING id`,
+        [req.params.id]
+    );
+    if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Solicitud de cuenta no encontrada o ya procesada' });
     }
+    res.json({ ok: true });
 });
 
 // los datos propios del usuario autenticado.
 // Incluye lo que se le muestra al cliente en el aviso previo a la visita (HU-07), para que
 // el mecanico sepa exactamente que de su ficha sale de la empresa.
 router.get('/mi-perfil', verifyToken, async (req, res) => {
-    try {
-        const result = await pool.query(
-            'SELECT id, nombre, email, rol, rut, telefono_whatsapp FROM usuarios WHERE id = $1',
-            [req.user.id]
-        );
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Usuario no encontrado' });
-        }
-        res.json(result.rows[0]);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar tu perfil' });
+    const result = await pool.query(
+        'SELECT id, nombre, email, rol, rut, telefono_whatsapp FROM usuarios WHERE id = $1',
+        [req.user.id]
+    );
+    if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Usuario no encontrado' });
     }
+    res.json(result.rows[0]);
 });
 
 // el usuario completa su RUT y telefono.
@@ -586,23 +556,18 @@ router.patch('/mi-perfil', verifyToken, async (req, res) => {
     if (typeof rut === 'string' && rut.trim() !== '' && !rutValido(rut)) {
         return res.status(400).json({ error: MENSAJE_RUT_INVALIDO });
     }
-    try {
-        const result = await pool.query(
-            `UPDATE usuarios
+    const result = await pool.query(
+        `UPDATE usuarios
              SET rut = COALESCE($1, rut), telefono_whatsapp = COALESCE($2, telefono_whatsapp)
              WHERE id = $3
              RETURNING id, nombre, email, rol, rut, telefono_whatsapp`,
-            [
-                rut === undefined ? null : (String(rut).trim() || null),
-                telefono_whatsapp === undefined ? null : (String(telefono_whatsapp).trim() || null),
-                req.user.id,
-            ]
-        );
-        res.json(result.rows[0]);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al actualizar tu perfil' });
-    }
+        [
+            rut === undefined ? null : (String(rut).trim() || null),
+            telefono_whatsapp === undefined ? null : (String(telefono_whatsapp).trim() || null),
+            req.user.id,
+        ]
+    );
+    res.json(result.rows[0]);
 });
 
 // quien recibe el aviso de mantencion proxima y por donde.
@@ -615,27 +580,22 @@ router.patch('/:id/alertas', verifyToken, requireRole('administrativo', 'gerente
     if (recibe_alertas_mantencion === undefined && telefono_whatsapp === undefined) {
         return res.status(400).json({ error: 'Indique recibe_alertas_mantencion y/o telefono_whatsapp' });
     }
-    try {
-        const result = await pool.query(
-            `UPDATE usuarios
+    const result = await pool.query(
+        `UPDATE usuarios
              SET recibe_alertas_mantencion = COALESCE($1, recibe_alertas_mantencion),
                  telefono_whatsapp = COALESCE($2, telefono_whatsapp)
              WHERE id = $3 AND rol <> 'cliente'
              RETURNING id, nombre, email, rol, recibe_alertas_mantencion, telefono_whatsapp`,
-            [
-                recibe_alertas_mantencion === undefined ? null : recibe_alertas_mantencion === true || recibe_alertas_mantencion === 'true',
-                telefono_whatsapp === undefined ? null : (String(telefono_whatsapp).trim() || null),
-                req.params.id,
-            ]
-        );
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Usuario interno no encontrado' });
-        }
-        res.json(result.rows[0]);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al actualizar las alertas del usuario' });
+        [
+            recibe_alertas_mantencion === undefined ? null : recibe_alertas_mantencion === true || recibe_alertas_mantencion === 'true',
+            telefono_whatsapp === undefined ? null : (String(telefono_whatsapp).trim() || null),
+            req.params.id,
+        ]
+    );
+    if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Usuario interno no encontrado' });
     }
+    res.json(result.rows[0]);
 });
 
 module.exports = router;

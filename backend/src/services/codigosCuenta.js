@@ -96,4 +96,4 @@ function htmlDeTexto(texto) {
     return `<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.5">${seguro.replace(/\n/g, '<br>')}</div>`;
 }
 
-module.exports = { crearCodigo, enviarCodigoPorCorreo, htmlDeTexto };
+module.exports = { crearCodigo, enviarCodigoPorCorreo };

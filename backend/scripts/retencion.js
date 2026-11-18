@@ -5,10 +5,11 @@
 // Para --ejecutar hace falta el permiso de borrado (el rol limitado gomaq_app lo tiene en estas tablas).
 require('dotenv').config();
 const { Client } = require('pg');
+const { urlBaseDeScript } = require('./_conexion');
 const { PLAZOS_DIAS, contarRetencion, ejecutarRetencion } = require('../src/utils/retencion');
 
 (async () => {
-    const url = process.env.DATABASE_URL_MIGRACION || process.env.DATABASE_URL;
+    const url = urlBaseDeScript();
     if (!url) throw new Error('Falta DATABASE_URL');
     const ejecutar = process.argv.includes('--ejecutar');
     console.log('Plazos (dias):', JSON.stringify(PLAZOS_DIAS));

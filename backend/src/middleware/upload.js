@@ -110,6 +110,4 @@ module.exports = {
     manejarErroresDeSubida,
     mensajeArchivoGrande,
     MAX_PDF_BYTES,
-    MAX_IMAGEN_BYTES,
-    MAX_ADJUNTO_BYTES,
 };

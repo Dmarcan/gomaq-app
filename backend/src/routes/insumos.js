@@ -4,7 +4,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularFacturableOt } = require('../utils/facturableOt');
 const { avisarPorValorizar, avisarAjusteInventario } = require('../utils/avisos');
-const { textoInvalido, validarIdsEnRuta, validarCuerpo } = require('../utils/validacion');
+const { textoInvalido, validarIdsEnRuta, validarCuerpo, UUID } = require('../utils/validacion');
 const { evaluarCompuertas, difLinea, debeAnularValorizacion, validarPrecioUnitario, esIdPositivo, montoEnteroONulo, cantidadValidaONulo } = require('../utils/auditoriaLinea');
 const { dejarEvento } = require('../utils/eventosOt');
 const { validarTransferencia, validarMotivoAjuste, calcularAjuste, reconstruirDescuadre, MOTIVOS_CONTEO } = require('../utils/stock');
@@ -76,24 +76,19 @@ async function moverStock(client, { ubicacionId, insumoId, delta }) {
 // Ademas de stock_actual (el total) trae cuanto hay en la bodega central y, para un mecanico,
 // en su furgon: al cargar repuestos necesita ver "bodega: X / furgon: Y" antes de elegir.
 router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
-    try {
-        const bodega = await bodegaCentral(pool);
-        const furgon = req.user.rol === 'mecanico' ? await furgonDe(pool, req.user.id) : null;
-        const result = await pool.query(
-            `SELECT i.*,
+    const bodega = await bodegaCentral(pool);
+    const furgon = req.user.rol === 'mecanico' ? await furgonDe(pool, req.user.id) : null;
+    const result = await pool.query(
+        `SELECT i.*,
                     COALESCE(sb.cantidad, 0) AS stock_bodega,
                     COALESCE(sf.cantidad, 0) AS stock_furgon
              FROM insumos i
              LEFT JOIN stock_ubicacion sb ON sb.insumo_id = i.id AND sb.ubicacion_id = $1
              LEFT JOIN stock_ubicacion sf ON sf.insumo_id = i.id AND sf.ubicacion_id = $2
              ORDER BY i.nombre ASC`,
-            [bodega, furgon]
-        );
-        res.json(result.rows.map((f) => ({ ...f, stock_bodega: num(f.stock_bodega), stock_furgon: num(f.stock_furgon) })));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar insumos' });
-    }
+        [bodega, furgon]
+    );
+    res.json(result.rows.map((f) => ({ ...f, stock_bodega: num(f.stock_bodega), stock_furgon: num(f.stock_furgon) })));
 });
 
 router.post('/', verifyToken, requireRole('administrativo'), async (req, res) => {
@@ -107,16 +102,11 @@ router.post('/', verifyToken, requireRole('administrativo'), async (req, res) =>
     if (!vacio && montoEnteroONulo(costo_unitario) === null) {
         return res.status(400).json({ error: 'El costo debe ser un monto entero en pesos, mayor o igual a 0' });
     }
-    try {
-        const result = await pool.query(
-            `INSERT INTO insumos (nombre, unidad_medida, costo_unitario) VALUES ($1, $2, $3) RETURNING *`,
-            [nombre, unidad_medida, vacio ? null : montoEnteroONulo(costo_unitario)]
-        );
-        res.status(201).json(result.rows[0]);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al crear insumo' });
-    }
+    const result = await pool.query(
+        `INSERT INTO insumos (nombre, unidad_medida, costo_unitario) VALUES ($1, $2, $3) RETURNING *`,
+        [nombre, unidad_medida, vacio ? null : montoEnteroONulo(costo_unitario)]
+    );
+    res.status(201).json(result.rows[0]);
 });
 
 router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res) => {
@@ -128,23 +118,18 @@ router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res
     if (!sinCosto && montoEnteroONulo(costo_unitario) === null) {
         return res.status(400).json({ error: 'El costo debe ser un monto entero en pesos, mayor o igual a 0' });
     }
-    try {
-        const result = await pool.query(
-            `UPDATE insumos SET
+    const result = await pool.query(
+        `UPDATE insumos SET
                 nombre = COALESCE($1, nombre),
                 unidad_medida = COALESCE($2, unidad_medida),
                 costo_unitario = COALESCE($3, costo_unitario)
              WHERE id = $4 RETURNING *`,
-            [nombre || null, unidad_medida || null, sinCosto ? null : montoEnteroONulo(costo_unitario), req.params.id]
-        );
-        if (result.rows.length === 0) {
-            return res.status(404).json({ error: 'Insumo no encontrado' });
-        }
-        res.json(result.rows[0]);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al actualizar insumo' });
+        [nombre || null, unidad_medida || null, sinCosto ? null : montoEnteroONulo(costo_unitario), req.params.id]
+    );
+    if (result.rows.length === 0) {
+        return res.status(404).json({ error: 'Insumo no encontrado' });
     }
+    res.json(result.rows[0]);
 });
 
 router.get('/mi-furgon', verifyToken, requireRole('mecanico'), async (req, res) => {
@@ -488,9 +473,8 @@ router.post('/ajuste', verifyToken, requireRole('administrativo'), async (req, r
 });
 
 router.get('/por-ubicacion', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
-    try {
-        const result = await pool.query(
-            `SELECT u.id AS ubicacion_id, u.nombre AS ubicacion_nombre, u.tipo AS ubicacion_tipo,
+    const result = await pool.query(
+        `SELECT u.id AS ubicacion_id, u.nombre AS ubicacion_nombre, u.tipo AS ubicacion_tipo,
                     v.patente, usr.nombre AS mecanico_nombre,
                     i.id AS insumo_id, i.nombre AS insumo_nombre, i.unidad_medida, su.cantidad
              FROM ubicaciones_stock u
@@ -500,12 +484,8 @@ router.get('/por-ubicacion', verifyToken, requireRole('administrativo', 'gerente
              LEFT JOIN insumos i ON i.id = su.insumo_id
              WHERE u.activa = true
              ORDER BY u.tipo, u.nombre, i.nombre`
-        );
-        res.json(result.rows.map((f) => ({ ...f, cantidad: num(f.cantidad) })));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar el inventario por ubicación' });
-    }
+    );
+    res.json(result.rows.map((f) => ({ ...f, cantidad: num(f.cantidad) })));
 });
 
 router.post('/:id/ingreso', verifyToken, requireRole('administrativo'), async (req, res) => {
@@ -564,53 +544,43 @@ router.get('/movimientos', verifyToken, requireRole('gerente', 'administrativo')
             : `(mi.ubicacion_origen_id = $${valores.length} OR mi.ubicacion_destino_id = $${valores.length})`);
     }
     const donde = filtros.length ? `WHERE ${filtros.join(' AND ')}` : '';
-    try {
-        const base = `FROM movimientos_insumo mi
+    const base = `FROM movimientos_insumo mi
                       LEFT JOIN insumos i ON i.id = mi.insumo_id
                       LEFT JOIN usuarios u ON u.id = mi.usuario_id
                       LEFT JOIN ordenes_trabajo ot ON ot.id = mi.orden_trabajo_id
                       LEFT JOIN maquinarias m ON m.id = ot.maquinaria_id
                       ${donde}`;
-        const total = await pool.query(`SELECT COUNT(*)::int AS n ${base}`, valores);
+    const total = await pool.query(`SELECT COUNT(*)::int AS n ${base}`, valores);
 
-        let sql = `SELECT mi.*, i.nombre AS insumo_nombre, i.unidad_medida, u.nombre AS usuario_nombre,
+    let sql = `SELECT mi.*, i.nombre AS insumo_nombre, i.unidad_medida, u.nombre AS usuario_nombre,
                           m.codigo AS maquinaria_codigo
                    ${base} ORDER BY mi.created_at DESC, mi.id DESC`;
-        const params = [...valores];
-        if (limit !== null) {
-            params.push(limit, offset);
-            sql += ` LIMIT $${params.length - 1} OFFSET $${params.length}`;
-        }
-        const result = await pool.query(sql, params);
-        res.json(envolver(result.rows, total.rows[0].n, { limit, offset }));
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar movimientos de insumos' });
+    const params = [...valores];
+    if (limit !== null) {
+        params.push(limit, offset);
+        sql += ` LIMIT $${params.length - 1} OFFSET $${params.length}`;
     }
+    const result = await pool.query(sql, params);
+    res.json(envolver(result.rows, total.rows[0].n, { limit, offset }));
 });
 
 router.get('/orden/:ordenId', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
-    try {
-        // un mecanico solo ve las lineas de sus propias OT, igual que en el resto de su flujo
-        if (req.user.rol === 'mecanico') {
-            const check = await verificarDuenoOrden(req.params.ordenId, req.user.id);
-            if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-            if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
-        }
-        const result = await pool.query(
-            // LEFT JOIN: una linea puede estar escrita a mano, sin insumo del catalogo
-            `SELECT mi.*, i.nombre AS insumo_nombre, i.unidad_medida
+    // un mecanico solo ve las lineas de sus propias OT, igual que en el resto de su flujo
+    if (req.user.rol === 'mecanico') {
+        const check = await verificarDuenoOrden(req.params.ordenId, req.user.id);
+        if (!check.existe) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+        if (!check.esDueno) return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
+    }
+    const result = await pool.query(
+        // LEFT JOIN: una linea puede estar escrita a mano, sin insumo del catalogo
+        `SELECT mi.*, i.nombre AS insumo_nombre, i.unidad_medida
              FROM movimientos_insumo mi
              LEFT JOIN insumos i ON i.id = mi.insumo_id
              WHERE mi.orden_trabajo_id = $1 AND mi.tipo = 'salida'
              ORDER BY mi.created_at DESC`,
-            [req.params.ordenId]
-        );
-        res.json(result.rows);
-    } catch (err) {
-        console.error(err);
-        res.status(500).json({ error: 'Error al consultar insumos de la orden' });
-    }
+        [req.params.ordenId]
+    );
+    res.json(result.rows);
 });
 
 const FACTURABLE_VALIDOS = ['si', 'no', 'pendiente'];
@@ -644,8 +614,6 @@ async function recalcularFacturableOt(client, ordenId) {
 //   4. aplicar el cambio y recalcular el facturable de la OT
 //   5. si la OT estaba valorizada y el cambio altera lo facturable, anular la valorizacion
 //   6. dejar los eventos en el historial (utils/eventosOt.js)
-
-const UUID_ESTRICTO = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** terreno si lo hace el mecanico; panel si lo hace administrativo o gerente. */
 const origenDelCambio = (req) => (req.user.rol === 'mecanico' ? 'terreno' : 'panel');
@@ -1032,7 +1000,7 @@ router.patch('/orden/:ordenId/linea/:lineaId', verifyToken, requireRole('adminis
     const errorPrecio = validarPrecioUnitario(precio_unitario);
     if (errorPrecio) return res.status(400).json({ error: errorPrecio });
     const cabecera = req.get('Idempotency-Key');
-    if (cabecera !== undefined && !UUID_ESTRICTO.test(cabecera.trim())) {
+    if (cabecera !== undefined && !UUID.test(cabecera.trim())) {
         return res.status(400).json({ error: 'Idempotency-Key no es un UUID valido' });
     }
     const llave = cabecera === undefined ? null : cabecera.trim().toLowerCase();
