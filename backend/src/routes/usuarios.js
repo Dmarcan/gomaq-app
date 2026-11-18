@@ -496,7 +496,7 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
         );
 
         await client.query(
-            `UPDATE solicitudes_cliente SET estado = 'aprobada', cliente_id = $1, usuario_id = $2 WHERE id = $3`,
+            `UPDATE solicitudes_cliente SET estado = 'aprobada', cliente_id = $1, usuario_id = $2, password_hash = NULL WHERE id = $3`,
             [clienteIdFinal, nuevoUsuario.rows[0].id, req.params.id]
         );
 
@@ -520,7 +520,7 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
 
 router.post('/solicitudes/:id/rechazar', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const result = await pool.query(
-        `UPDATE solicitudes_cliente SET estado = 'rechazada' WHERE id = $1 AND estado = 'pendiente' RETURNING id`,
+        `UPDATE solicitudes_cliente SET estado = 'rechazada', password_hash = NULL WHERE id = $1 AND estado = 'pendiente' RETURNING id`,
         [req.params.id]
     );
     if (result.rows.length === 0) {

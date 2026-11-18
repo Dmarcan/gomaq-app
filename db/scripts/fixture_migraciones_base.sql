@@ -98,7 +98,9 @@ INSERT INTO solicitudes (cliente_id, maquinaria_id, descripcion, estado, orden_t
      'Ruido en el motor', 'pendiente', NULL);
 
 INSERT INTO solicitudes_cliente (nombre_contacto, email, password_hash, nombre_empresa, estado) VALUES
-  ('Contacto Fixture', 'solicitud@fixture.test', 'hash-de-relleno-no-valido', 'Empresa Fixture', 'pendiente');
+  ('Contacto Fixture', 'solicitud@fixture.test', 'hash-de-relleno-no-valido', 'Empresa Fixture', 'pendiente'),
+  ('Contacto Aprobado', 'aprobada@fixture.test', 'hash-de-relleno-no-valido', 'Empresa Aprobada', 'aprobada'),
+  ('Contacto Rechazado', 'rechazada@fixture.test', 'hash-de-relleno-no-valido', 'Empresa Rechazada', 'rechazada');
 
 INSERT INTO codigos_cuenta (proposito, usuario_id, email, codigo_hmac, expira_at, canal) VALUES
   ('recuperar_password', (SELECT id FROM usuarios WHERE email = 'cliente@fixture.test'), 'cliente@fixture.test', 'hmac-de-relleno', '2099-01-01T00:00:00Z', 'correo');

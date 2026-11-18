@@ -3,7 +3,7 @@
 // Solo toca cuatro tipos de filas que son datos de acceso o avisos viejos; NUNCA facturas, guias,
 // ordenes, clientes ni equipos (esos son el registro del negocio). Los plazos son:
 //   * notificaciones ya terminadas (enviadas o con error definitivo): 180 dias
-//   * solicitudes de cliente rechazadas (guardan nombre, RUT, correo y el hash de la clave): 30 dias
+//   * solicitudes de cliente rechazadas (guardan nombre, RUT y correo; la clave se borra al rechazar): 30 dias
 //   * sesiones vencidas o cerradas: 30 dias
 //   * codigos de cuenta vencidos, usados o revocados: 30 dias
 // El borrado es irreversible: por eso la tarea del worker esta apagada por defecto (RETENCION_ACTIVA=1

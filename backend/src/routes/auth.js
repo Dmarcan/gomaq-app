@@ -59,7 +59,7 @@ router.post('/login', limiteLogin, async (req, res) => {
             [email]
         );
         const pendiente = solicitud.rows[0];
-        if (pendiente && await bcrypt.compare(password, pendiente.password_hash)) {
+        if (pendiente && pendiente.password_hash && await bcrypt.compare(password, pendiente.password_hash)) {
             return res.status(403).json({ error: 'Tu cuenta está en revisión. GOMAQ la aprueba en horario hábil; podrás entrar con este correo apenas quede lista' });
         }
         return res.status(401).json({ error: 'Correo o contraseña incorrectos' });
