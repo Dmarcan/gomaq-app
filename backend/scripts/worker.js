@@ -26,11 +26,15 @@ if (faltantes.length > 0) {
 
 const pool = require('../src/config/db');
 const { iniciarWorker } = require('../src/workers/notificaciones');
+const { iniciarRetencion } = require('../src/utils/retencion');
 
 // un error en una conexion inactiva del pool (por ejemplo Postgres reiniciando) no debe tumbar el proceso
 pool.on('error', (err) => console.error('[worker] error en el pool de Postgres:', err.message));
 
-const detener = iniciarWorker();
+const detenerWorker = iniciarWorker();
+// borrado de datos personales vencidos: apagado salvo RETENCION_ACTIVA=1 (ver utils/retencion.js)
+const detenerRetencion = iniciarRetencion(pool);
+const detener = async () => { detenerRetencion(); await detenerWorker(); };
 
 let apagando = false;
 async function apagar(senal) {

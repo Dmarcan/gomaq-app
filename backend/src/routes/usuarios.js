@@ -13,6 +13,7 @@ const { crearCodigo, enviarCodigoPorCorreo } = require('../services/codigosCuent
 const { verifyToken, requireRole } = require('../middleware/auth');
 
 const { SQL_CUENTAS_POR_APROBAR } = require('../utils/pendientes');
+const { rutValido, MENSAJE_RUT_INVALIDO } = require('../utils/rut');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
@@ -590,6 +591,10 @@ router.patch('/mi-perfil', verifyToken, async (req, res) => {
     if (errCuerpo) return res.status(400).json({ error: errCuerpo });
     if (rut === undefined && telefono_whatsapp === undefined) {
         return res.status(400).json({ error: 'Indique rut y/o telefono_whatsapp' });
+    }
+    // un RUT con el digito verificador mal escrito se rechaza (vacio sigue valiendo: no cambia nada)
+    if (typeof rut === 'string' && rut.trim() !== '' && !rutValido(rut)) {
+        return res.status(400).json({ error: MENSAJE_RUT_INVALIDO });
     }
     try {
         const result = await pool.query(

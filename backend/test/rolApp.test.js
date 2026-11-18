@@ -23,6 +23,17 @@ test('migrar.js y los scripts de carga prefieren DATABASE_URL_MIGRACION', () => 
     }
 });
 
+test('migracion 042: deja apagados los atributos de privilegio del rol', async (t) => {
+    const sql042 = fs.readFileSync(path.join(__dirname, '..', '..', 'db', 'migrations', '042_rol_app_atributos.sql'), 'utf8');
+    assert.match(sql042, /NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS/);
+    if (process.env.GOMAQ_TEST_ESCRITURA !== '1') return t.skip('necesita Postgres (GOMAQ_TEST_ESCRITURA=1)');
+    const pool = require('../src/config/db');
+    {
+        const r = await pool.query("SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls FROM pg_roles WHERE rolname = 'gomaq_app'");
+        assert.deepStrictEqual(r.rows[0], { rolsuper: false, rolcreatedb: false, rolcreaterole: false, rolreplication: false, rolbypassrls: false });
+    }
+});
+
 test('el rol puede escribir filas pero no cambiar el esquema ni el historial', async (t) => {
     if (process.env.GOMAQ_TEST_ESCRITURA !== '1') return t.skip('necesita Postgres (GOMAQ_TEST_ESCRITURA=1)');
     const pool = require('../src/config/db');
