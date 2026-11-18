@@ -20,6 +20,16 @@ const linea = (cantidad, precio, facturable = 'si') => ({
 });
 
 describe('calcularGasto', () => {
+    test('cantidades y precios NUMERIC como texto (como los entrega pg) se suman como numeros', () => {
+        assert.deepStrictEqual(
+            calcularGasto([
+                { cantidad: '2.000', precio_unitario: '1500.00' },
+                { cantidad: '1.000', precio_unitario: null },
+            ]),
+            { total: 3000, lineas_sin_precio: 1 },
+        );
+    });
+
     test('suma cantidad por precio de cada linea', () => {
         assert.deepStrictEqual(calcularGasto([linea(2, 15000), linea(1, 5000)]), {
             total: 35000,

@@ -247,18 +247,23 @@ describe('manejador de errores final', () => {
 });
 
 describe('red de seguridad del proceso', () => {
-    test('registrarRedDeSeguridad registra unhandledRejection y uncaughtException sin salir', () => {
+    test('registrarRedDeSeguridad: unhandledRejection solo registra; uncaughtException registra y sale con codigo 1', () => {
         const { registrarRedDeSeguridad } = require('../src/middleware/errores');
         const registrados = {};
-        registrarRedDeSeguridad({ on: (evento, fn) => { registrados[evento] = fn; } });
+        const salidas = [];
+        registrarRedDeSeguridad({
+            on: (evento, fn) => { registrados[evento] = fn; },
+            exit: (codigo) => { salidas.push(codigo); },
+        });
         assert.equal(typeof registrados.unhandledRejection, 'function');
         assert.equal(typeof registrados.uncaughtException, 'function');
-        // no deben lanzar ni terminar el proceso
         const original = console.error;
         console.error = () => {};
         try {
             registrados.unhandledRejection(new Error('x'));
+            assert.deepEqual(salidas, [], 'una promesa rechazada no debe terminar el proceso');
             registrados.uncaughtException(new Error('y'));
+            assert.deepEqual(salidas, [1], 'una excepcion no atrapada reinicia el proceso (Railway lo levanta)');
         } finally {
             console.error = original;
         }

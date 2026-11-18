@@ -234,6 +234,18 @@ async function stockBodega(insumoId) {
     return r.rows[0] ? Number(r.rows[0].cantidad) : 0;
 }
 
+// Claves EXACTAS de cada OT de GET /api/ordenes-trabajo/mias (lista blanca, derivada del SELECT de
+// routes/ordenes.js): toda columna nueva que se agregue ahi debe decidirse aqui a proposito. Son las
+// mismas siempre (abierta o finalizada, con o sin vehiculo o cobro; lo ausente va en null).
+const CLAVES_OT_PORTAL = [
+    'id', 'estado', 'motivo', 'diagnostico', 'fecha_creacion', 'fecha_cierre',
+    'aceptada_at', 'en_camino_at', 'llegada_at', 'asignada_at',
+    'maquinaria_codigo', 'maquinaria_tipo', 'factura_id', 'factura_folio', 'factura_url', 'comprobante_url',
+    'mecanico_nombre', 'vehiculo_patente', 'vehiculo_marca', 'vehiculo_modelo',
+    'eta_llegada_at', 'eta_calculada_at', 'eta_aproximada', 'cobro',
+].sort();
+const afirmarClavesPortal = (o) => assert.deepEqual(Object.keys(o).sort(), CLAVES_OT_PORTAL, 'el portal solo debe exponer la lista blanca de claves');
+
 const MOTIVO_VALIDO = { motivo_codigo: 'error_registro', motivo: 'Se registró mal el repuesto en el talonario' };
 
 describe('reintentos de la cola offline', () => {
@@ -5959,9 +5971,7 @@ describe('bloque 6 (parte 1): contratos para el dashboard, Ordenes y el portal',
                 assert.equal(o.vehiculo_modelo, v.modelo);
                 assert.ok(o.mecanico_nombre);
                 assert.equal(o.cobro, null, 'abierta: sin mensaje de cobro');
-                for (const prohibida of ['rut', 'mecanico_rut', 'mecanico_id', 'facturable', 'lineas_pendientes', 'valorizacion']) {
-                    assert.ok(!(prohibida in o), `no debe exponer ${prohibida}`);
-                }
+                afirmarClavesPortal(o);
             });
         });
 
@@ -5985,10 +5995,7 @@ describe('bloque 6 (parte 1): contratos para el dashboard, Ordenes y el portal',
             assert.equal(new Date(o.eta_llegada_at).toISOString(), '2026-03-02T10:10:00.000Z', 'calculada_at + segundos');
             assert.equal(new Date(o.eta_calculada_at).toISOString(), '2026-03-02T10:00:00.000Z');
             assert.equal(o.eta_aproximada, true);
-            for (const prohibida of ['destino_lat', 'destino_lng', 'destino_origen', 'eta_segundos', 'eta_distancia_m',
-                'eta_origen_lat', 'eta_origen_lng', 'eta_consultas', 'eta_fuente', 'latitud', 'longitud']) {
-                assert.ok(!(prohibida in o), `no debe exponer ${prohibida}`);
-            }
+            afirmarClavesPortal(o);
 
             // al llegar, la hora estimada deja de mostrarse al cliente
             await pool.query(`UPDATE ordenes_trabajo SET estado = 'en_terreno' WHERE id = $1`, [ot]);
@@ -6263,9 +6270,7 @@ describe('bloque 6 (parte 1): contratos para el dashboard, Ordenes y el portal',
             assert.equal(new Date(portal.eta_llegada_at).getTime(), new Date(ajustada.eta_ajustada_llegada_at).getTime());
             assert.equal(new Date(portal.eta_calculada_at).getTime(), ahora.getTime(), 'Actualizada hace X sigue a la posicion');
             assert.equal(portal.eta_aproximada, false, 'escalada desde la ruta real: no es aproximada');
-            for (const prohibida of ['eta_ajustada_llegada_at', 'eta_ajustada_at', 'eta_intento_at', 'quieto_desde', 'latitud', 'longitud']) {
-                assert.ok(!(prohibida in portal), `no debe exponer ${prohibida}`);
-            }
+            afirmarClavesPortal(portal);
 
             // el detalle de la OT (lo ve tambien el mecanico) no trae el estado interno de la ETA
             const detalle = await pedir('GET', `/api/ordenes-trabajo/${ot}`, 'administrativo');

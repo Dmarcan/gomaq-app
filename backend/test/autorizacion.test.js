@@ -81,6 +81,18 @@ describe('verifyToken', () => {
         assert.equal(continuo, false);
     });
 
+    test('rechaza un token sin firma con alg:none aunque diga ser administrativo', async () => {
+        const base64url = (obj) => Buffer.from(JSON.stringify(obj)).toString('base64url');
+        const sinFirma = `${base64url({ alg: 'none', typ: 'JWT' })}.${base64url({ id: 1, rol: 'administrativo' })}.`;
+        for (const token of [sinFirma, sinFirma.slice(0, -1)]) {
+            const { res, continuo } = await ejecutar(verifyToken, {
+                headers: { authorization: `Bearer ${token}` },
+            });
+            assert.equal(res.codigo, 401);
+            assert.equal(continuo, false, 'un token sin firma no puede pasar');
+        }
+    });
+
     test('acepta un token valido y expone la identidad a la ruta', async () => {
         const req = { headers: { authorization: `Bearer ${firmar({ id: 7, rol: 'mecanico' })}` } };
         const { res, continuo } = await ejecutar(verifyToken, req);

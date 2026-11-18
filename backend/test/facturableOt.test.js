@@ -73,6 +73,16 @@ describe('calcularTotalFacturable', () => {
         assert.strictEqual(calcularTotalFacturable([linea('si', 1, null)]), 0);
     });
 
+    test('cantidades y precios NUMERIC que llegan como texto desde Postgres se suman como numeros', () => {
+        // pg devuelve NUMERIC como string ('2.000', '1500.00'); se documenta el comportamiento actual
+        const lineas = [
+            linea('si', '2.000', '1500.00'),
+            linea('no', '1.000', '900.00'),
+            linea('si', '1.000', null),
+        ];
+        assert.strictEqual(calcularTotalFacturable(lineas), 3000);
+    });
+
     test('sin lineas el total es cero', () => {
         assert.strictEqual(calcularTotalFacturable([]), 0);
         assert.strictEqual(calcularTotalFacturable(null), 0);

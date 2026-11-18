@@ -122,7 +122,8 @@ void main() {
       await tester.tap(find.text('Actualizar'));
       await tester.pumpAndSettle();
       expect(ultima, const Coordenada(3, 4));
-      expect(find.textContaining('(3.0000'), findsNothing, reason: 'no se muestran coordenadas');
+      expect(find.textContaining('3.0000'), findsNothing, reason: 'no se muestran coordenadas');
+      expect(find.textContaining('4.0000'), findsNothing, reason: 'no se muestran coordenadas');
     });
   });
 }
