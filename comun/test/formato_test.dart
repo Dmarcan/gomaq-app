@@ -58,9 +58,4 @@ void main() {
       expect(Formato.medida('abc', 'm', siVacio: '-'), '-');
     });
   });
-
-  test('duracion en horas y minutos', () {
-    expect(Formato.duracion(135), '2h 15m');
-    expect(Formato.duracion(45), '0h 45m');
-  });
 }

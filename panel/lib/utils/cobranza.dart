@@ -42,8 +42,6 @@ DateTime? diaDesdeIso(String? dia) {
 
 String _dias(int n) => n == 1 ? '1 día' : '$n días';
 
-int _entero(dynamic v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
-
 /// Texto del estado de una factura emitida (fila de GET /api/facturacion/emitidas). El estado nunca
 /// va solo en color: este texto acompaña al icono.
 String textoEstadoCobranza(Map<String, dynamic> f) {
@@ -51,26 +49,19 @@ String textoEstadoCobranza(Map<String, dynamic> f) {
     case 'anulada':
       return 'Anulada NC/${f['anulada_nc'] ?? ''}'.trim();
     case 'pagada':
-      final mora = _entero(f['dias_mora']);
+      final mora = aEntero(f['dias_mora']);
       final pago = fechaGuiones(f['fecha_pago'] as String?);
       return mora > 0 ? 'Pagada el $pago, con ${_dias(mora)} de atraso' : 'Pagada el $pago';
     case 'vencida':
-      return 'Vencida hace ${_dias(_entero(f['dias_mora']))}';
+      return 'Vencida hace ${_dias(aEntero(f['dias_mora']))}';
     case 'proxima':
-      final n = _entero(f['dias_para_vencer']);
+      final n = aEntero(f['dias_para_vencer']);
       return n == 0 ? 'Vence hoy' : (n == 1 ? 'Vence mañana' : 'Vence en $n días');
     case 'al_dia':
       return 'Al día';
     default:
       return 'Sin vencimiento';
   }
-}
-
-/// Texto que no depende del estado para leer la fila completa con un lector de pantalla.
-String resumenFacturaEmitida(Map<String, dynamic> f) {
-  final venc = f['fecha_vencimiento'] as String?;
-  return 'Factura ${f['folio']}, ${f['cliente_nombre'] ?? 'sin cliente'}. ${textoEstadoCobranza(f)}'
-      '${venc != null ? '. Vence el ${fechaGuiones(venc)}' : ''}';
 }
 
 /// Suma de las dos partes del traslado escritas en sus campos. Null si las dos están vacías (no hay
@@ -93,9 +84,9 @@ List<({String dia, String texto})>? opcionesVencimiento(Map<String, dynamic>? ve
   final plazo = vencimiento['alternativa'] as String?;
   if (pdf == null || plazo == null) return null;
   final diasPdf = vencimiento['dias_pdf'];
-  final diasPlazo = _entero(vencimiento['plazo_cliente_dias']);
+  final diasPlazo = aEntero(vencimiento['plazo_cliente_dias']);
   return [
-    (dia: pdf, texto: 'Fecha de la factura: ${fechaGuiones(pdf)}${diasPdf != null ? ' (${_dias(_entero(diasPdf))})' : ''}'),
+    (dia: pdf, texto: 'Fecha de la factura: ${fechaGuiones(pdf)}${diasPdf != null ? ' (${_dias(aEntero(diasPdf))})' : ''}'),
     (dia: plazo, texto: 'Plazo habitual del cliente: ${_dias(diasPlazo)}, ${fechaGuiones(plazo)}'),
   ];
 }

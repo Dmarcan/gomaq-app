@@ -43,9 +43,6 @@ class Formato {
     return '${NumberFormat('#,##0.##', 'es_CL').format(n)} $unidad';
   }
 
-  /// Duración en "2h 15m", a partir de minutos.
-  static String duracion(int minutos) => '${minutos ~/ 60}h ${minutos % 60}m';
-
   static DateTime? _aFecha(dynamic valor) {
     if (valor == null) return null;
     if (valor is DateTime) return valor.toLocal();

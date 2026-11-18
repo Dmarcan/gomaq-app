@@ -37,7 +37,7 @@ class ApiClient {
   // falla, asi que fuera de la web la URL por defecto es la de produccion.
   static const String baseUrl = String.fromEnvironment(
     'GOMAQ_API_URL',
-    defaultValue: kIsWeb ? '' : 'https://gomaq-app-production.up.railway.app',
+    defaultValue: kIsWeb ? '' : urlServidorProduccion,
   );
 
   final _storage = const FlutterSecureStorage();

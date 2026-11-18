@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'numeros.dart';
 
 /// Los "pendientes" del dashboard: lo que alguien tiene que hacer hoy.
 ///
@@ -137,8 +138,6 @@ const List<PendienteDef> pendientesDefs = [
 /// Un pendiente con su número, listo para mostrarse. [delOtroRol]: lo hace el otro rol (no quien mira).
 typedef PendienteVisible = ({PendienteDef def, int cantidad, bool delOtroRol});
 
-int _entero(dynamic valor) => valor is num ? valor.toInt() : (int.tryParse('$valor') ?? 0);
-
 /// Los pendientes que tienen algo por hacer (más de 0), en orden de urgencia. Con todo en cero o sin
 /// datos, la lista queda vacía y el dashboard dice "Todo al día".
 ///
@@ -148,8 +147,8 @@ List<PendienteVisible> pendientesVisibles(Map<String, dynamic>? datos, {String? 
   if (datos == null) return const [];
   final todos = [
     for (final def in pendientesDefs)
-      if (_entero(datos[def.clave]) > 0)
-        (def: def, cantidad: _entero(datos[def.clave]), delOtroRol: rol != null && def.hace != null && def.hace != rol),
+      if (aEntero(datos[def.clave]) > 0)
+        (def: def, cantidad: aEntero(datos[def.clave]), delOtroRol: rol != null && def.hace != null && def.hace != rol),
   ];
   return [...todos.where((p) => !p.delOtroRol), ...todos.where((p) => p.delOtroRol)];
 }
@@ -179,7 +178,7 @@ const Map<String, String> clavePendientePorRuta = {
 int contadorMenu(String ruta, Map<String, dynamic>? datos) {
   final clave = clavePendientePorRuta[ruta];
   if (clave == null || datos == null) return 0;
-  return _entero(datos[clave]);
+  return aEntero(datos[clave]);
 }
 
 /// A dónde lleva un ítem del menú. Con pendientes, a la lista de la que sale su número (con su filtro), para

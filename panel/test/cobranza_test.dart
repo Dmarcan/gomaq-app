@@ -38,14 +38,6 @@ void main() {
       expect(textoEstadoCobranza(_fila('al_dia')), 'Al día');
       expect(textoEstadoCobranza(_fila('sin_vencimiento')), 'Sin vencimiento');
     });
-
-    test('el resumen para el lector de pantalla junta folio, cliente, estado y vencimiento', () {
-      final r = resumenFacturaEmitida(_fila('vencida', mora: 3));
-      expect(r, contains('Factura 1001'));
-      expect(r, contains('Cliente Ficticio Ltda'));
-      expect(r, contains('Vencida hace 3 días'));
-      expect(r, contains('28-08-2026'));
-    });
   });
 
   group('fechas', () {

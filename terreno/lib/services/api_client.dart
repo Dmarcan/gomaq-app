@@ -25,7 +25,7 @@ class ApiClient implements ApiCola {
   // desarrollo contra un backend local: --dart-define=GOMAQ_API_URL=http://10.0.2.2:3000
   static const String baseUrl = String.fromEnvironment(
     'GOMAQ_API_URL',
-    defaultValue: 'https://gomaq-app-production.up.railway.app',
+    defaultValue: urlServidorProduccion,
   );
 
   final _storage = const FlutterSecureStorage();

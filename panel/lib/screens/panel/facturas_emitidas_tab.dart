@@ -157,7 +157,7 @@ class _FacturasEmitidasTabState extends State<FacturasEmitidasTab> {
       if (!mounted || mia != _peticion) return;
       setState(() {
         _items = _filas(r);
-        _total = _entero(r['total'], _items.length);
+        _total = aEntero(r['total'], _items.length);
         _hayMas = r['hay_mas'] == true;
       });
     } catch (e) {
@@ -176,7 +176,7 @@ class _FacturasEmitidasTabState extends State<FacturasEmitidasTab> {
       if (!mounted || mia != _peticion) return;
       setState(() {
         _items = [..._items, ..._filas(r)];
-        _total = _entero(r['total'], _items.length);
+        _total = aEntero(r['total'], _items.length);
         _hayMas = r['hay_mas'] == true;
       });
     } catch (e) {
@@ -188,8 +188,6 @@ class _FacturasEmitidasTabState extends State<FacturasEmitidasTab> {
 
   static List<Map<String, dynamic>> _filas(Map<String, dynamic> r) =>
       [for (final f in (r['items'] as List? ?? const [])) Map<String, dynamic>.from(f as Map)];
-
-  static int _entero(dynamic v, int siNo) => v is num ? v.toInt() : int.tryParse('$v') ?? siNo;
 
   void _elegirFiltro(String id) {
     if (id == _estado) return;
@@ -432,8 +430,8 @@ class _FacturasEmitidasTabState extends State<FacturasEmitidasTab> {
     );
     final r = resultado;
     if (!ok || !mounted || r == null) return;
-    final filas = _entero(r['filas'], 0);
-    final sinNeto = _entero(r['sin_neto'], 0);
+    final filas = aEntero(r['filas'], 0);
+    final sinNeto = aEntero(r['sin_neto'], 0);
     var aviso = filas == 1 ? 'Se exportó 1 factura a Excel.' : 'Se exportaron $filas facturas a Excel.';
     if (sinNeto > 0) {
       aviso += sinNeto == 1

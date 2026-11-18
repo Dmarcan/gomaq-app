@@ -41,6 +41,10 @@ String montoParaCampo(double monto) {
   return monto.toInt().toString();
 }
 
+/// Un entero que el servidor puede mandar como número o como texto (Postgres devuelve COUNT(*) como
+/// "5"): [siNo] si no se puede leer.
+int aEntero(dynamic v, [int siNo = 0]) => v is num ? v.toInt() : int.tryParse('$v') ?? siNo;
+
 /// Un número de la base ("2500.00", "7.80") como se muestra en un campo al editarlo: sin los
 /// ceros de más. Vacío si no hay dato o no es un número.
 String numeroParaEditar(dynamic valor) {

@@ -4,6 +4,9 @@ import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
 import 'package:mime/mime.dart' show lookupMimeType;
 
+/// Servidor de produccion (Railway, con HTTPS): la URL por defecto de las dos apps fuera de la web.
+const urlServidorProduccion = 'https://gomaq-app-production.up.railway.app';
+
 /// Error HTTP del backend (cualquier respuesta fuera de 2xx). Los errores de red
 /// (`SocketException`, `TimeoutException`, `ClientException`) NO se envuelven en esta clase:
 /// la cola de sincronizacion de la app del mecanico los distingue por su tipo para decidir si

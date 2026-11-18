@@ -5,6 +5,7 @@ import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
 import '../../services/pendientes_service.dart';
 import '../../theme/gomaq_theme.dart';
+import '../../utils/numeros.dart';
 import '../../widgets/bloque_pendientes.dart';
 import '../../widgets/estado_vacio.dart';
 
@@ -64,9 +65,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (mounted) setState(() => _cargando = false);
     }
   }
-
-  /// Postgres devuelve COUNT(*) como string via JSON ("5"): parseo defensivo.
-  static int _entero(dynamic v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
 
   static String _miles(num n) {
     final s = n.round().toString();
@@ -147,9 +145,9 @@ class _DashboardScreenState extends State<DashboardScreen> {
 
   Widget _donaEstadoFlota(Map<String, dynamic> flota) {
     final datos = [
-      ('operativa', 'Operativa', _entero(flota['operativas']), GomaqColors.estadoPositivo),
-      ('en_mantencion', 'En mantención', _entero(flota['en_mantencion']), GomaqColors.estadoAdvertencia),
-      ('fuera_de_servicio', 'Fuera de servicio', _entero(flota['fuera_de_servicio']), GomaqColors.estadoNegativo),
+      ('operativa', 'Operativa', aEntero(flota['operativas']), GomaqColors.estadoPositivo),
+      ('en_mantencion', 'En mantención', aEntero(flota['en_mantencion']), GomaqColors.estadoAdvertencia),
+      ('fuera_de_servicio', 'Fuera de servicio', aEntero(flota['fuera_de_servicio']), GomaqColors.estadoNegativo),
     ];
     final total = datos.fold<int>(0, (acc, d) => acc + d.$3);
 
@@ -237,7 +235,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final puntos = <FlSpot>[];
     var maximo = 0.0;
     for (var i = 0; i < _otsPorMes.length; i++) {
-      final total = _entero(_otsPorMes[i]['total']).toDouble();
+      final total = aEntero(_otsPorMes[i]['total']).toDouble();
       puntos.add(FlSpot(i.toDouble(), total));
       if (total > maximo) maximo = total;
     }
@@ -415,23 +413,23 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final cobranza = _resumen!['cobranza'];
     final tarjetaVencidas = cobranza is Map
         ? _tarjetaNumero(
-            '${_entero(cobranza['vencidas'])}',
+            '${aEntero(cobranza['vencidas'])}',
             'Facturas vencidas',
             color: GomaqColors.estadoNegativo,
             colorTexto: GomaqColors.estadoNegativo,
             icono: Icons.error_outline,
-            descripcion: 'Facturas vencidas: ${_entero(cobranza['vencidas'])}. Abre la lista de facturas vencidas',
+            descripcion: 'Facturas vencidas: ${aEntero(cobranza['vencidas'])}. Abre la lista de facturas vencidas',
             onTap: () => widget.onNavegar('/facturas', filtro: {'filtro': 'vencidas'}),
           )
         : null;
     final tarjetaProximas = cobranza is Map
         ? _tarjetaNumero(
-            '${_entero(cobranza['proximas'])}',
+            '${aEntero(cobranza['proximas'])}',
             'Por vencer en 7 días',
             color: GomaqColors.estadoAdvertencia,
             colorTexto: GomaqColors.advertenciaFuerte,
             icono: Icons.schedule,
-            descripcion: 'Por vencer en 7 días: ${_entero(cobranza['proximas'])}. Abre la lista de facturas próximas a vencer',
+            descripcion: 'Por vencer en 7 días: ${aEntero(cobranza['proximas'])}. Abre la lista de facturas próximas a vencer',
             onTap: () => widget.onNavegar('/facturas', filtro: {'filtro': 'proximas'}),
           )
         : null;
