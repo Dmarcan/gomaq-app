@@ -82,6 +82,13 @@ const subidaDocumento = conFirma(multer({
     fileFilter: soloTipos(['application/pdf', 'image/'], 'un PDF o una imagen'),
 }), ['pdf', ...IMAGENES], 'un PDF o una imagen JPEG, PNG, WEBP o HEIC', MAX_ADJUNTO_BYTES);
 
+/** Comprobante de pago de una factura: PDF, JPG o PNG, hasta 10 MB. */
+const subidaComprobante = conFirma(multer({
+    storage: multer.memoryStorage(),
+    limits: { fileSize: MAX_ADJUNTO_BYTES, files: 1 },
+    fileFilter: soloTipos(['application/pdf', 'image/jpeg', 'image/png'], 'un PDF, una foto JPG o una foto PNG'),
+}), ['pdf', 'jpeg', 'png'], 'un PDF, una foto JPG o una foto PNG', MAX_ADJUNTO_BYTES);
+
 /**
  * Traduce los errores de multer a respuestas entendibles. Se monta como manejador de errores
  * al final de server.js: sin esto, un archivo demasiado grande termina en un 500 sin explicacion.
@@ -98,6 +105,7 @@ module.exports = {
     subidaPdf,
     subidaImagen,
     subidaDocumento,
+    subidaComprobante,
     verificarFirma,
     manejarErroresDeSubida,
     mensajeArchivoGrande,

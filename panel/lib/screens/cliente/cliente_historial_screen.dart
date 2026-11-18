@@ -70,6 +70,7 @@ class _ClienteHistorialScreenState extends State<ClienteHistorialScreen> {
         itemBuilder: (context, i) {
           final o = _ordenes[i];
           final facturaUrl = o['factura_url'] as String?;
+          final comprobanteUrl = o['comprobante_url'] as String?;
           final cobro = etiquetaCobro(o['cobro'] as String?);
           final tieneMotivo = (o['motivo'] as String?)?.isNotEmpty ?? false;
           final tieneDiagnostico = (o['diagnostico'] as String?)?.isNotEmpty ?? false;
@@ -85,6 +86,15 @@ class _ClienteHistorialScreenState extends State<ClienteHistorialScreen> {
                   if (explicacionCobro(o['cobro'] as String?) case final explicacion?) Text(explicacion),
                   if (tieneDiagnostico)
                     Text('Diagnóstico: ${o['diagnostico']}', maxLines: 3, overflow: TextOverflow.ellipsis),
+                  if (comprobanteUrl != null)
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: TextButton.icon(
+                        onPressed: () => abrirEnlace(comprobanteUrl),
+                        icon: const Icon(Icons.receipt_outlined, size: 18),
+                        label: const Text('Ver comprobante de pago'),
+                      ),
+                    ),
                 ],
               ),
               trailing: facturaUrl != null

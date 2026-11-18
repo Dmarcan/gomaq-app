@@ -37,6 +37,8 @@ function armarFilaEmitida(f, hoy) {
         traslado_retiro: num(f.traslado_retiro),
         fecha_emision: f.fecha_emision || null,
         ...base,
+        // si la factura pagada tiene su comprobante (las pagadas antes de existir la regla no lo tienen); la ruta nunca sale
+        tiene_comprobante: Boolean(f.tiene_comprobante),
         estado_cobranza: estadoCobranza(base, hoy),
         dias_mora: diasMora(base, hoy),
         dias_para_vencer: diasParaVencer(base, hoy),
@@ -90,7 +92,7 @@ async function cargarEmitidas(db, { estado = 'todas', clienteId = null, q = null
                     to_char(f.fecha_emision, 'YYYY-MM-DD') AS fecha_emision,
                     to_char(f.fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento,
                     to_char(f.fecha_pago, 'YYYY-MM-DD') AS fecha_pago,
-                    f.anulada_nc,
+                    f.anulada_nc, (f.comprobante_pago_ruta IS NOT NULL) AS tiene_comprobante,
                     to_char(${SQL_HOY}, 'YYYY-MM-DD') AS hoy
              ${DESDE_JOIN}
              ${donde}

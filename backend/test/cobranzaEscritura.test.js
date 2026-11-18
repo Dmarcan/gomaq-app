@@ -325,8 +325,17 @@ describe('lista de emitidas, tarjetas y pago', () => {
         assert.equal((await estado()).estado_cobranza, 'vencida');
 
         const hoy = await dia(0);
+        // marcar pagada una factura por cobrar exige el comprobante (foto o PDF): sin archivo, 400 y nada cambia
+        const sinComprobante = await pedir('PATCH', `/api/facturacion/${f.id}/pago`, 'administrativo', { fecha_pago: hoy });
+        assert.equal(sinComprobante.status, 400, JSON.stringify(sinComprobante.body));
+        assert.match(sinComprobante.body.error, /comprobante/i);
+        assert.equal((await estado()).estado_cobranza, 'vencida');
+        assert.equal((await pedir('GET', `/api/facturacion/${f.id}/comprobante`, 'administrativo')).status, 404, 'sin comprobante no hay enlace');
+        // una factura que ya estaba pagada antes de esta regla (sin comprobante) conserva su pago y puede corregirse la fecha
+        await pool.query('UPDATE facturas SET fecha_pago = $2 WHERE id = $1', [f.id, hoy]);
         const pago = await pedir('PATCH', `/api/facturacion/${f.id}/pago`, 'administrativo', { fecha_pago: hoy });
         assert.equal(pago.status, 200, JSON.stringify(pago.body));
+        assert.equal(pago.body.tiene_comprobante, false);
         assert.equal(pago.body.id, f.id);
         assert.equal(pago.body.fecha_pago, hoy);
         assert.equal(pago.body.estado_cobranza, 'pagada');

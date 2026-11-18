@@ -148,6 +148,10 @@ class DialogoFormulario extends StatefulWidget {
   /// Se llama con los campos ya validados. Lanzar [ApiException] deja el mensaje en el cuadro.
   final Future<void> Function() alGuardar;
 
+  /// Si se da y devuelve `false`, el botón de guardar queda deshabilitado (el formulario debe decir el
+  /// motivo en un texto visible). Se evalúa en cada redibujo del cuadro.
+  final bool Function()? puedeGuardar;
+
   const DialogoFormulario({
     super.key,
     required this.icono,
@@ -156,6 +160,7 @@ class DialogoFormulario extends StatefulWidget {
     required this.textoAccion,
     required this.contenido,
     required this.alGuardar,
+    this.puedeGuardar,
     this.ancho = 480,
   });
 
@@ -223,7 +228,7 @@ class _DialogoFormularioState extends State<DialogoFormulario> {
           acciones: [
             TextButton(onPressed: _guardando ? null : () => Navigator.of(context).pop(), child: const Text('Cancelar')),
             FilledButton(
-              onPressed: _guardando ? null : _guardar,
+              onPressed: (_guardando || !(widget.puedeGuardar?.call() ?? true)) ? null : _guardar,
               child: _guardando
                   ? const Row(
                       mainAxisSize: MainAxisSize.min,
@@ -275,6 +280,7 @@ Future<bool> mostrarFormulario(
   required String textoAccion,
   required Widget Function(BuildContext context, StateSetter redibujar) contenido,
   required Future<void> Function() alGuardar,
+  bool Function()? puedeGuardar,
   double ancho = 480,
 }) async {
   final guardado = await showDialog<bool>(
@@ -287,6 +293,7 @@ Future<bool> mostrarFormulario(
       textoAccion: textoAccion,
       contenido: contenido,
       alGuardar: alGuardar,
+      puedeGuardar: puedeGuardar,
       ancho: ancho,
     ),
   );

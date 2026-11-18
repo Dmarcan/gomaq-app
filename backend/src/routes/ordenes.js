@@ -287,6 +287,8 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
                      WHERE mi.orden_trabajo_id = ot.id AND mi.anulada_at IS NULL AND mi.facturable = 'pendiente') AS lineas_pendientes,
                     m.codigo AS maquinaria_codigo, m.tipo AS maquinaria_tipo,
                     f.id AS factura_id, f.folio AS factura_folio, f.archivo_url AS factura_url,
+                    -- comprobante de pago de SU factura: solo la ruta, se cambia por URL firmada mas abajo
+                    CASE WHEN f.fecha_pago IS NOT NULL THEN f.comprobante_pago_ruta END AS comprobante_url,
                     u.nombre AS mecanico_nombre,
                     -- el vehiculo de hoy del tecnico: solo de una orden abierta (en una terminada podria ser otro)
                     v.patente AS vehiculo_patente, v.marca AS vehiculo_marca, v.modelo AS vehiculo_modelo,
@@ -316,11 +318,12 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
         const conUrlFirmada = await Promise.all(result.rows.map(async ({ facturable, lineas_pendientes: lineasPendientes, valorizacion, ...resto }) => {
             // al cliente se le dice si hay cobro, nunca montos ni la marca interna de facturable
             const fila = { ...resto, cobro: cobroParaCliente({ estado: resto.estado, facturable, lineasPendientes, valorizacion }) };
-            if (!fila.factura_url) return fila;
-            const { data, error } = await supabase.storage
-                .from(BUCKET_DOCUMENTOS)
-                .createSignedUrl(fila.factura_url, 3600);
-            return { ...fila, factura_url: error ? null : data.signedUrl };
+            const firmar = async (ruta) => {
+                if (!ruta) return null;
+                const { data, error } = await supabase.storage.from(BUCKET_DOCUMENTOS).createSignedUrl(ruta, 3600);
+                return error ? null : data.signedUrl;
+            };
+            return { ...fila, factura_url: await firmar(fila.factura_url), comprobante_url: await firmar(fila.comprobante_url) };
         }));
 
         res.json(conUrlFirmada);

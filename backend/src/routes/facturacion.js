@@ -4,7 +4,7 @@ const { montoEnteroONulo } = require('../utils/auditoriaLinea');
 const { validarIdsEnRuta } = require('../utils/validacion');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
-const { subidaPdf } = require('../middleware/upload');
+const { subidaPdf, subidaComprobante } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { diasEntre } = require('../utils/diasArriendo');
@@ -495,7 +495,7 @@ const aNumeroONulo = (v) => (v === null || v === undefined ? null : Number(v));
 // No cambia el contenido de la factura: no pasa por la regla del correo pendiente ni cancela correos.
 // Una factura anulada con NC deja de contar como ingreso del equipo (utils/rentabilidad.js) pero NO libera
 // el periodo facturado. Responde la fila como en GET /emitidas.
-router.patch('/:facturaId/pago', verifyToken, requireRole('administrativo'), async (req, res) => {
+router.patch('/:facturaId/pago', verifyToken, requireRole('administrativo'), subidaComprobante.single('archivo'), async (req, res) => {
     const cuerpo = req.body && typeof req.body === 'object' && !Array.isArray(req.body) ? req.body : {};
     const conPago = tiene(cuerpo, 'fecha_pago');
     const conNc = tiene(cuerpo, 'anulada_nc');
@@ -504,32 +504,94 @@ router.patch('/:facturaId/pago', verifyToken, requireRole('administrativo'), asy
     if (pago && pago.error) return res.status(400).json({ error: pago.error });
     const nc = conNc ? validarFolioNotaCredito(cuerpo.anulada_nc) : null;
     if (nc && nc.error) return res.status(400).json({ error: nc.error });
+    // el comprobante (foto o PDF) viaja como multipart junto con la fecha de pago
+    if (req.file && !(conPago && pago.fecha_pago)) {
+        return res.status(400).json({ error: 'El comprobante se adjunta junto con la fecha de pago' });
+    }
     const id = Number(req.params.facturaId);
     let client;
+    let rutaNueva = null;
+    const borrarArchivo = async (ruta) => {
+        if (ruta) await supabase.storage.from(BUCKET_DOCUMENTOS).remove([ruta]).catch(() => {});
+    };
     try {
+        // el archivo se sube ANTES de tomar la conexion de la base: una subida lenta no la deja retenida
+        if (req.file) {
+            const existe = await pool.query('SELECT 1 FROM facturas WHERE id = $1', [id]);
+            if (existe.rows.length === 0) return res.status(404).json({ error: 'Factura no encontrada' });
+            rutaNueva = rutaArchivo(['comprobantes', id], req.file.originalname);
+            const { error: errorSubida } = await supabase.storage
+                .from(BUCKET_DOCUMENTOS)
+                .upload(rutaNueva, req.file.buffer, { contentType: req.file.mimetype });
+            if (errorSubida) {
+                rutaNueva = null;
+                throw errorSubida;
+            }
+        }
         client = await pool.connect();
         await client.query('BEGIN');
-        const fila = await client.query('SELECT id FROM facturas WHERE id = $1 FOR UPDATE', [id]);
+        const fila = await client.query(
+            'SELECT fecha_pago, comprobante_pago_ruta FROM facturas WHERE id = $1 FOR UPDATE', [id]
+        );
         if (fila.rows.length === 0) {
             await client.query('ROLLBACK');
+            await borrarArchivo(rutaNueva);
             return res.status(404).json({ error: 'Factura no encontrada' });
         }
+        const previa = fila.rows[0];
+        // pasar de por cobrar a pagada exige el comprobante. Cambiar la fecha de una factura que ya estaba
+        // pagada antes de existir el comprobante no lo exige (quedan "sin comprobante", sin pedirles nada)
+        if (conPago && pago.fecha_pago && previa.fecha_pago === null && !rutaNueva) {
+            await client.query('ROLLBACK');
+            return res.status(400).json({ error: 'Para marcar la factura como pagada adjunta el comprobante de pago (foto JPG, PNG o PDF de hasta 10 MB)' });
+        }
+        const deshacePago = conPago && pago.fecha_pago === null;
+        // deshacer el pago borra el comprobante; subir uno nuevo reemplaza al anterior
+        const rutaFinal = deshacePago ? null : (rutaNueva || previa.comprobante_pago_ruta);
         await client.query(
             `UPDATE facturas SET
                  fecha_pago = CASE WHEN $2 THEN $3::date ELSE fecha_pago END,
-                 anulada_nc = CASE WHEN $4 THEN $5::varchar ELSE anulada_nc END
+                 anulada_nc = CASE WHEN $4 THEN $5::varchar ELSE anulada_nc END,
+                 comprobante_pago_ruta = $6
              WHERE id = $1`,
-            [id, conPago, conPago ? pago.fecha_pago : null, conNc, conNc ? nc.anulada_nc : null]
+            [id, conPago, conPago ? pago.fecha_pago : null, conNc, conNc ? nc.anulada_nc : null, rutaFinal]
         );
         await client.query('COMMIT');
+        // ya confirmado: el archivo anterior (reemplazado o de un pago deshecho) ya no lo usa nadie
+        if (previa.comprobante_pago_ruta && previa.comprobante_pago_ruta !== rutaFinal) {
+            await borrarArchivo(previa.comprobante_pago_ruta);
+        }
         const r = await cargarEmitidas(pool, { id });
         res.json(r.items[0]);
     } catch (err) {
         if (client) await client.query('ROLLBACK').catch(() => {});
+        // si la base fallo con el archivo ya subido, no dejarlo huerfano
+        await borrarArchivo(rutaNueva);
         console.error(err);
         res.status(500).json({ error: 'Error al registrar el pago de la factura' });
     } finally {
         if (client) client.release();
+    }
+});
+
+// GET /api/facturacion/:facturaId/comprobante - URL firmada (1 hora) del comprobante de pago. 404 si la
+// factura no existe o no tiene comprobante (las pagadas antes de existir esta regla no lo tienen).
+router.get('/:facturaId/comprobante', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
+    try {
+        const r = await pool.query('SELECT comprobante_pago_ruta FROM facturas WHERE id = $1', [Number(req.params.facturaId)]);
+        if (r.rows.length === 0) return res.status(404).json({ error: 'Factura no encontrada' });
+        const ruta = r.rows[0].comprobante_pago_ruta;
+        if (!ruta) return res.status(404).json({ error: 'Esta factura no tiene comprobante de pago' });
+        const { data, error } = await supabase.storage.from(BUCKET_DOCUMENTOS).createSignedUrl(ruta, 3600);
+        if (error || !data || !data.signedUrl) {
+            console.error('Error al firmar el comprobante:', error && error.message);
+            return res.status(500).json({ error: 'No se pudo generar el enlace del comprobante' });
+        }
+        res.set('Cache-Control', 'no-store');
+        res.json({ url: data.signedUrl });
+    } catch (err) {
+        console.error(err);
+        res.status(500).json({ error: 'Error al consultar el comprobante' });
     }
 });
 

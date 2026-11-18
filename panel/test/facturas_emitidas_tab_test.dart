@@ -1,3 +1,5 @@
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -22,6 +24,7 @@ Map<String, dynamic> _fila(
   num? neto = 210000,
   num traslado = 70000,
   String tipo = 'arriendo',
+  bool? comprobante,
 }) =>
     {
       'id': id,
@@ -45,6 +48,7 @@ Map<String, dynamic> _fila(
       'estado_cobranza': estado,
       'dias_mora': mora ?? 0,
       'dias_para_vencer': paraVencer,
+      'tiene_comprobante': comprobante ?? false,
     };
 
 Map<String, dynamic> _pagina(List<Map<String, dynamic>> items, {int? total, bool hayMas = false}) =>
@@ -63,7 +67,27 @@ class _Falso {
   final cambios = <({int id, String ruta, Map<String, dynamic> cuerpo})>[];
   Map<String, dynamic> Function(String estado, String? q, int offset) respuesta;
   Object? errorAlCambiar;
+  Object? errorAlSubir;
   _Falso(this.respuesta);
+
+  PlatformFile? elegido;
+  final subidas = <({int id, String fecha, String nombre})>[];
+  final urls = <int>[];
+  final abiertas = <String>[];
+
+  Future<PlatformFile?> elegir() async => elegido;
+
+  Future<void> subir(int id, String fecha, PlatformFile a) async {
+    if (errorAlSubir != null) throw errorAlSubir!;
+    subidas.add((id: id, fecha: fecha, nombre: a.name));
+  }
+
+  Future<String> url(int id) async {
+    urls.add(id);
+    return 'https://firmada.example/$id';
+  }
+
+  Future<void> abrir(String u) async => abiertas.add(u);
 
   Future<Map<String, dynamic>> cargar({required String estado, String? q, required int offset}) async {
     llamadas.add(_Llamada(estado, q, offset));
@@ -78,7 +102,8 @@ class _Falso {
 
 Widget _app(_Falso f, {bool admin = true, String? filtro}) => MaterialApp(
       home: Scaffold(
-        body: FacturasEmitidasTab(key: UniqueKey(), filtroInicial: filtro, puedeEscribir: admin, cargar: f.cargar, cambiar: f.cambiar),
+        body: FacturasEmitidasTab(key: UniqueKey(), filtroInicial: filtro, puedeEscribir: admin, cargar: f.cargar, cambiar: f.cambiar,
+            elegirComprobante: f.elegir, subirComprobante: f.subir, urlComprobante: f.url, abrirUrl: f.abrir),
       ),
     );
 
@@ -280,7 +305,7 @@ void main() {
       expect(find.textContaining('Solo lectura'), findsOneWidget);
     });
 
-    _prueba('Marcar pagada pide la fecha (hoy por defecto) y llama al endpoint de pago', (t) async {
+    _prueba('Marcar pagada exige el comprobante: sin archivo Guardar queda deshabilitado y dice por qué', (t) async {
       final f = _Falso((_, _, _) => _pagina([_fila(1, 'vencida', mora: 4)]));
       await t.pumpWidget(_app(f));
       await t.pumpAndSettle();
@@ -288,15 +313,80 @@ void main() {
       await t.pumpAndSettle();
       expect(find.text('Fecha de pago'), findsOneWidget);
       expect(find.text(fechaGuiones(diaIso(DateTime.now()))), findsOneWidget);
+      expect(find.textContaining('Falta el comprobante de pago'), findsOneWidget);
+      expect(t.widget<FilledButton>(find.widgetWithText(FilledButton, 'Marcar pagada')).onPressed, isNull);
+      expect(f.subidas, isEmpty);
+    });
+
+    _prueba('Marcar pagada con comprobante lo sube con la fecha y recarga', (t) async {
+      final f = _Falso((_, _, _) => _pagina([_fila(1, 'vencida', mora: 4)]))
+        ..elegido = PlatformFile(name: 'transferencia.pdf', size: 1000, bytes: Uint8List.fromList([1, 2, 3]));
+      await t.pumpWidget(_app(f));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Marcar pagada'));
+      await t.pumpAndSettle();
+      await t.tap(find.byKey(const ValueKey('elegir-comprobante')));
+      await t.pumpAndSettle();
+      expect(find.text('Archivo elegido: transferencia.pdf'), findsOneWidget);
       await t.tap(find.widgetWithText(FilledButton, 'Marcar pagada'));
       await t.pumpAndSettle();
-      expect(f.cambios, hasLength(1));
-      expect(f.cambios.single.id, 1);
-      expect(f.cambios.single.ruta, '/pago');
-      expect(f.cambios.single.cuerpo, {'fecha_pago': diaIso(DateTime.now())});
-      // recarga la lista y lo dice (región viva)
+      expect(f.subidas.single.id, 1);
+      expect(f.subidas.single.fecha, diaIso(DateTime.now()));
+      expect(f.subidas.single.nombre, 'transferencia.pdf');
+      expect(f.cambios, isEmpty);
       expect(f.llamadas.length, 2);
       expect(find.textContaining('marcada como pagada'), findsOneWidget);
+    });
+
+    _prueba('un comprobante de más de 10 MB se rechaza antes de subir', (t) async {
+      final f = _Falso((_, _, _) => _pagina([_fila(1, 'vencida', mora: 4)]))
+        ..elegido = PlatformFile(name: 'grande.jpg', size: tamanoMaximoComprobante + 1, bytes: Uint8List(4));
+      await t.pumpWidget(_app(f));
+      await t.pumpAndSettle();
+      await t.tap(find.text('Marcar pagada'));
+      await t.pumpAndSettle();
+      await t.tap(find.byKey(const ValueKey('elegir-comprobante')));
+      await t.pumpAndSettle();
+      expect(find.textContaining('supera los 10 MB'), findsOneWidget);
+      expect(t.widget<FilledButton>(find.widgetWithText(FilledButton, 'Marcar pagada')).onPressed, isNull);
+    });
+
+    _prueba('pagada con comprobante muestra Ver comprobante, que pide la URL firmada y la abre', (t) async {
+      final f = _Falso((_, _, _) => _pagina([_fila(3, 'pagada', pago: '2026-09-03', comprobante: true)]));
+      await t.pumpWidget(_app(f));
+      await t.pumpAndSettle();
+      expect(find.text('Sin comprobante'), findsNothing);
+      expect(find.text('Adjuntar comprobante'), findsNothing);
+      await t.tap(find.text('Ver comprobante'));
+      await t.pumpAndSettle();
+      expect(f.urls, [3]);
+      expect(f.abiertas, ['https://firmada.example/3']);
+    });
+
+    _prueba('pagada antigua dice Sin comprobante y permite adjuntarlo con la misma fecha', (t) async {
+      final f = _Falso((_, _, _) => _pagina([_fila(3, 'pagada', pago: '2026-09-03')]))
+        ..elegido = PlatformFile(name: 'foto.png', size: 500, bytes: Uint8List.fromList([1]));
+      await t.pumpWidget(_app(f));
+      await t.pumpAndSettle();
+      expect(find.text('Sin comprobante'), findsOneWidget);
+      await t.tap(find.widgetWithText(OutlinedButton, 'Adjuntar comprobante'));
+      await t.pumpAndSettle();
+      await t.tap(find.byKey(const ValueKey('elegir-comprobante')));
+      await t.pumpAndSettle();
+      await t.tap(find.widgetWithText(FilledButton, 'Adjuntar comprobante'));
+      await t.pumpAndSettle();
+      expect(f.subidas.single.fecha, '2026-09-03');
+    });
+
+    _prueba('el gerente ve Ver comprobante pero no puede adjuntar', (t) async {
+      final f = _Falso((_, _, _) => _pagina([
+            _fila(3, 'pagada', pago: '2026-09-03', comprobante: true),
+            _fila(4, 'pagada', pago: '2026-09-03'),
+          ]));
+      await t.pumpWidget(_app(f, admin: false));
+      await t.pumpAndSettle();
+      expect(find.text('Ver comprobante'), findsOneWidget);
+      expect(find.text('Adjuntar comprobante'), findsNothing);
     });
 
     _prueba('Anulada con nota de crédito exige el folio y lo envía', (t) async {
@@ -341,10 +431,13 @@ void main() {
 
     _prueba('un error del servidor al marcar pagada queda dentro del cuadro y no cierra', (t) async {
       final f = _Falso((_, _, _) => _pagina([_fila(1, 'vencida', mora: 4)]))
-        ..errorAlCambiar = ApiException(400, 'La fecha de pago no puede ser anterior a la emisión');
+        ..errorAlSubir = ApiException(400, 'La fecha de pago no puede ser anterior a la emisión');
       await t.pumpWidget(_app(f));
       await t.pumpAndSettle();
+      f.elegido = PlatformFile(name: 'c.jpg', size: 10, bytes: Uint8List(2));
       await t.tap(find.text('Marcar pagada'));
+      await t.pumpAndSettle();
+      await t.tap(find.byKey(const ValueKey('elegir-comprobante')));
       await t.pumpAndSettle();
       await t.tap(find.widgetWithText(FilledButton, 'Marcar pagada'));
       await t.pumpAndSettle();

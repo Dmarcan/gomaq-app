@@ -1,3 +1,4 @@
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import '../../services/api_client.dart';
 import '../../theme/gomaq_theme.dart';
@@ -23,7 +24,44 @@ typedef ExportarFacturas = Future<Map<String, dynamic>> Function(Map<String, dyn
 /// Abre la URL firmada del archivo exportado.
 typedef AbrirUrl = Future<void> Function(String url);
 
+/// Elige el comprobante de pago (JPG, PNG o PDF). Devuelve null si se cancela.
+typedef ElegirComprobante = Future<PlatformFile?> Function();
+
+/// Marca la factura pagada con su comprobante: `PATCH /api/facturacion/:id/pago` multipart
+/// (campo `archivo` y campo de texto `fecha_pago`).
+typedef SubirComprobante = Future<void> Function(int id, String fechaPago, PlatformFile archivo);
+
+/// Pide la URL firmada del comprobante: `GET /api/facturacion/:id/comprobante` responde `{url}`.
+typedef ObtenerUrlComprobante = Future<String> Function(int id);
+
+/// Tamaño máximo del comprobante, el mismo que valida el servidor.
+const tamanoMaximoComprobante = 10 * 1024 * 1024;
+
 const _tamanoPagina = 50;
+
+Future<PlatformFile?> _elegirComprobantePorDefecto() async {
+  final r = await FilePicker.platform.pickFiles(
+    type: FileType.custom,
+    allowedExtensions: ['jpg', 'jpeg', 'png', 'pdf'],
+    withData: true,
+  );
+  return r?.files.single;
+}
+
+Future<void> _subirComprobantePorDefecto(int id, String fechaPago, PlatformFile archivo) async {
+  // ClienteApi deduce el tipo del archivo por la extensión y los primeros bytes
+  await ApiClient.instance.patchMultipart(
+    '/api/facturacion/$id/pago',
+    bytes: archivo.bytes,
+    filename: archivo.name,
+    fields: {'fecha_pago': fechaPago},
+  );
+}
+
+Future<String> _urlComprobantePorDefecto(int id) async {
+  final r = await ApiClient.instance.get('/api/facturacion/$id/comprobante');
+  return '${(r as Map)['url']}';
+}
 
 Future<Map<String, dynamic>> _cargarPorDefecto({required String estado, String? q, required int offset}) async {
   final consulta = Uri(queryParameters: {
@@ -59,6 +97,9 @@ class FacturasEmitidasTab extends StatefulWidget {
   final CambiarFactura cambiar;
   final ExportarFacturas exportar;
   final AbrirUrl abrirUrl;
+  final ElegirComprobante elegirComprobante;
+  final SubirComprobante subirComprobante;
+  final ObtenerUrlComprobante urlComprobante;
 
   /// Si la lista está acotada a un cliente, la exportación también.
   final int? clienteId;
@@ -71,6 +112,9 @@ class FacturasEmitidasTab extends StatefulWidget {
     this.cambiar = _cambiarPorDefecto,
     this.exportar = _exportarPorDefecto,
     this.abrirUrl = abrirEnlace,
+    this.elegirComprobante = _elegirComprobantePorDefecto,
+    this.subirComprobante = _subirComprobantePorDefecto,
+    this.urlComprobante = _urlComprobantePorDefecto,
     this.clienteId,
   });
 
@@ -177,26 +221,87 @@ class _FacturasEmitidasTabState extends State<FacturasEmitidasTab> {
     await _cargarLista();
   }
 
-  Future<void> _marcarPagada(Map<String, dynamic> f) async {
-    var dia = diaIso(DateTime.now());
+  /// Marcar pagada (por cobrar) o adjuntar el comprobante a una pagada antigua: la misma ventana, con la
+  /// fecha de pago y el comprobante obligatorio. [diaInicial] es la fecha que ya tiene la factura pagada.
+  Future<void> _marcarPagada(Map<String, dynamic> f, {String? diaInicial}) async {
+    final adjuntando = diaInicial != null;
+    var dia = diaInicial ?? diaIso(DateTime.now());
+    PlatformFile? archivo;
+    String? errorArchivo;
     final ok = await mostrarFormulario(
       context,
-      icono: Icons.payments_outlined,
-      titulo: 'Marcar pagada',
+      icono: adjuntando ? Icons.attach_file : Icons.payments_outlined,
+      titulo: adjuntando ? 'Adjuntar comprobante' : 'Marcar pagada',
       subtitulo: 'Factura ${f['folio']}',
-      textoAccion: 'Marcar pagada',
-      contenido: (context, redibujar) => CampoFechaOpcional(
-        etiqueta: 'Fecha de pago',
-        valor: dia,
-        opcional: false,
-        ultima: DateTime.now(),
-        onChanged: (v) => redibujar(() => dia = v ?? dia),
+      textoAccion: adjuntando ? 'Adjuntar comprobante' : 'Marcar pagada',
+      puedeGuardar: () => archivo != null,
+      contenido: (context, redibujar) => Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CampoFechaOpcional(
+            etiqueta: 'Fecha de pago',
+            valor: dia,
+            opcional: false,
+            ultima: DateTime.now(),
+            onChanged: (v) => redibujar(() => dia = v ?? dia),
+          ),
+          separadorCampos,
+          OutlinedButton.icon(
+            key: const ValueKey('elegir-comprobante'),
+            onPressed: () async {
+              final elegido = await widget.elegirComprobante();
+              if (elegido == null) return;
+              if (elegido.bytes == null) {
+                redibujar(() => errorArchivo = 'No se pudo leer el archivo. Elige otro.');
+              } else if (elegido.size > tamanoMaximoComprobante) {
+                redibujar(() {
+                  archivo = null;
+                  errorArchivo = 'El comprobante supera los 10 MB. Elige un archivo más liviano.';
+                });
+              } else {
+                redibujar(() {
+                  archivo = elegido;
+                  errorArchivo = null;
+                });
+              }
+            },
+            icon: const Icon(Icons.attach_file, size: 18),
+            label: Text(archivo == null ? 'Elegir comprobante' : 'Cambiar comprobante'),
+          ),
+          const SizedBox(height: 8),
+          Semantics(
+            container: true,
+            liveRegion: true,
+            child: Text(
+              errorArchivo ??
+                  (archivo != null
+                      ? 'Archivo elegido: ${archivo!.name}'
+                      : 'Falta el comprobante de pago: adjunta una foto JPG, PNG o un PDF de hasta 10 MB para poder guardar.'),
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: errorArchivo != null ? FontWeight.w700 : FontWeight.w400,
+                color: errorArchivo != null ? GomaqColors.estadoNegativo : null,
+              ),
+            ),
+          ),
+        ],
       ),
-      alGuardar: () => widget.cambiar(f['id'] as int, '/pago', {'fecha_pago': dia}),
+      alGuardar: () => widget.subirComprobante(f['id'] as int, dia, archivo!),
     );
     if (!ok || !mounted) return;
-    setState(() => _aviso = 'Factura ${f['folio']} marcada como pagada el ${fechaGuiones(dia)}.');
+    setState(() => _aviso = adjuntando
+        ? 'Comprobante de la factura ${f['folio']} adjuntado.'
+        : 'Factura ${f['folio']} marcada como pagada el ${fechaGuiones(dia)}, con su comprobante.');
     await _cargarLista();
+  }
+
+  Future<void> _verComprobante(Map<String, dynamic> f) async {
+    try {
+      final url = await widget.urlComprobante(f['id'] as int);
+      await widget.abrirUrl(url);
+    } catch (e) {
+      if (mounted) setState(() => _aviso = 'No se pudo abrir el comprobante de la factura ${f['folio']}: ${mensajeErrorCarga(e)}');
+    }
   }
 
   Future<void> _anularConNc(Map<String, dynamic> f) async {
@@ -227,7 +332,7 @@ class _FacturasEmitidasTabState extends State<FacturasEmitidasTab> {
       context,
       titulo: pago ? 'Deshacer el pago' : 'Deshacer la anulación',
       mensaje: pago
-          ? 'La factura ${f['folio']} vuelve a quedar por cobrar.'
+          ? 'La factura ${f['folio']} vuelve a quedar por cobrar y se borra su comprobante de pago.'
           : 'La factura ${f['folio']} deja de estar anulada con la nota de crédito ${f['anulada_nc']} y vuelve a la cobranza.',
       textoAccion: 'Deshacer',
     );
@@ -413,6 +518,21 @@ class _FacturasEmitidasTabState extends State<FacturasEmitidasTab> {
           icon: const Icon(Icons.payments_outlined, size: 18),
           label: const Text('Marcar pagada'),
         ),
+      if (estado == 'pagada' && f['tiene_comprobante'] == true)
+        OutlinedButton.icon(
+          onPressed: () => _verComprobante(f),
+          icon: const Icon(Icons.receipt_outlined, size: 18),
+          label: const Text('Ver comprobante'),
+        ),
+      if (widget.puedeEscribir && estado == 'pagada' && f['tiene_comprobante'] != true)
+        OutlinedButton.icon(
+          onPressed: () {
+            final p = '${f['fecha_pago'] ?? ''}';
+            _marcarPagada(f, diaInicial: p.length >= 10 ? p.substring(0, 10) : diaIso(DateTime.now()));
+          },
+          icon: const Icon(Icons.attach_file, size: 18),
+          label: const Text('Adjuntar comprobante'),
+        ),
       if (widget.puedeEscribir && estado == 'pagada')
         OutlinedButton.icon(
           onPressed: () => _deshacer(f, pago: true),
@@ -465,6 +585,11 @@ class _FacturasEmitidasTabState extends State<FacturasEmitidasTab> {
             ),
             const SizedBox(height: 10),
             _etiquetaEstado(f),
+            if (estado == 'pagada' && f['tiene_comprobante'] != true)
+              const Padding(
+                padding: EdgeInsets.only(top: 6),
+                child: Text('Sin comprobante', style: TextStyle(fontSize: 13, color: Colors.black54)),
+              ),
             if (acciones.isNotEmpty) ...[
               const SizedBox(height: 10),
               Wrap(spacing: 8, runSpacing: 8, children: acciones),
