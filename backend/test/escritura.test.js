@@ -3834,9 +3834,11 @@ describe('bloque 3: estado del equipo derivado de las ordenes, cierre con estado
 
     test('origen de la OT: externo si el cliente tiene ejecutivo, directo si no, en las tres rutas', async (t) => {
         if (!requiereBase(t)) return;
-        const ejecutivo = (await pool.query('SELECT id FROM ejecutivos ORDER BY id LIMIT 1')).rows[0];
         const cliente = await algunCliente();
-        if (!ejecutivo || !cliente) return t.skip('la semilla no trae ejecutivos o clientes');
+        if (!cliente) return t.skip('la base no tiene clientes');
+        // siempre un ejecutivo propio: no depende de la semilla y se borra al final
+        const ejecutivo = (await pool.query(
+            'INSERT INTO ejecutivos (nombre) VALUES ($1) RETURNING id', [`Ejecutivo prueba ${crypto.randomUUID()}`])).rows[0];
         const original = (await pool.query('SELECT ejecutivo_id FROM clientes WHERE id = $1', [cliente])).rows[0].ejecutivo_id;
         const origenDe = async (ot) => (await pool.query('SELECT origen FROM ordenes_trabajo WHERE id = $1', [ot])).rows[0].origen;
         try {
@@ -3857,6 +3859,7 @@ describe('bloque 3: estado del equipo derivado de las ordenes, cierre con estado
             }
         } finally {
             await pool.query('UPDATE clientes SET ejecutivo_id = $2 WHERE id = $1', [cliente, original]);
+            await pool.query('DELETE FROM ejecutivos WHERE id = $1', [ejecutivo.id]);
         }
     });
 
@@ -4128,15 +4131,48 @@ describe('bloque 4a: descuadres de inventario, conteo y traspaso', () => {
         const insumo = await crearInsumoConStock(10);
         const furgon = await crearFurgonDePrueba();
         const uuid = randomUUID();
-        // la transferencia del mecanico toma el uuid
-        const mecanicoFurgon = await pool.query(
-            `SELECT u.id FROM ubicaciones_stock u JOIN vehiculos v ON v.id = u.vehiculo_id WHERE v.usuario_id = $1 LIMIT 1`, [datos.mecanicoId]);
-        if (mecanicoFurgon.rows.length === 0) return t.skip('el mecanico de la semilla no tiene furgon');
-        const tr = await pedir('POST', '/api/insumos/transferencia', 'mecanico', { insumo_id: insumo, cantidad: 1, uuid_cliente: uuid });
-        assert.equal(tr.status, 201);
-        const r = await ajustar({ ubicacion_id: furgon, insumo_id: insumo, cantidad_contada: 1, cantidad_esperada: 0, motivo_codigo: 'diferencia_conteo', uuid_cliente: uuid });
-        assert.equal(r.status, 409);
-        assert.equal(await stockEn(furgon, insumo), 0);
+        // el mecanico necesita un furgon activo (vehiculo activo + ubicacion activa); si la semilla no lo trae, se crea
+        let vehiculoCreado = null;
+        let ubicacionCreada = null;
+        let vehiculoOriginal = null;
+        let ubicacionOriginal = null;
+        try {
+            let vehiculo = (await pool.query('SELECT id, activo FROM vehiculos WHERE usuario_id = $1', [datos.mecanicoId])).rows[0];
+            if (!vehiculo) {
+                vehiculo = (await pool.query(
+                    `INSERT INTO vehiculos (patente, marca, modelo, usuario_id) VALUES ($1, 'Ford', 'Transit', $2) RETURNING id, activo`,
+                    [`T${crypto.randomUUID().slice(0, 6).toUpperCase()}`, datos.mecanicoId])).rows[0];
+                vehiculoCreado = vehiculo.id;
+            } else if (!vehiculo.activo) {
+                vehiculoOriginal = vehiculo.id;
+                await pool.query('UPDATE vehiculos SET activo = true WHERE id = $1', [vehiculo.id]);
+            }
+            const ubicacion = (await pool.query('SELECT id, activa FROM ubicaciones_stock WHERE vehiculo_id = $1', [vehiculo.id])).rows[0];
+            if (!ubicacion) {
+                ubicacionCreada = (await pool.query(
+                    `INSERT INTO ubicaciones_stock (nombre, tipo, vehiculo_id) VALUES ($1, 'furgon', $2) RETURNING id`,
+                    [`Furgon mecanico de prueba ${crypto.randomUUID()}`, vehiculo.id])).rows[0].id;
+            } else if (!ubicacion.activa) {
+                ubicacionOriginal = ubicacion.id;
+                await pool.query('UPDATE ubicaciones_stock SET activa = true WHERE id = $1', [ubicacion.id]);
+            }
+            // la transferencia del mecanico toma el uuid (el stock sale de la bodega, que tiene 10)
+            const tr = await pedir('POST', '/api/insumos/transferencia', 'mecanico', { insumo_id: insumo, cantidad: 1, uuid_cliente: uuid });
+            assert.equal(tr.status, 201, JSON.stringify(tr.body));
+            const r = await ajustar({ ubicacion_id: furgon, insumo_id: insumo, cantidad_contada: 1, cantidad_esperada: 0, motivo_codigo: 'diferencia_conteo', uuid_cliente: uuid });
+            assert.equal(r.status, 409);
+            assert.equal(await stockEn(furgon, insumo), 0);
+        } finally {
+            // los movimientos y el stock del insumo apuntan a la ubicacion: salen antes de borrarla
+            if (ubicacionCreada) {
+                await pool.query('DELETE FROM movimientos_insumo WHERE insumo_id = $1', [insumo]);
+                await pool.query('DELETE FROM stock_ubicacion WHERE ubicacion_id = $1', [ubicacionCreada]);
+                await pool.query('DELETE FROM ubicaciones_stock WHERE id = $1', [ubicacionCreada]);
+            }
+            if (ubicacionOriginal) await pool.query('UPDATE ubicaciones_stock SET activa = false WHERE id = $1', [ubicacionOriginal]);
+            if (vehiculoCreado) await pool.query('DELETE FROM vehiculos WHERE id = $1', [vehiculoCreado]);
+            if (vehiculoOriginal) await pool.query('UPDATE vehiculos SET activo = false WHERE id = $1', [vehiculoOriginal]);
+        }
     });
 
     test('concurrencia: movimientos en paralelo sobre dos ubicaciones del mismo insumo dejan stock_actual igual a la suma', async (t) => {

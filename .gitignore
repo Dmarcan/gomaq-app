@@ -10,3 +10,6 @@ backend/public/
 *.jks
 *.keystore
 **/android/key.properties
+
+# reporte TAP del CI (cuenta de pruebas omitidas)
+tap.txt
