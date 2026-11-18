@@ -6,6 +6,7 @@ import 'package:http/http.dart' as http;
 import 'package:sqflite/sqflite.dart';
 import '../db/local_database.dart';
 import '../models/orden_trabajo.dart';
+import '../utils/archivos_locales.dart';
 import '../utils/cuerpo_cierre.dart';
 import '../utils/fallo_sync.dart';
 import '../utils/pasadas_en_serie.dart';
@@ -15,6 +16,20 @@ import 'api_client.dart';
 export '../utils/fallo_sync.dart' show ErrorPermanenteSync;
 
 class SyncService extends ChangeNotifier {
+  /// Sin argumentos usa la base local y el cliente HTTP reales. Los parametros son para las pruebas
+  /// (base en memoria, cliente falso, subida de archivos falsa).
+  SyncService({
+    ApiCola? api,
+    Future<Database> Function()? abrirBase,
+    http.Client? clienteHttp,
+  })  : _api = _ApiVerificada(api ?? ApiClient.instance),
+        _abrirBase = abrirBase,
+        _http = clienteHttp ?? http.Client();
+
+  final ApiCola _api;
+  final Future<Database> Function()? _abrirBase;
+  final http.Client _http;
+
   late final PasadasEnSerie _pasadas = PasadasEnSerie(pasada: _pasada, alCambiar: notifyListeners);
   bool get sincronizando => _pasadas.enCurso;
 
@@ -52,7 +67,7 @@ class SyncService extends ChangeNotifier {
   /// El id con el que hay que operar una OT: el real si la creada en terreno ya se sincronizo.
   int resolverIdOrden(int id) => _remapeos[id] ?? id;
 
-  Future<Database> get _db async => LocalDatabase.instance.database;
+  Future<Database> get _db async => _abrirBase != null ? _abrirBase() : LocalDatabase.instance.database;
 
   // ---------- Encolar acciones del mecanico (siempre escriben local primero) ----------
 
@@ -62,23 +77,26 @@ class SyncService extends ChangeNotifier {
   Future<void> encolarDiagnostico(int ordenId, {String? diagnostico, String? estado, Map<String, dynamic>? posicion}) async {
     ordenId = resolverIdOrden(ordenId);
     final db = await _db;
-    await db.update(
-      'ordenes_locales',
-      {
+    // cambio local y tarea en la misma transaccion: si la app muere entre ambos, no queda uno sin el otro
+    await db.transaction((txn) async {
+      await txn.update(
+        'ordenes_locales',
+        {
+          if (diagnostico != null) 'diagnostico': diagnostico,
+          if (estado != null) 'estado': estado,
+          'actualizado_en': DateTime.now().toIso8601String(),
+        },
+        where: 'id = ?',
+        whereArgs: [ordenId],
+      );
+      await _encolar(ordenId, 'diagnostico', {
         if (diagnostico != null) 'diagnostico': diagnostico,
         if (estado != null) 'estado': estado,
-        'actualizado_en': DateTime.now().toIso8601String(),
-      },
-      where: 'id = ?',
-      whereArgs: [ordenId],
-    );
-    await _encolar(ordenId, 'diagnostico', {
-      if (diagnostico != null) 'diagnostico': diagnostico,
-      if (estado != null) 'estado': estado,
-      // hora real del toque: la cola puede enviarlo mucho despues, y el servidor registra cuando
-      // se acepto, salio o llego (no cuando por fin hubo senal)
-      if (estado != null) 'ocurrio_en': DateTime.now().toUtc().toIso8601String(),
-      'posicion': ?posicion,
+        // hora real del toque: la cola puede enviarlo mucho despues, y el servidor registra cuando
+        // se acepto, salio o llego (no cuando por fin hubo senal)
+        if (estado != null) 'ocurrio_en': DateTime.now().toUtc().toIso8601String(),
+        'posicion': ?posicion,
+      }, ejecutor: txn);
     });
     notifyListeners();
   }
@@ -137,20 +155,22 @@ class SyncService extends ChangeNotifier {
   Future<int> encolarOtEnTerreno({required int maquinariaId, required String maquinariaCodigo, String? motivo}) async {
     final db = await _db;
     final idLocal = -DateTime.now().millisecondsSinceEpoch;
-    await db.insert('ordenes_locales', {
-      'id': idLocal,
-      'maquinaria_id': maquinariaId,
-      'maquinaria_codigo': maquinariaCodigo,
-      'motivo': motivo,
-      'estado': 'en_terreno',
-      'facturable': 0,
-      'fecha_creacion': DateTime.now().toIso8601String(),
-      'actualizado_en': DateTime.now().toIso8601String(),
-    });
-    // primera tarea de la OT: la cola procesa por creado_en, asi que corre antes que sus hijas
-    await _encolar(idLocal, 'crear_ot', {
-      'maquinaria_id': maquinariaId,
-      if (motivo != null && motivo.isNotEmpty) 'motivo': motivo,
+    await db.transaction((txn) async {
+      await txn.insert('ordenes_locales', {
+        'id': idLocal,
+        'maquinaria_id': maquinariaId,
+        'maquinaria_codigo': maquinariaCodigo,
+        'motivo': motivo,
+        'estado': 'en_terreno',
+        'facturable': 0,
+        'fecha_creacion': DateTime.now().toIso8601String(),
+        'actualizado_en': DateTime.now().toIso8601String(),
+      });
+      // primera tarea de la OT: la cola procesa por id, asi que corre antes que sus hijas
+      await _encolar(idLocal, 'crear_ot', {
+        'maquinaria_id': maquinariaId,
+        if (motivo != null && motivo.isNotEmpty) 'motivo': motivo,
+      }, ejecutor: txn);
     });
     notifyListeners();
     return idLocal;
@@ -167,23 +187,25 @@ class SyncService extends ChangeNotifier {
   }) async {
     ordenId = resolverIdOrden(ordenId);
     final db = await _db;
-    await db.update(
-      'ordenes_locales',
-      {
-        'diagnostico': ?diagnostico,
+    await db.transaction((txn) async {
+      await txn.update(
+        'ordenes_locales',
+        {
+          'diagnostico': ?diagnostico,
+          'tipo_servicio': ?tipoServicio,
+          'observacion_final': ?observacionFinal,
+          'folio_papel': ?folioPapel,
+          'actualizado_en': DateTime.now().toIso8601String(),
+        },
+        where: 'id = ?',
+        whereArgs: [ordenId],
+      );
+      await _encolar(ordenId, 'datos_ot', {
         'tipo_servicio': ?tipoServicio,
+        'diagnostico': ?diagnostico,
         'observacion_final': ?observacionFinal,
         'folio_papel': ?folioPapel,
-        'actualizado_en': DateTime.now().toIso8601String(),
-      },
-      where: 'id = ?',
-      whereArgs: [ordenId],
-    );
-    await _encolar(ordenId, 'datos_ot', {
-      'tipo_servicio': ?tipoServicio,
-      'diagnostico': ?diagnostico,
-      'observacion_final': ?observacionFinal,
-      'folio_papel': ?folioPapel,
+      }, ejecutor: txn);
     });
     notifyListeners();
   }
@@ -193,30 +215,41 @@ class SyncService extends ChangeNotifier {
   Future<void> encolarChecklist(int ordenId, List<int> servicioIds) async {
     ordenId = resolverIdOrden(ordenId);
     final db = await _db;
-    await db.delete('ot_servicios_locales', where: 'orden_trabajo_id = ?', whereArgs: [ordenId]);
-    for (final id in servicioIds) {
-      await db.insert('ot_servicios_locales', {'orden_trabajo_id': ordenId, 'servicio_id': id});
-    }
-    await _encolar(ordenId, 'checklist', {'servicio_ids': servicioIds});
+    await db.transaction((txn) async {
+      await txn.delete('ot_servicios_locales', where: 'orden_trabajo_id = ?', whereArgs: [ordenId]);
+      for (final id in servicioIds) {
+        await txn.insert('ot_servicios_locales', {'orden_trabajo_id': ordenId, 'servicio_id': id});
+      }
+      await _encolar(ordenId, 'checklist', {'servicio_ids': servicioIds}, ejecutor: txn);
+    });
     notifyListeners();
   }
 
   /// Tramo de trabajo (una visita). El papel trae dos bloques; aca puede haber varios.
-  Future<void> encolarTramo(int ordenId, {required DateTime inicio, DateTime? termino}) async {
+  ///
+  /// [reemplazaTramoLocalId]: al cerrar un tramo que estaba abierto, la fila abierta se borra en la misma
+  /// transaccion que crea la cerrada y su tarea (antes la pantalla la borraba aparte).
+  Future<void> encolarTramo(int ordenId,
+      {required DateTime inicio, DateTime? termino, int? reemplazaTramoLocalId}) async {
     ordenId = resolverIdOrden(ordenId);
     final db = await _db;
-    final tramoLocalId = await db.insert('tramos_locales', {
-      'orden_trabajo_id': ordenId,
-      'inicio': inicio.toUtc().toIso8601String(),
-      'termino': termino?.toUtc().toIso8601String(),
-      'sincronizado': 0,
-    });
-    // En UTC (con la Z): una hora local sin zona la interpretaba el servidor en la suya, y con un
-    // telefono en otra zona horaria (o con la hora mal puesta) el tramo salia corrido varias horas.
-    await _encolar(ordenId, 'tramo', {
-      'tramo_local_id': tramoLocalId,
-      'inicio': inicio.toUtc().toIso8601String(),
-      if (termino != null) 'termino': termino.toUtc().toIso8601String(),
+    await db.transaction((txn) async {
+      if (reemplazaTramoLocalId != null) {
+        await txn.delete('tramos_locales', where: 'id = ?', whereArgs: [reemplazaTramoLocalId]);
+      }
+      final tramoLocalId = await txn.insert('tramos_locales', {
+        'orden_trabajo_id': ordenId,
+        'inicio': inicio.toUtc().toIso8601String(),
+        'termino': termino?.toUtc().toIso8601String(),
+        'sincronizado': 0,
+      });
+      // En UTC (con la Z): una hora local sin zona la interpretaba el servidor en la suya, y con un
+      // telefono en otra zona horaria (o con la hora mal puesta) el tramo salia corrido varias horas.
+      await _encolar(ordenId, 'tramo', {
+        'tramo_local_id': tramoLocalId,
+        'inicio': inicio.toUtc().toIso8601String(),
+        if (termino != null) 'termino': termino.toUtc().toIso8601String(),
+      }, ejecutor: txn);
     });
     notifyListeners();
   }
@@ -244,17 +277,19 @@ class SyncService extends ChangeNotifier {
   Future<void> encolarEvidencia(int ordenId, String rutaLocal, {String tipo = 'antes'}) async {
     ordenId = resolverIdOrden(ordenId);
     final db = await _db;
-    final evidenciaId = await db.insert('evidencias_locales', {
-      'orden_trabajo_id': ordenId,
-      'ruta_local': rutaLocal,
-      'tipo': tipo,
-      'sincronizado': 0,
-      'creado_en': DateTime.now().toIso8601String(),
-    });
-    await _encolar(ordenId, 'evidencia', {
-      'evidencia_local_id': evidenciaId,
-      'ruta_local': rutaLocal,
-      'tipo': tipo,
+    await db.transaction((txn) async {
+      final evidenciaId = await txn.insert('evidencias_locales', {
+        'orden_trabajo_id': ordenId,
+        'ruta_local': rutaLocal,
+        'tipo': tipo,
+        'sincronizado': 0,
+        'creado_en': DateTime.now().toIso8601String(),
+      });
+      await _encolar(ordenId, 'evidencia', {
+        'evidencia_local_id': evidenciaId,
+        'ruta_local': rutaLocal,
+        'tipo': tipo,
+      }, ejecutor: txn);
     });
     notifyListeners();
   }
@@ -272,24 +307,26 @@ class SyncService extends ChangeNotifier {
   }) async {
     ordenId = resolverIdOrden(ordenId);
     final db = await _db;
-    final insumoLocalId = await db.insert('insumos_locales', {
-      'orden_trabajo_id': ordenId,
-      'insumo_id': insumoId,
-      'insumo_nombre': insumoNombre,
-      'cantidad': cantidad,
-      'descripcion': descripcion,
-      'precio_unitario': precioUnitario,
-      'facturable': facturable,
-      'sincronizado': 0,
-      'creado_en': DateTime.now().toIso8601String(),
-    });
-    await _encolar(ordenId, 'insumo', {
-      'insumo_local_id': insumoLocalId,
-      'insumo_id': ?insumoId,
-      'cantidad': cantidad,
-      if (descripcion != null && descripcion.isNotEmpty) 'descripcion': descripcion,
-      'precio_unitario': ?precioUnitario,
-      'facturable': facturable,
+    await db.transaction((txn) async {
+      final insumoLocalId = await txn.insert('insumos_locales', {
+        'orden_trabajo_id': ordenId,
+        'insumo_id': insumoId,
+        'insumo_nombre': insumoNombre,
+        'cantidad': cantidad,
+        'descripcion': descripcion,
+        'precio_unitario': precioUnitario,
+        'facturable': facturable,
+        'sincronizado': 0,
+        'creado_en': DateTime.now().toIso8601String(),
+      });
+      await _encolar(ordenId, 'insumo', {
+        'insumo_local_id': insumoLocalId,
+        'insumo_id': ?insumoId,
+        'cantidad': cantidad,
+        if (descripcion != null && descripcion.isNotEmpty) 'descripcion': descripcion,
+        'precio_unitario': ?precioUnitario,
+        'facturable': facturable,
+      }, ejecutor: txn);
     });
     notifyListeners();
   }
@@ -314,8 +351,10 @@ class SyncService extends ChangeNotifier {
           'Pide al administrativo que la anule desde el panel.';
     }
 
-    await _encolar(ordenId, 'anular_insumo', {'insumo_local_id': lineaLocalId});
-    await db.update('insumos_locales', {'anulada': 1}, where: 'id = ?', whereArgs: [lineaLocalId]);
+    await db.transaction((txn) async {
+      await _encolar(ordenId, 'anular_insumo', {'insumo_local_id': lineaLocalId}, ejecutor: txn);
+      await txn.update('insumos_locales', {'anulada': 1}, where: 'id = ?', whereArgs: [lineaLocalId]);
+    });
     notifyListeners();
     return null;
   }
@@ -531,7 +570,7 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> _pull() async {
-    final data = (await ApiClient.instance.get('/api/ordenes-trabajo'))['items'];
+    final data = (await _api.get('/api/ordenes-trabajo'))['items'];
     final db = await _db;
 
     // OT con tareas aun pendientes o en error no se sobreescriben con la version
@@ -581,7 +620,7 @@ class SyncService extends ChangeNotifier {
   Future<void> _pullMiFurgon() async {
     final db = await _db;
     try {
-      final furgon = await ApiClient.instance.get('/api/insumos/mi-furgon');
+      final furgon = await _api.get('/api/insumos/mi-furgon');
       await db.delete('furgon_stock_local');
       for (final item in (furgon['items'] as List? ?? [])) {
         await db.insert('furgon_stock_local', {
@@ -592,7 +631,7 @@ class SyncService extends ChangeNotifier {
         }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
 
-      final mio = await ApiClient.instance.get('/api/vehiculos/mio');
+      final mio = await _api.get('/api/vehiculos/mio');
       await db.delete('mi_vehiculo_local');
       final v = mio['vehiculo'];
       if (v != null) {
@@ -607,7 +646,7 @@ class SyncService extends ChangeNotifier {
         }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
 
-      final perfil = await ApiClient.instance.get('/api/usuarios/mi-perfil');
+      final perfil = await _api.get('/api/usuarios/mi-perfil');
       await db.delete('mi_perfil_local');
       await db.insert('mi_perfil_local', {
         'id': perfil['id'],
@@ -625,7 +664,7 @@ class SyncService extends ChangeNotifier {
   /// codigo y tipo: son ~500 equipos y no tiene sentido bajar la ficha completa de todos.
   Future<void> _pullMaquinarias() async {
     // sin `limit` el endpoint devuelve la flota completa, que es lo que necesita el catalogo
-    final data = (await ApiClient.instance.get('/api/maquinarias'))['items'];
+    final data = (await _api.get('/api/maquinarias'))['items'];
     final db = await _db;
     // un solo batch: son ~500 equipos y un insert por fila tardaba segundos
     final batch = db.batch();
@@ -669,7 +708,7 @@ class SyncService extends ChangeNotifier {
 
   Future<void> _pullEquipo(int maquinariaId) async {
     final db = await _db;
-    final ficha = await ApiClient.instance.get('/api/maquinarias/$maquinariaId');
+    final ficha = await _api.get('/api/maquinarias/$maquinariaId');
     await db.insert(
       'maquinarias_local',
       {
@@ -694,7 +733,7 @@ class SyncService extends ChangeNotifier {
       conflictAlgorithm: ConflictAlgorithm.replace,
     );
 
-    final historial = await ApiClient.instance.get('/api/maquinarias/$maquinariaId/ordenes-trabajo');
+    final historial = await _api.get('/api/maquinarias/$maquinariaId/ordenes-trabajo');
     await db.delete('historial_ot_local', where: 'maquinaria_id = ?', whereArgs: [maquinariaId]);
     for (final ot in (historial as List)) {
       await db.insert('historial_ot_local', {
@@ -709,7 +748,7 @@ class SyncService extends ChangeNotifier {
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
 
-    final horometro = await ApiClient.instance.get('/api/horometro/maquinaria/$maquinariaId');
+    final horometro = await _api.get('/api/horometro/maquinaria/$maquinariaId');
     await db.delete('horometro_local', where: 'maquinaria_id = ?', whereArgs: [maquinariaId]);
     for (final l in (horometro['lecturas'] as List? ?? [])) {
       await db.insert('horometro_local', {
@@ -731,7 +770,7 @@ class SyncService extends ChangeNotifier {
   /// Catalogo del checklist (31 sistemas del talonario). Se cachea igual que el de insumos
   /// para poder llenar la OT en terreno sin señal.
   Future<void> _pullCatalogoChecklist() async {
-    final data = await ApiClient.instance.get('/api/checklist');
+    final data = await _api.get('/api/checklist');
     final db = await _db;
     final batch = db.batch();
     for (final item in (data as List)) {
@@ -745,7 +784,7 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> _pullCatalogoInsumos() async {
-    final data = await ApiClient.instance.get('/api/insumos');
+    final data = await _api.get('/api/insumos');
     final db = await _db;
     final batch = db.batch();
     for (final item in (data as List)) {
@@ -899,7 +938,13 @@ class SyncService extends ChangeNotifier {
   Future<void> _ejecutarTarea(Map<String, dynamic> tarea, [Map<int, int>? remapeo]) async {
     final tipo = tarea['tipo'] as String;
     final ordenId = tarea['orden_trabajo_id'] as int;
-    final payload = jsonDecode(tarea['payload'] as String) as Map<String, dynamic>;
+    final Map<String, dynamic> payload;
+    try {
+      payload = jsonDecode(tarea['payload'] as String) as Map<String, dynamic>;
+    } on FormatException {
+      // dato propio del telefono, no una respuesta del servidor: reintentar no lo arregla (ver RespuestaIncompleta)
+      throw ErrorPermanenteSync('La tarea guardada en el teléfono está dañada y no se puede enviar. Avisa al administrativo.');
+    }
 
     // Tareas encoladas por una version anterior de la app no traen uuid. Se les asigna uno y se
     // guarda ANTES de enviarlas: asi, si esta vez se pierde la respuesta, el reintento ya viaja
@@ -916,7 +961,7 @@ class SyncService extends ChangeNotifier {
         await _crearOtEnTerreno(ordenId, payload, remapeo);
         break;
       case 'diagnostico':
-        await ApiClient.instance.patch('/api/ordenes-trabajo/$ordenId/diagnostico', cuerpoDiagnostico(payload));
+        await _api.patch('/api/ordenes-trabajo/$ordenId/diagnostico', cuerpoDiagnostico(payload));
         break;
       case 'finalizar':
         await _finalizarConFirma(tarea, ordenId, payload);
@@ -934,11 +979,11 @@ class SyncService extends ChangeNotifier {
         await _registrarHorometro(ordenId, payload);
         break;
       case 'datos_ot':
-        await ApiClient.instance.patch('/api/ordenes-trabajo/$ordenId/datos', payload);
+        await _api.patch('/api/ordenes-trabajo/$ordenId/datos', payload);
         break;
       case 'checklist':
         // se manda la lista completa de marcados: es idempotente ante un reintento de la cola
-        await ApiClient.instance.put('/api/ordenes-trabajo/$ordenId/checklist', payload);
+        await _api.put('/api/ordenes-trabajo/$ordenId/checklist', payload);
         break;
       case 'tramo':
         await _registrarTramo(ordenId, payload);
@@ -963,7 +1008,7 @@ class SyncService extends ChangeNotifier {
       if (await archivo.exists()) {
         final nombreArchivo = rutaFirma.split(Platform.pathSeparator).last;
         final solicitud = await _solicitarSubida(ordenId, {'nombre_archivo': nombreArchivo, 'carpeta': 'firmas'});
-        final resp = await http
+        final resp = await _http
             .put(
               Uri.parse(solicitud['signedUrl'] as String),
               headers: {'Content-Type': 'image/png'},
@@ -985,10 +1030,15 @@ class SyncService extends ChangeNotifier {
       }
     }
 
-    await ApiClient.instance.patch(
+    await _api.patch(
       '/api/ordenes-trabajo/$ordenId/finalizar',
       cuerpoFinalizar(payload, creadoEn: tarea['creado_en'] as String?, firmaPath: firmaPath),
     );
+
+    // el cierre ya esta en el servidor, con la firma subida: el PNG local no sirve para nada mas. Se
+    // borra recien ahora y no tras la subida: si el PATCH falla, el reintento usa firma_path y no el
+    // archivo, pero asi nunca se borra una firma de un cierre que aun no llego.
+    await borrarArchivoLocal(rutaFirma);
   }
 
   /// Pide la URL firmada para subir una foto o firma. Si el servidor responde que el
@@ -997,7 +1047,7 @@ class SyncService extends ChangeNotifier {
   /// saliendo como ApiException y se tratan igual que antes.
   Future<dynamic> _solicitarSubida(int ordenId, Map<String, dynamic> cuerpo) async {
     try {
-      return await ApiClient.instance.post('/api/ordenes-trabajo/$ordenId/evidencia/solicitar-upload', cuerpo);
+      return await _api.post('/api/ordenes-trabajo/$ordenId/evidencia/solicitar-upload', cuerpo);
     } on ApiException catch (err) {
       if (esCodigoTransitorio(err.statusCode)) throw ErrorSubidaArchivo(err.statusCode);
       rethrow;
@@ -1023,7 +1073,7 @@ class SyncService extends ChangeNotifier {
       final solicitud = await _solicitarSubida(ordenId, {'nombre_archivo': nombreArchivo});
 
       final signedUrl = solicitud['signedUrl'] as String;
-      final resp = await http
+      final resp = await _http
           .put(
             Uri.parse(signedUrl),
             headers: {'Content-Type': 'image/jpeg'},
@@ -1041,7 +1091,7 @@ class SyncService extends ChangeNotifier {
           where: 'id = ?', whereArgs: [tarea['id']]);
     }
 
-    await ApiClient.instance.post(
+    await _api.post(
       '/api/ordenes-trabajo/$ordenId/evidencia/confirmar',
       {
         'path': pathSubido,
@@ -1061,6 +1111,11 @@ class SyncService extends ChangeNotifier {
         whereArgs: [evidenciaLocalId],
       );
     }
+
+    // confirmada en el servidor: la copia local ya no es trabajo pendiente y ocupa espacio del telefono.
+    // La fila se conserva (la lista de evidencias la sigue mostrando como enviada) y su miniatura cae en
+    // el marcador de foto ya enviada. Si el borrado falla, no importa: lo recoge la limpieza al cerrar sesion.
+    await borrarArchivoLocal(payload['ruta_local'] as String?);
   }
 
   /// Crea en el servidor una OT que nacio en terreno y traduce su id local por el real.
@@ -1069,7 +1124,7 @@ class SyncService extends ChangeNotifier {
   /// que choque con uno real) y sus fotos, repuestos y tramos cuelgan de ese id. Al sincronizar
   /// hay que reescribir esa referencia en todas partes.
   Future<void> _crearOtEnTerreno(int idLocal, Map<String, dynamic> payload, Map<int, int>? remapeo) async {
-    final creada = await ApiClient.instance.post('/api/ordenes-trabajo/en-terreno', {
+    final creada = await _api.post('/api/ordenes-trabajo/en-terreno', {
       'maquinaria_id': payload['maquinaria_id'],
       if (payload['motivo'] != null) 'motivo': payload['motivo'],
       'uuid_cliente': payload['uuid'],
@@ -1094,7 +1149,7 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> _registrarTramo(int ordenId, Map<String, dynamic> payload) async {
-    await ApiClient.instance.post('/api/ordenes-trabajo/$ordenId/tramos', {
+    await _api.post('/api/ordenes-trabajo/$ordenId/tramos', {
       'inicio': payload['inicio'],
       if (payload['termino'] != null) 'termino': payload['termino'],
       'uuid_cliente': payload['uuid'],
@@ -1112,7 +1167,7 @@ class SyncService extends ChangeNotifier {
   }
 
   Future<void> _registrarHorometro(int ordenId, Map<String, dynamic> payload) async {
-    await ApiClient.instance.post('/api/horometro/maquinaria/${payload['maquinaria_id']}', {
+    await _api.post('/api/horometro/maquinaria/${payload['maquinaria_id']}', {
       'valor': payload['valor'],
       // orden 0 = lectura de un equipo sin orden de trabajo (desde Flota)
       if (ordenId > 0) 'orden_trabajo_id': ordenId,
@@ -1133,11 +1188,11 @@ class SyncService extends ChangeNotifier {
       throw ErrorPermanenteSync(
           'No se pudo anular el repuesto porque no llegó al servidor. Revisa si su envío tiene un error.');
     }
-    await ApiClient.instance.post('/api/insumos/orden/$ordenId/linea/$servidorId/anular', {});
+    await _api.post('/api/insumos/orden/$ordenId/linea/$servidorId/anular', {});
   }
 
   Future<void> _registrarInsumo(int ordenId, Map<String, dynamic> payload) async {
-    final linea = await ApiClient.instance.post('/api/insumos/orden/$ordenId', {
+    final linea = await _api.post('/api/insumos/orden/$ordenId', {
       if (payload['insumo_id'] != null) 'insumo_id': payload['insumo_id'],
       'cantidad': payload['cantidad'],
       if (payload['descripcion'] != null) 'descripcion': payload['descripcion'],
@@ -1158,4 +1213,29 @@ class SyncService extends ChangeNotifier {
       );
     }
   }
+}
+
+/// Envuelve el cliente HTTP de la cola: un `FormatException` que sale de una llamada (respuesta cortada o
+/// corrupta) pasa a [RespuestaIncompleta], que la clasificacion trata como falla de red. Los
+/// `FormatException` que nacen en codigo propio no pasan por aqui y siguen siendo errores normales.
+class _ApiVerificada implements ApiCola {
+  _ApiVerificada(this._real);
+  final ApiCola _real;
+
+  Future<dynamic> _vigilar(Future<dynamic> Function() llamada) async {
+    try {
+      return await llamada();
+    } on FormatException catch (e) {
+      throw RespuestaIncompleta(e);
+    }
+  }
+
+  @override
+  Future<dynamic> get(String path) => _vigilar(() => _real.get(path));
+  @override
+  Future<dynamic> post(String path, Map<String, dynamic> body) => _vigilar(() => _real.post(path, body));
+  @override
+  Future<dynamic> patch(String path, Map<String, dynamic> body) => _vigilar(() => _real.patch(path, body));
+  @override
+  Future<dynamic> put(String path, Map<String, dynamic> body) => _vigilar(() => _real.put(path, body));
 }

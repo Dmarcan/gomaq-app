@@ -43,12 +43,14 @@ class FotoThumbnail extends StatelessWidget {
                 width: 92,
                 height: 92,
                 fit: BoxFit.cover,
-                // la foto local pudo borrarse (limpieza de datos): placeholder en vez de excepcion
+                // la foto local pudo borrarse (limpieza de datos) o se libero tras enviarla: placeholder
+                // en vez de excepcion; una foto ya enviada se muestra como tal, no como imagen rota
                 errorBuilder: (_, _, _) => Container(
                   width: 92,
                   height: 92,
                   color: GomaqColors.superficieElevada,
-                  child: const Icon(Icons.broken_image, color: GomaqColors.textoSecundario),
+                  child: Icon(sincronizada ? Icons.cloud_done_outlined : Icons.broken_image,
+                      color: GomaqColors.textoSecundario),
                 ),
               ),
               if (hora != null)
@@ -98,9 +100,20 @@ class FotoThumbnail extends StatelessWidget {
               child: Image.file(
                 File(rutaLocal),
                 fit: BoxFit.contain,
-                errorBuilder: (_, _, _) => const SizedBox(
+                errorBuilder: (_, _, _) => SizedBox(
                   height: 200,
-                  child: Center(child: Icon(Icons.broken_image, color: GomaqColors.textoSecundario)),
+                  child: Center(
+                    child: sincronizada
+                        ? const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Text(
+                              'La foto ya se envió y se liberó del teléfono.',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(color: Colors.white),
+                            ),
+                          )
+                        : const Icon(Icons.broken_image, color: GomaqColors.textoSecundario),
+                  ),
                 ),
               ),
             ),

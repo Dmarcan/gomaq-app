@@ -1,6 +1,8 @@
 import 'package:flutter/foundation.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:sqflite/sqflite.dart';
 import '../db/local_database.dart';
+import '../utils/archivos_locales.dart';
 import '../utils/cambios.dart';
 import 'api_client.dart';
 import 'posicion_service.dart';
@@ -71,6 +73,8 @@ class AuthService extends ChangeNotifier {
           'Esa persona debe iniciar sesión y sincronizar antes de que otra cuenta use el teléfono.',
         );
       }
+      // sin pendientes (verificado arriba): los restos de fotos y firmas del anterior tampoco hacen falta
+      await _liberarArchivosSiColaVacia();
       await db.limpiarDatosDeUsuario();
     }
 
@@ -86,7 +90,21 @@ class AuthService extends ChangeNotifier {
     } catch (_) {
       // sin señal o servidor lento: se cierra igual
     }
+    await _liberarArchivosSiColaVacia();
     await logout();
+  }
+
+  /// Borra las fotos y firmas que quedaron en el telefono, pero SOLO con la cola de sincronizacion
+  /// vacia. Con tareas pendientes o en error no toca nada: ese trabajo todavia no llego al servidor.
+  /// Se engancha aqui y no en logout(): logout() tambien lo llama el aviso de sesion vencida, donde el
+  /// mecanico sigue siendo el mismo y la cola suele tener trabajo. Mejor esfuerzo: nunca impide cerrar.
+  Future<void> _liberarArchivosSiColaVacia() async {
+    try {
+      final conexion = await LocalDatabase.instance.database;
+      await limpiarArchivosLocalesSiColaVacia(conexion, await getApplicationDocumentsDirectory());
+    } catch (_) {
+      // no se pudo limpiar: la sesion se cierra igual
+    }
   }
 
   Future<void> logout() async {

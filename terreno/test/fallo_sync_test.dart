@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -49,6 +50,50 @@ void main() {
         final d = clasificarFalloSync(error);
         expect(d.accion, AccionFallo.esperarRed, reason: error.runtimeType.toString());
         expect(d.mensaje, isNotEmpty);
+      }
+    });
+  });
+
+  group('clasificarFalloSync: TLS y respuestas cortadas', () {
+    test('HandshakeException, TlsException y CertificateException esperan la red', () {
+      for (final error in <Object>[
+        const HandshakeException('Connection terminated during handshake'),
+        const TlsException('fallo TLS'),
+        const CertificateException('certificado no verificable'),
+      ]) {
+        final d = clasificarFalloSync(error);
+        expect(d.accion, AccionFallo.esperarRed, reason: error.runtimeType.toString());
+        expect(d.mensaje, contains('conexión segura'));
+      }
+    });
+
+    test('un JSON cortado o un cuerpo vacio dentro de una llamada al servidor (RespuestaIncompleta) espera la red', () {
+      for (final cuerpo in ['{"id": 4, "estado": "fin', '', '<html>']) {
+        late final FormatException error;
+        try {
+          jsonDecode(cuerpo);
+          fail('deberia haber lanzado');
+        } on FormatException catch (e) {
+          error = e;
+        }
+        final d = clasificarFalloSync(RespuestaIncompleta(error));
+        expect(d.accion, AccionFallo.esperarRed, reason: cuerpo);
+        expect(d.mensaje, contains('incompleta'));
+      }
+    });
+
+    test('un FormatException suelto (int.parse, DateTime.parse sobre datos propios) NO es de red: gasta intento', () {
+      final errores = <FormatException>[];
+      for (final falla in <void Function()>[() => int.parse('abc'), () => DateTime.parse('ayer'), () => double.parse('x')]) {
+        try {
+          falla();
+        } on FormatException catch (e) {
+          errores.add(e);
+        }
+      }
+      expect(errores, hasLength(3));
+      for (final e in errores) {
+        expect(clasificarFalloSync(e).accion, AccionFallo.gastarIntento, reason: e.message);
       }
     });
   });

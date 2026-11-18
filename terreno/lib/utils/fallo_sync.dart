@@ -89,6 +89,21 @@ const _mensajeFotosAgotado = 'El servidor de fotos lleva mucho rato sin responde
 const _mensajeServidorAgotado = 'El servidor lleva mucho rato sin responder. '
     'Toca Reintentar más tarde o avisa al administrativo.';
 
+/// Respuesta del servidor que llego cortada o corrupta (JSON truncado, cuerpo vacio de un proxy): un
+/// [FormatException] al leer lo que devolvio una llamada HTTP. Es un fallo de la conexion, no de la tarea.
+///
+/// Criterio para no confundirlo con un error de programacion: un `FormatException` suelto NO se
+/// clasifica como de red, porque tambien lo lanzan `int.parse` o `DateTime.parse` sobre datos propios del
+/// telefono (esos reintentando no se arreglan). Solo es de red el que se origina DENTRO de una llamada al
+/// servidor: `SyncService` envuelve su cliente HTTP y convierte ahi el `FormatException` en este tipo. Un
+/// payload local ilegible tampoco llega aqui: `_ejecutarTarea` lo convierte en [ErrorPermanenteSync].
+class RespuestaIncompleta implements Exception {
+  final FormatException causa;
+  RespuestaIncompleta(this.causa);
+  @override
+  String toString() => 'Respuesta incompleta del servidor: ${causa.message}';
+}
+
 /// Clasifica el error con que fallo una tarea de la cola.
 DecisionFallo clasificarFalloSync(Object error) {
   // sin red: los tres tipos que ClienteApi deja pasar sin envolver
@@ -103,6 +118,16 @@ DecisionFallo clasificarFalloSync(Object error) {
   if (error is http.ClientException) {
     return const DecisionFallo(
         AccionFallo.esperarRed, 'No se pudo conectar con el servidor. Se reintentará en la próxima actualización.');
+  }
+  // Fallo TLS (apreton de manos cortado, certificado no verificable tras un portal cautivo o proxy): es
+  // de la conexion, no de la tarea. HandshakeException y CertificateException son TlsException.
+  if (error is TlsException) {
+    return const DecisionFallo(
+        AccionFallo.esperarRed, 'No se pudo establecer una conexión segura. Se reintentará al volver la señal.');
+  }
+  if (error is RespuestaIncompleta) {
+    return const DecisionFallo(AccionFallo.esperarRed,
+        'La respuesta del servidor llegó incompleta. Se reintentará en la próxima actualización.');
   }
   if (error is ErrorPermanenteSync) {
     return DecisionFallo(AccionFallo.aError, error.mensaje);

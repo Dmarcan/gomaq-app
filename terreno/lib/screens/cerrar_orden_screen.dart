@@ -144,8 +144,8 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
           where: 'orden_trabajo_id = ? AND termino IS NULL', whereArgs: [ordenId], orderBy: 'inicio ASC');
       for (final tramo in abiertos) {
         final inicio = DateTime.parse(tramo['inicio'] as String);
-        await db.delete('tramos_locales', where: 'id = ?', whereArgs: [tramo['id']]);
-        await syncService.encolarTramo(ordenId, inicio: inicio, termino: DateTime.now());
+        await syncService.encolarTramo(ordenId,
+            inicio: inicio, termino: DateTime.now(), reemplazaTramoLocalId: tramo['id'] as int);
       }
 
       await syncService.encolarFinalizar(
