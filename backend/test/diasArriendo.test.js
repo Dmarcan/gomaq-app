@@ -4,8 +4,8 @@ const { test, describe } = require('node:test');
 const assert = require('node:assert');
 
 const {
-    calcularDiasTranscurridos, calcularInicioCobro, diaSantiago, horaSantiago, sumarDias, diasEntre,
-    inicioCobroDia, finCobroDia, fechasDeCorte, proximoCorte,
+    diaSantiago, horaSantiago, sumarDias, diasEntre,
+    inicioCobroDia, finCobroDia, proximoCorte,
 } = require('../src/utils/diasArriendo');
 const { resumirArriendoEnCurso } = require('../src/utils/periodosArriendo');
 const { DEFAULTS, validarCambioConfiguracion } = require('../src/utils/configuracion');
@@ -149,52 +149,7 @@ describe('cambio de cliente: cada dia se cobra a uno solo (contiguidad)', () => 
     });
 });
 
-describe('calcularDiasTranscurridos', () => {
-    test('recepcion antes del corte: el dia no se cobra; desde el corte, si', () => {
-        assert.equal(calcularDiasTranscurridos('2026-03-01T09:00:00-03:00', '2026-03-05T10:00:00-03:00'), 4);
-        assert.equal(calcularDiasTranscurridos('2026-03-01T09:00:00-03:00', '2026-03-05T13:00:00-03:00'), 5);
-        assert.equal(calcularDiasTranscurridos('2026-03-01T09:00:00-03:00', '2026-03-05T23:59:00-03:00'), 5);
-    });
-
-    test('recepcion el mismo dia del despacho da 0 dias y nunca negativo', () => {
-        assert.equal(calcularDiasTranscurridos('2026-03-01T09:00:00-03:00', '2026-03-01T10:00:00-03:00'), 0);
-        assert.equal(calcularDiasTranscurridos('2026-03-01T09:00:00-03:00', '2026-03-01T13:00:00-03:00'), 1);
-        assert.equal(calcularDiasTranscurridos('2026-03-01T15:00:00-03:00', '2026-03-01T17:00:00-03:00'), 0);
-        assert.equal(calcularDiasTranscurridos('2026-03-01T15:00:00-03:00', '2026-03-01T09:00:00-03:00'), 0);
-    });
-
-    test('la hora de corte configurable cambia el primer y el ultimo dia', () => {
-        // despacho a las 10 y recepcion a las 12: con corte 11 se cobra el dia 1 y el dia 5 (5 dias);
-        // con corte 9 no se cobra el dia 1 (despacho desde el corte) y si el dia 5 (4 dias)
-        assert.equal(calcularDiasTranscurridos('2026-03-01T10:00:00-03:00', '2026-03-05T12:00:00-03:00', { horaCorte: 11 }), 5);
-        assert.equal(calcularDiasTranscurridos('2026-03-01T10:00:00-03:00', '2026-03-05T12:00:00-03:00', { horaCorte: 9 }), 4);
-    });
-
-    test('cambio de hora: del 1 al 10 de abril y de septiembre', () => {
-        assert.equal(calcularDiasTranscurridos('2026-04-01T09:00:00-03:00', '2026-04-10T14:00:00-04:00'), 10);
-        assert.equal(calcularDiasTranscurridos('2026-09-01T09:00:00-04:00', '2026-09-10T14:00:00-03:00'), 10);
-    });
-
-    test('calcularInicioCobro conserva su comportamiento', () => {
-        assert.equal(calcularInicioCobro('2026-03-10T12:59:00-03:00').getDate(), 10);
-        assert.equal(calcularInicioCobro('2026-03-10T13:00:00-03:00').getDate(), 11);
-    });
-});
-
-describe('fechasDeCorte y proximoCorte', () => {
-    test('cortes dentro del rango, inclusive', () => {
-        assert.deepEqual(fechasDeCorte('2026-03-06', '2026-05-10', 5), ['2026-04-05', '2026-05-05']);
-        assert.deepEqual(fechasDeCorte('2026-03-05', '2026-03-05', 5), ['2026-03-05']);
-        assert.deepEqual(fechasDeCorte('2026-03-06', '2026-04-04', 5), []);
-        assert.deepEqual(fechasDeCorte('2026-03-10', '2026-03-01', 5), []);
-    });
-
-    test('dia 1, dia 28 (febrero) y paso de diciembre a enero', () => {
-        assert.deepEqual(fechasDeCorte('2026-01-15', '2026-03-01', 1), ['2026-02-01', '2026-03-01']);
-        assert.deepEqual(fechasDeCorte('2026-02-01', '2026-02-28', 28), ['2026-02-28']);
-        assert.deepEqual(fechasDeCorte('2026-12-20', '2027-01-10', 5), ['2027-01-05']);
-    });
-
+describe('proximoCorte', () => {
     test('proximo corte es siempre posterior a hoy', () => {
         assert.equal(proximoCorte('2026-03-04', 5), '2026-03-05');
         assert.equal(proximoCorte('2026-03-05', 5), '2026-04-05');

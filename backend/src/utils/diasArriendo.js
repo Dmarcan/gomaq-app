@@ -4,17 +4,6 @@
 // Es el valor por defecto: la configuracion vigente vive en la tabla `configuracion`.
 const HORA_CORTE = 13;
 
-// Version dependiente de process.env.TZ (server.js y el worker la fijan a Santiago). La usa
-// utils/rentabilidad.js; el codigo nuevo usa inicioCobroDia, que no depende del proceso.
-function calcularInicioCobro(fechaDespacho, horaCorte = HORA_CORTE) {
-    const inicio = new Date(fechaDespacho);
-    if (inicio.getHours() >= horaCorte) {
-        inicio.setDate(inicio.getDate() + 1);
-    }
-    inicio.setHours(0, 0, 0, 0);
-    return inicio;
-}
-
 // proyecta una fecha local a un "dia de calendario" en un marco sin cambios de hora:
 // Chile tiene DST (dias de 23/25 horas), asi que restar milisegundos y dividir por 24h
 // produce off-by-one dos veces al ano. Date.UTC de los componentes año/mes/dia es el
@@ -76,30 +65,7 @@ function finCobroDia(instante, horaCorte = HORA_CORTE) {
     return horaSantiago(instante) >= horaCorte ? dia : sumarDias(dia, -1);
 }
 
-// Dias facturables de un arriendo cerrado: desde su inicio de cobro hasta su ultimo dia (finCobroDia),
-// ambos inclusive y nunca negativo. Sin cierre (fechaFin null): hasta hoy inclusive.
-function calcularDiasTranscurridos(fechaDespacho, fechaFin, { horaCorte = HORA_CORTE } = {}) {
-    const inicio = inicioCobroDia(fechaDespacho, horaCorte);
-    const fin = fechaFin ? finCobroDia(fechaFin, horaCorte) : diaSantiago(new Date());
-    return diasEntre(inicio, fin);
-}
-
 const diaDelMes = (anio, mes, dia) => `${anio}-${String(mes).padStart(2, '0')}-${String(dia).padStart(2, '0')}`;
-
-// dias de corte (el dia de facturacion de cada mes) dentro de [desde, hasta], ambos inclusive
-function fechasDeCorte(desde, hasta, diaFacturacion) {
-    const cortes = [];
-    if (aUtc(desde) > aUtc(hasta)) return cortes;
-    let [anio, mes] = desde.split('-').map(Number);
-    const [anioFin, mesFin] = hasta.split('-').map(Number);
-    while (anio < anioFin || (anio === anioFin && mes <= mesFin)) {
-        const corte = diaDelMes(anio, mes, diaFacturacion);
-        if (aUtc(corte) >= aUtc(desde) && aUtc(corte) <= aUtc(hasta)) cortes.push(corte);
-        mes += 1;
-        if (mes > 12) { mes = 1; anio += 1; }
-    }
-    return cortes;
-}
 
 // primer dia de corte estrictamente posterior a `hoy`
 function proximoCorte(hoy, diaFacturacion) {
@@ -114,6 +80,6 @@ function proximoCorte(hoy, diaFacturacion) {
 }
 
 module.exports = {
-    HORA_CORTE, calcularInicioCobro, calcularDiasTranscurridos, diaCalendarioUtc,
-    diaSantiago, horaSantiago, sumarDias, diasEntre, inicioCobroDia, finCobroDia, fechasDeCorte, proximoCorte,
+    HORA_CORTE, diaCalendarioUtc,
+    diaSantiago, horaSantiago, sumarDias, diasEntre, inicioCobroDia, finCobroDia, proximoCorte,
 };
