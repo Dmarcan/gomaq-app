@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
-/// Paleta del rediseño industrial oscuro (proyecto Stitch "GOMAQ Field Service App").
-/// El naranja primario se conserva de los mockups originales del informe.
+/// Paleta industrial oscura, pensada para usarse en terreno con sol directo.
 class GomaqColors {
   GomaqColors._();
 
@@ -17,7 +16,6 @@ class GomaqColors {
   /// WCAG AA pide 4,5:1; sobre este da 5,18:1.
   static const accion = Color(0xFFC2410C);
 
-  // Tema oscuro industrial
   static const fondoOscuro = Color(0xFF1A1D21);
   static const superficieTarjeta = Color(0xFF22262B);
   static const superficieElevada = Color(0xFF2A2F35);
@@ -115,8 +113,8 @@ ThemeData construirTemaGomaq() {
     brightness: Brightness.dark,
     surface: GomaqColors.fondoOscuro,
   ).copyWith(
-    // chips y controles segmentados salían en el tono que Material deriva de la semilla; aquí van
-    // en el marrón oscuro de la marca
+    // chips y controles segmentados toman el marron oscuro de la marca y no el tono que Material
+    // deriva de la semilla
     secondaryContainer: const Color(0xFF3D2318),
     onSecondaryContainer: const Color(0xFFFFE6D8),
     surfaceTint: Colors.transparent,

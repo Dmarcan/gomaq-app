@@ -12,9 +12,9 @@ class ConnectivityService extends ChangeNotifier {
   StreamSubscription? _sub;
 
   Future<void> iniciar() async {
-    // sembrar el estado REAL al arrancar: onConnectivityChanged solo avisa cambios,
-    // asi que una app abierta sin senal se creia online (el default) hasta el primer
-    // cambio - la barra decia "Todo sincronizado" siendo falso
+    // sembrar el estado REAL al arrancar: onConnectivityChanged solo avisa cambios, asi que una
+    // app abierta sin senal se creeria online (el default) hasta el primer cambio y la barra diria
+    // "Todo sincronizado" siendo falso
     try {
       final resultados = await Connectivity().checkConnectivity();
       final estadoInicial = !resultados.contains(ConnectivityResult.none);

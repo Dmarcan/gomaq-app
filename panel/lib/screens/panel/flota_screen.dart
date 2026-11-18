@@ -14,11 +14,9 @@ import '../../widgets/estado_vacio.dart';
 import '../../widgets/ficha_tecnica_campos.dart';
 import '../../widgets/pestanas.dart';
 
-/// Flota: los equipos de GOMAQ en una tabla, con una pestaña por categoría.
-///
-/// Lo que se quiere resolver de un vistazo es cuál es cuál y en qué estado está. Por eso cada
-/// pestaña cambia la columna de medida (capacidad en kg para grúas y traspaletas, altura de
-/// trabajo para los alzahombres) y el estado siempre lleva ícono y texto, no solo color.
+/// Los equipos de GOMAQ en una tabla, con una pestana por categoria. Cada pestana cambia la columna
+/// de medida (capacidad en kg para gruas y traspaletas, altura de trabajo para alzahombres) y el
+/// estado siempre lleva icono y texto, no solo color.
 class FlotaScreen extends StatefulWidget {
   /// Filtros que llegan por la URL (?estado=...&disponibilidad=...), para que "Flota filtrada"
   /// sea compartible y sobreviva a un F5. Los usa el Dashboard desde sus números tocables.
@@ -55,7 +53,6 @@ class _FlotaScreenState extends State<FlotaScreen> {
   String _orden = 'codigo';
   bool _ascendente = true;
 
-  // paginación en servidor: antes se bajaban los ~500 equipos y se filtraba en el panel
   static const _porPagina = 50;
   int _total = 0;
   bool _hayMas = false;
@@ -151,8 +148,8 @@ class _FlotaScreenState extends State<FlotaScreen> {
     _debounce = Timer(const Duration(milliseconds: 350), _cargar);
   }
 
-  /// Clientes para el filtro. Se piden aparte y NO se derivan de los equipos cargados:
-  /// desde que la lista pagina, derivarlos solo mostraría los clientes de la primera página.
+  /// Clientes para el filtro. Se piden aparte y NO se derivan de los equipos cargados: como la
+  /// lista pagina, solo mostrarian los de la primera pagina.
   List<dynamic> _clientes = [];
 
   Future<void> _cargarClientes() async {
@@ -163,8 +160,6 @@ class _FlotaScreenState extends State<FlotaScreen> {
       // el filtro por cliente queda sin opciones, pero la flota igual se ve
     }
   }
-
-  // ---- filtros -------------------------------------------------------------------------------
 
   bool get _hayFiltros =>
       _filtroDisponibilidad != null || _filtroEstado != null || _filtroCliente != null || _busqueda.trim().isNotEmpty;
@@ -370,8 +365,6 @@ class _FlotaScreenState extends State<FlotaScreen> {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Maquinaria creada')));
     }
   }
-
-  // ---- pantalla ------------------------------------------------------------------------------
 
   /// Las columnas cambian con la pestaña: la medida que importa de una grúa (capacidad) no es
   /// la de un alzahombre (altura de trabajo).
@@ -740,7 +733,6 @@ class _FlotaScreenState extends State<FlotaScreen> {
     );
   }
 
-  /// Pie de la lista: cuántos equipos se ven de cuántos hay, y el botón para traer más.
   Widget _pieDeLista(int mostrados) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 16),

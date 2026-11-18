@@ -78,8 +78,6 @@ Future<void> _cambiarPorDefecto(int id, String ruta, Map<String, dynamic> cuerpo
   await ApiClient.instance.patch('/api/facturacion/$id$ruta', cuerpo);
 }
 
-/// Pestaña "Emitidas" de Facturación: las facturas ya cargadas con su estado de cobranza.
-///
 /// Filtros con texto (todas, por cobrar, vencidas, próximas a vencer, pagadas, anuladas), búsqueda por
 /// folio o cliente y lista paginada. El estado de cada fila lleva icono y texto además del color. Solo el
 /// administrativo ([puedeEscribir]) marca pagos, anula con nota de crédito y corrige; el gerente la ve en
@@ -450,8 +448,6 @@ class _FacturasEmitidasTabState extends State<FacturasEmitidasTab> {
     }
     if (mounted) setState(() => _aviso = aviso);
   }
-
-  // ---------- presentación ----------
 
   /// Color del texto y del icono del estado: los de texto cumplen 4,5:1 sobre blanco.
   ({IconData icono, Color color}) _estiloEstado(String? estado) => switch (estado) {

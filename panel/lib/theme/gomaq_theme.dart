@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-/// Paleta extraida de los mockups del informe (pptx_unzip/ppt/media/image20.png, image36.png)
 class GomaqColors {
   GomaqColors._();
 
@@ -71,8 +70,8 @@ class GomaqColors {
 
   static Color fondoChip(String estado) => colorEstado(estado).withValues(alpha: 0.15);
 
-  /// Nombre de un estado para mostrarlo. Antes el panel mostraba el valor de la base tal cual
-  /// ("en_terreno", "operativa"), que no es para personas.
+  /// Nombre de un estado para mostrarlo: el valor de la base ("en_terreno", "operativa") no es para
+  /// personas.
   static String etiquetaEstado(String? estado) {
     switch (estado) {
       case null:
@@ -114,8 +113,8 @@ class GomaqColors {
   }
 }
 
-/// Borde visible cuando el control tiene el foco del teclado. Sin esto, navegar con Tab solo
-/// mostraba un sombreado gris casi invisible (WCAG 2.4.7).
+/// Borde visible cuando el control tiene el foco del teclado (WCAG 2.4.7): el sombreado gris por
+/// defecto es casi invisible.
 WidgetStateProperty<BorderSide?> _bordeFoco(Color color, {BorderSide? normal}) =>
     WidgetStateProperty.resolveWith(
       (estados) => estados.contains(WidgetState.focused) ? BorderSide(color: color, width: 2.5) : normal,

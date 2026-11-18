@@ -17,8 +17,6 @@ import '../../widgets/desglose_costos_equipo.dart';
 import '../../widgets/documentos_equipo.dart';
 import '../../widgets/linea_tiempo_equipo.dart';
 
-/// Perfil de un equipo: quién es, en qué estado está y qué hacer con él.
-///
 /// Arriba, lo que hay que saber de un vistazo (estado, medida principal, combustible, cliente y
 /// cuánto falta para la mantención) y las acciones. Debajo, pestañas para no apilar la ficha, el
 /// historial y los costos en una sola página larga. Tiene URL propia (/flota/:id), así que F5 y
@@ -80,8 +78,8 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
     }
   }
 
-  /// Gasto en repuestos contra lo facturado. El gasto cuenta todas las líneas, se hayan
-  /// cobrado o no: es el costo real para GOMAQ (entrevista el jefe de taller, punto 1).
+  /// Gasto en repuestos contra lo facturado. El gasto cuenta todas las lineas, se hayan cobrado o
+  /// no: es el costo real para GOMAQ.
   Widget _bloqueCosto() {
     final r = _rentabilidad!;
     final perdida = r['sale_a_perdida'] == true;
@@ -252,8 +250,6 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
     }
   }
 
-  // ---- acciones ------------------------------------------------------------------------------
-
   Future<void> _asignarACliente(Map<String, dynamic> m) async {
     final hecho = await asignarEquipoACliente(context, maquinariaId: widget.maquinariaId, codigo: '${m['codigo']}');
     if (hecho && mounted) _cargar(silencioso: true);
@@ -331,8 +327,6 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
 
   void _volver() => context.canPop() ? context.pop() : context.go('/flota');
 
-  // ---- datos derivados -----------------------------------------------------------------------
-
   static bool _vacio(dynamic v) => v == null || '$v'.trim().isEmpty;
 
   /// Los datos de la ficha que ayudan a distinguir y mantener el equipo y todavía no se cargaron.
@@ -384,8 +378,6 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
     final texto = 'En ${Formato.medida(restantes, 'h')}';
     return (texto: texto, color: mant['por_vencer'] == true ? GomaqColors.textoEstado('en_mantencion') : null);
   }
-
-  // ---- pantalla ------------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -491,8 +483,8 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
                       ),
               ),
               const SizedBox(width: 16),
-              // Flexible: sin él, el subtítulo no tenía límite de ancho en un teléfono y se salía
-              // de la tarjeta en vez de pasar a la línea siguiente.
+              // Flexible: sin el, el subtitulo no tiene limite de ancho en un telefono y se sale
+              // de la tarjeta en vez de pasar a la linea siguiente.
               Flexible(
                 child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 520),
@@ -596,8 +588,6 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
       ),
     );
   }
-
-  // ---- pestañas ------------------------------------------------------------------------------
 
   Widget _pestanaResumen(Map<String, dynamic> m, AuthService auth) {
     final faltantes = _datosFaltantes(m);
@@ -765,7 +755,6 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
                 onTap: () => context.push('/ordenes/${ot['id']}'),
                 title: Text('OT #${ot['id']} · ${ot['motivo'] ?? 'Sin motivo especificado'}'),
                 subtitle: Text(
-                  // dd/mm/aaaa como en el resto del sistema (antes mostraba 2026-09-09)
                   '${ot['diagnostico'] ?? 'Sin diagnóstico'}\n${Formato.fecha(ot['fecha_creacion'])}'
                   '${ot['fecha_cierre'] != null ? ' → ${Formato.fecha(ot['fecha_cierre'])}' : ''}',
                 ),

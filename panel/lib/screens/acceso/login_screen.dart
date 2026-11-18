@@ -89,8 +89,8 @@ class _LoginScreenState extends State<LoginScreen> {
                     keyboardType: TextInputType.emailAddress,
                     autofillHints: const [AutofillHints.username, AutofillHints.email],
                     textInputAction: TextInputAction.next,
-                    // «Siguiente» pasa a la contraseña (Flutter ya mueve el foco con TextInputAction.next;
-                    // llamar además a nextFocus lo movería dos veces). Antes intentaba entrar con ella vacía.
+                    // "Siguiente" pasa a la contrasena (Flutter ya mueve el foco con
+                    // TextInputAction.next; llamar ademas a nextFocus lo moveria dos veces).
                   ),
                   const SizedBox(height: 16),
                   TextField(

@@ -7,8 +7,6 @@ import '../../widgets/estado_vacio.dart';
 import '../../widgets/pestanas.dart';
 import '../../widgets/selector_plazo_pago.dart';
 
-/// Historial de un cliente: su ficha, y lo que ha arrendado, facturado y las órdenes de trabajo.
-///
 /// Tiene URL propia (/clientes/:id). Bajo 600 px las tres secciones se apilan; desde 600 px van en
 /// pestañas. Cada fila es un enlace: el equipo abre `/flota/:id` y la orden `/ordenes/:id`. No muestra
 /// documentos: se abren desde el perfil del equipo o la orden.
@@ -325,7 +323,6 @@ class _Seccion extends StatelessWidget {
   }
 }
 
-/// Una fila de la lista. Con [onTap] es un enlace: se alcanza con Tab y se abre con Enter o Espacio.
 class _Fila extends StatelessWidget {
   final IconData icono;
   final String titulo;

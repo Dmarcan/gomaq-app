@@ -3,9 +3,8 @@ import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
 import 'facturas_emitidas_tab.dart';
 
-/// Facturas ya emitidas y su cobranza (vencidas, por vencer, pagadas, notas de crédito, exportar a Excel).
-/// Antes era la pestaña "Emitidas" de Facturación; ahora tiene su propia entrada en el menú, porque emitir
-/// y cobrar son dos tareas distintas.
+/// Facturas ya emitidas y su cobranza (vencidas, por vencer, pagadas, notas de credito, exportar a
+/// Excel). Tiene su propia entrada en el menu: emitir y cobrar son tareas distintas.
 class FacturasEmitidasScreen extends StatelessWidget {
   /// `vencidas` o `proximas` llegan desde las tarjetas de cobranza del inicio.
   final String? filtroInicial;

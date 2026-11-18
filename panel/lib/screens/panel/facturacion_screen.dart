@@ -279,7 +279,7 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
   bool _detectando = false;
   bool _procesando = false;
   bool _guardandoEdicion = false;
-  // avisos de los campos: antes, con el folio o el PDF sin llenar, el boton no hacia nada y no decia por que
+  // avisos de los campos: con el folio o el PDF sin llenar, el boton dice por que no avanza
   String? _errorArchivo;
   String? _errorFolio;
   String? _errorMonto;
@@ -646,7 +646,6 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
     return !(sinEditar || antes == null);
   }
 
-  /// Pide al servidor el texto por defecto del correo (asunto, cuerpo y periodo) de la factura creada.
   Future<void> _cargarVistaPrevia() async {
     final id = _facturaCreada?['id'];
     if (id == null) return;

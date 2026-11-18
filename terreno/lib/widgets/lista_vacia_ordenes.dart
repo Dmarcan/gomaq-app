@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import '../theme/gomaq_theme.dart';
 
-/// Lista de ordenes vacia. Antes era un texto fijo sin forma de actualizar: si la oficina asignaba
-/// una orden con la app abierta, el mecanico no tenia como traerla. Ahora se puede deslizar hacia
-/// abajo (la lista es desplazable aunque no tenga nada) o tocar "Actualizar".
+/// Lista de ordenes vacia. Se puede deslizar hacia abajo (es desplazable aunque no tenga nada) o
+/// tocar "Actualizar", para traer una orden que la oficina asigne con la app abierta.
 class ListaVaciaOrdenes extends StatelessWidget {
   final Future<void> Function() onActualizar;
 

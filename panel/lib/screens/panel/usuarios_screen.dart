@@ -550,8 +550,8 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     if (guardado && mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Número guardado')));
   }
 
-  /// Quién recibe el aviso de mantención próxima. Se configura acá y no en el .env del
-  /// servidor, para que cambiar el destinatario no exija entrar por SSH.
+  /// Quien recibe el aviso de mantencion proxima. Se configura aqui y no en el .env del servidor,
+  /// para que cambiar el destinatario no exija acceso al servidor.
   Widget _tarjetaAlertas() {
     return Card(
       child: Padding(

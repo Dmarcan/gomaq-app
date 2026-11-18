@@ -6,8 +6,8 @@ import 'package:gomaq_web/utils/mapa_operativo.dart';
 import 'package:gomaq_web/utils/ubicacion.dart';
 import 'utils/tamano.dart';
 
-/// La ficha del mapa ya no es una hoja modal: va en la columna lateral, no oscurece el mapa, se
-/// mantiene al día con cada refresco y se cierra con Esc. El refresco es más seguido con furgones.
+/// La ficha del mapa va en la columna lateral (no es una hoja modal), no oscurece el mapa, se
+/// mantiene al dia con cada refresco y se cierra con Esc. El refresco es mas seguido con furgones.
 
 FurgonMapa _furgon({DateTime? posicionAt, int ot = 9}) => FurgonMapa(
   ordenTrabajoId: ot,

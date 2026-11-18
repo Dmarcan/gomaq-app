@@ -84,8 +84,7 @@ class AsignarMecanicoState extends State<AsignarMecanicoDialog> {
   @override
   Widget build(BuildContext context) {
     final o = widget.orden;
-    // se titulaba "Nueva orden de trabajo", pero no crea nada: asigna un mecánico a una orden que
-    // ya existe. El nombre viejo mandaba a buscar el formulario de crear en el lugar equivocado.
+    // asigna un mecanico a una orden que ya existe: no crea nada
     return CuadroDialogo(
       icono: Icons.engineering,
       titulo: widget.reasignar ? 'Reasignar mecánico' : 'Asignar mecánico',

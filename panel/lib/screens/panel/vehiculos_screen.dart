@@ -4,11 +4,9 @@ import '../../widgets/dialogos.dart';
 import '../../widgets/estado_vacio.dart';
 import '../../utils/numeros.dart';
 
-/// Vehículos del personal. Asignar uno a un mecánico le crea además su ubicación de stock:
-/// ese furgón pasa a tener existencias propias, separadas de la bodega central.
-///
-/// Un vehículo sin mecánico asignado no lleva stock — es el caso del furgón de compras, que
-/// no sale a terreno (entrevista el jefe de taller, punto 3).
+/// Vehiculos del personal. Asignar uno a un mecanico le crea ademas su ubicacion de stock: ese
+/// furgon pasa a tener existencias propias, separadas de la bodega central. Un vehiculo sin
+/// mecanico asignado no lleva stock (el furgon de compras, que no sale a terreno).
 class VehiculosScreen extends StatefulWidget {
   const VehiculosScreen({super.key});
 
@@ -170,9 +168,8 @@ class _VehiculosScreenState extends State<VehiculosScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // el titulo lo pone el marco del panel (admin_dashboard_screen): aca va la bajada
-        // a la izquierda y la accion a la derecha, en la misma linea
-        // con el margen de 24 px del titulo del marco: antes la bajada quedaba pegada a la barra
+        // el titulo lo pone el marco del panel (admin_dashboard_screen): aca va la bajada a la
+        // izquierda y la accion a la derecha, con el margen de 24 px del titulo del marco
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Row(

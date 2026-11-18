@@ -279,7 +279,7 @@ class _InsumosScreenState extends State<InsumosScreen> with SingleTickerProvider
                           final mov = _movimientos[i];
                           return Card(
                             child: ListTile(
-                              // una línea escrita a mano no tiene insumo del catálogo: antes decía "null"
+                              // una linea escrita a mano no tiene insumo del catalogo
                               title: Text(
                                 '${mov['tipo'] == 'ajuste' ? 'Ajuste de conteo · ' : ''}'
                                 '${mov['insumo_nombre'] ?? mov['descripcion'] ?? 'Repuesto'} · '

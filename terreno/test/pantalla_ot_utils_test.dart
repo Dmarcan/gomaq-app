@@ -105,7 +105,6 @@ void main() {
 
   group('textoStockBodegaFurgon (hoja Cargar desde bodega)', () {
     test('las dos cantidades llevan su unidad, en plural cuando corresponde', () {
-      // en la prueba decia "Bodega: 10 · Tu furgón: -3 unidad"
       expect(textoStockBodegaFurgon(10.0, -3.0, 'unidad'), 'Bodega: 10 unidades · Tu furgón: -3 unidades');
       expect(textoStockBodegaFurgon(1.0, 0.0, 'unidad'), 'Bodega: 1 unidad · Tu furgón: 0 unidades');
       expect(textoStockBodegaFurgon(2.5, 1.0, 'litro', detalle: true), 'En bodega: 2,5 litros · En tu furgón: 1 litro');

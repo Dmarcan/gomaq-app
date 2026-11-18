@@ -1,10 +1,9 @@
 import 'dart:math';
 
-/// Motivo de un cambio a las líneas de repuesto de una orden (bloque 1b).
-///
-/// Las reglas son las del servidor (backend/src/utils/auditoriaLinea.js): con la orden cerrada el
-/// motivo es obligatorio, con un código de la lista y un texto de al menos 10 caracteres sin contar
-/// espacios. Acá se validan antes de enviar para avisar en el campo, pero quien decide es el servidor.
+/// Motivo de un cambio a las lineas de repuesto de una orden. Las reglas son las del servidor
+/// (backend/src/utils/auditoriaLinea.js): con la orden cerrada el motivo es obligatorio, con un
+/// codigo de la lista y un texto de al menos 10 caracteres sin contar espacios. Aqui se validan
+/// antes de enviar para avisar en el campo, pero quien decide es el servidor.
 
 /// Códigos del servidor con su texto en español, en el orden en que se muestran.
 const motivosCambio = <({String codigo, String etiqueta})>[

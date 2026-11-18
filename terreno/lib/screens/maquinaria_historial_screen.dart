@@ -3,11 +3,9 @@ import '../db/local_database.dart';
 import '../theme/gomaq_theme.dart';
 import '../utils/formato.dart';
 
-/// Historial tecnico del equipo, para consultarlo en terreno.
-///
-/// La diapositiva 12 del informe dice que el mecanico "consulta historial tecnico"; hasta
-/// ahora la app solo le mostraba la OT en curso. Lee de la base local, asi que funciona sin
-/// señal: sync_service baja la ficha y el historial de los equipos de sus OT asignadas.
+/// Historial tecnico del equipo, para consultarlo en terreno. Lee de la base local, asi que
+/// funciona sin senal: sync_service baja la ficha y el historial de los equipos de sus OT
+/// asignadas.
 class MaquinariaHistorialScreen extends StatefulWidget {
   final int maquinariaId;
   final String codigo;

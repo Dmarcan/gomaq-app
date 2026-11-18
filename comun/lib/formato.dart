@@ -1,10 +1,7 @@
 import 'package:intl/intl.dart';
 
-/// Formato de fechas y montos, en un solo lugar.
-///
-/// Antes cada pantalla lo resolvía a mano: `'${f.day}/${f.month}/${f.year}'` en cuatro
-/// archivos (sin ceros a la izquierda, así que salía "5/3/2026") y un `_clp()` duplicado
-/// en dos pantallas del panel. Con `intl` además queda con locale chileno de verdad.
+/// Formato de fechas y montos en es_CL, en un solo lugar. Con `intl` queda con locale chileno de
+/// verdad.
 class Formato {
   Formato._();
 

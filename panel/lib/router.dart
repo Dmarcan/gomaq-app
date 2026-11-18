@@ -27,20 +27,13 @@ import 'screens/panel/vehiculos_screen.dart';
 import 'utils/pendientes.dart' show destinoConFiltro;
 import 'widgets/estado_vacio.dart';
 
-/// Rutas del panel.
-///
-/// Antes la navegacion era un `int _seccion` dentro del dashboard: la URL nunca cambiaba, asi
-/// que F5 siempre volvia al inicio, el boton atras del navegador salia del panel y no se podia
-/// compartir el enlace de una seccion. Era el punto 10 del "Que falta" del README.
-///
 /// Las secciones del panel viven dentro de un ShellRoute para que la barra lateral no se
 /// reconstruya al cambiar de una a otra.
 
-/// Una seccion del menu lateral, agrupada por area.
 typedef ItemMenu = ({String ruta, IconData icono, String etiqueta, String grupo});
 
-/// El menu eran 13 items planos. Pasado el septimo la gente deja de escanear y empieza a
-/// buscar, asi que se agrupan por area de trabajo.
+/// Agrupados por area de trabajo: pasado el septimo item la gente deja de escanear y empieza a
+/// buscar.
 const List<ItemMenu> itemsMenu = [
   (ruta: '/', icono: Icons.dashboard, etiqueta: 'Inicio', grupo: 'Operación'),
   (ruta: '/flota', icono: Icons.local_shipping, etiqueta: 'Flota', grupo: 'Operación'),
@@ -81,9 +74,8 @@ GoRouter construirRouter(AuthService auth) {
       // a alguien que si tiene sesion valida
       if (auth.verificandoSesion) return null;
 
-      // pantallas publicas: el login, el registro de clientes (antes el registro se abria con
-      // Navigator.push sobre /login, asi que recargar la pagina borraba lo escrito) y el canje de los
-      // codigos de la cuenta (activar una invitacion, recuperar la contrasena)
+      // pantallas publicas: el login, el registro de clientes y el canje de los codigos de la
+      // cuenta (activar una invitacion, recuperar la contrasena)
       final yendoALogin = rutasPublicas.contains(estado.matchedLocation);
       if (!auth.autenticado) return yendoALogin ? null : '/login';
 
@@ -115,7 +107,6 @@ GoRouter construirRouter(AuthService auth) {
       ),
       GoRoute(path: '/rol-no-soportado', builder: (_, _) => const RolNoSoportadoScreen()),
 
-      // el shell mantiene la barra lateral montada entre secciones
       ShellRoute(
         builder: (context, estado, hijo) => AdminDashboardScreen(rutaActual: estado.uri.path, child: hijo),
         routes: [
@@ -145,7 +136,6 @@ GoRouter construirRouter(AuthService auth) {
           ),
           GoRoute(
             // el perfil de un equipo tiene URL propia: F5 y los enlaces compartidos vuelven a el
-            // (antes se abria con Navigator.push y recargar la pagina lo perdia)
             path: '/flota/:id',
             builder: (context, estado) {
               final id = int.tryParse(estado.pathParameters['id'] ?? '');
@@ -174,7 +164,6 @@ GoRouter construirRouter(AuthService auth) {
               pestanaInicial: estado.uri.queryParameters['pestana'],
             ),
             routes: [
-              // detalle de una orden como página: /ordenes/12 (se puede recargar y compartir)
               GoRoute(
                 path: ':id',
                 // un id que no es número, 0 o negativo lo resuelve la propia pantalla ('No encontramos esa orden')
@@ -185,7 +174,7 @@ GoRouter construirRouter(AuthService auth) {
               ),
             ],
           ),
-          // Asignación se integró en Órdenes (pestaña "Sin asignar")
+          // /asignacion redirige a la pestana "Sin asignar" de Ordenes
           GoRoute(path: '/asignacion', redirect: (_, _) => '/ordenes?pestana=sin_asignar'),
           GoRoute(
             path: '/asistencias',
@@ -209,12 +198,12 @@ GoRouter construirRouter(AuthService auth) {
               filtroInicial: estado.uri.queryParameters['filtro'],
             ),
           ),
-          // el Horómetro pasó a llamarse Mantención: los enlaces guardados siguen funcionando
+          // los enlaces guardados a /horometro (hoy Mantencion) siguen funcionando
           GoRoute(path: '/horometro', redirect: (_, estado) => destinoConFiltro('/mantencion', estado.uri.queryParameters)),
           GoRoute(path: '/mapa', builder: (_, _) => const MapaScreen()),
           GoRoute(path: '/vehiculos', builder: (_, _) => const VehiculosScreen()),
           GoRoute(path: '/guias', builder: (_, _) => const GuiasScreen()),
-          // lo ya emitido y su cobranza (antes era la pestaña "Emitidas" de Facturación)
+          // lo ya emitido y su cobranza
           GoRoute(
             path: '/facturas',
             builder: (_, estado) => FacturasEmitidasScreen(
@@ -238,7 +227,6 @@ GoRouter construirRouter(AuthService auth) {
           ),
           GoRoute(path: '/costos', builder: (_, _) => const RentabilidadScreen()),
           GoRoute(path: '/clientes', builder: (_, _) => const ClientesScreen()),
-          // historial de un cliente: lo que arrendó y facturó (se puede recargar y compartir)
           GoRoute(
             path: '/clientes/:id',
             builder: (_, estado) {

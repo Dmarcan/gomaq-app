@@ -28,9 +28,8 @@ class OrdenesListScreen extends StatefulWidget {
 }
 
 class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindingObserver {
-  // Sin esto la lista solo se actualizaba al abrir la app: un cambio hecho en la oficina no llegaba
-  // hasta cerrar y reabrir. Se refresca al volver a primer plano (si pasaron mas de
-  // _minimoEntreRefrescos) y cada _intervaloRefresco mientras la app esta abierta.
+  // La lista se refresca al volver a primer plano (si pasaron mas de _minimoEntreRefrescos) y cada
+  // _intervaloRefresco mientras la app esta abierta: un cambio hecho en la oficina no llega solo.
   static const _minimoEntreRefrescos = Duration(seconds: 60);
   static const _intervaloRefresco = Duration(minutes: 3);
 
@@ -45,7 +44,8 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
   int? _disponibles;
   StreamSubscription<bool>? _conexionSub;
   Timer? _temporizador;
-  // las finalizadas se pliegan: con el tiempo se acumulan y empujaban hacia abajo lo que se esta trabajando
+  // las finalizadas se pliegan: con el tiempo se acumulan y empujarian hacia abajo lo que se esta
+  // trabajando
   bool _verFinalizadas = false;
   bool _syncEnCurso = false;
   late final SyncService _sync;
@@ -70,8 +70,9 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
     });
   }
 
-  /// Sin esto la lista solo se recargaba cuando ella misma lanzaba la sincronizacion: una orden
-  /// tomada desde Disponibles (cuya sincronizacion corre aparte) no aparecia hasta tirar para actualizar.
+  /// La lista tambien se recarga con las sincronizaciones lanzadas desde otras pantallas: una orden
+  /// tomada desde Disponibles (cuya sincronizacion corre aparte) no apareceria hasta tirar para
+  /// actualizar.
   void _alCambiarSync() {
     if (!mounted) return;
     final termino = _syncEnCurso && !_sync.sincronizando;
@@ -139,9 +140,8 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
     await _sincronizarSiHayConexion();
   }
 
-
-  /// Cerrar sesion estaba a un toque, junto al titulo. Con cambios sin enviar se explica que
-  /// no se pierden, pero que solo esta cuenta puede enviarlos.
+  /// Pide confirmar antes de cerrar sesion (esta a un toque, junto al titulo). Con cambios sin
+  /// enviar se explica que no se pierden, pero que solo esta cuenta puede enviarlos.
   Future<void> _confirmarCerrarSesion() async {
     final auth = context.read<AuthService>();
     final pendientes = await context.read<SyncService>().contarPendientes();
@@ -188,7 +188,6 @@ class _OrdenesListScreenState extends State<OrdenesListScreen> with WidgetsBindi
     await Navigator.push(context, MaterialPageRoute(builder: (_) => OrdenDetailScreen(ordenId: ordenId)));
     _cargarLocal();
   }
-
 
   // El sistema operativo suele avisar "conectado" un par de segundos antes
   // de que la red realmente tenga salida a internet. Reintenta un par de

@@ -135,8 +135,6 @@ class PosicionService {
     }
   }
 
-  // ---- seguimiento en segundo plano ----
-
   /// Tope de seguridad: si por algun motivo nadie detiene el seguimiento, se apaga solo.
   static const _duracionMaxima = Duration(hours: 6);
 

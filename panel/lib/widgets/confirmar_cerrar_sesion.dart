@@ -2,10 +2,9 @@ import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
 import 'dialogos.dart';
 
-/// Cerrar sesión estaba a un clic, sin confirmación, junto a otros íconos de la barra.
-///
-/// Ofrece cerrar solo este equipo o todos los dispositivos de la cuenta (por si se perdió un teléfono o
-/// se dejó la sesión abierta en un computador ajeno).
+/// Pide confirmar antes de cerrar sesion (esta a un clic, junto a otros iconos de la barra). Ofrece
+/// cerrar solo este equipo o todos los dispositivos de la cuenta (por si se perdio un telefono o se
+/// dejo la sesion abierta en un computador ajeno).
 Future<void> confirmarCerrarSesion(BuildContext context, AuthService auth) async {
   final opcion = await showDialog<_OpcionCierre>(
     context: context,

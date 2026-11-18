@@ -42,9 +42,8 @@ class ClienteApi {
   /// Se invoca ante cualquier 401, antes de lanzar la [ApiException].
   final void Function()? alNoAutorizado;
 
-  /// Si es null se usan las funciones de nivel superior de `package:http`, que abren y cierran
-  /// una conexion por llamada (el comportamiento que tenian las dos apps antes de compartir
-  /// este codigo). Solo las pruebas inyectan un cliente.
+  /// Si es null se usan las funciones de nivel superior de `package:http`, que abren y cierran una
+  /// conexion por llamada. Solo las pruebas inyectan un cliente.
   final http.Client? _cliente;
 
   Future<Map<String, String>> _headers({bool json = true}) async {
@@ -63,6 +62,7 @@ class ClienteApi {
     String mensaje = resp.body;
     try {
       mensaje = jsonDecode(resp.body)['error'] ?? resp.body;
+      // si el cuerpo no es JSON se usa el texto tal cual
     } catch (_) {}
     if (resp.statusCode == 401) {
       alNoAutorizado?.call();

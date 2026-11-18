@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 
-/// Pide un texto en un diálogo y devuelve lo escrito, o null si se cancela.
-///
-/// El controlador del campo vive dentro del diálogo y se libera cuando este desaparece. Crearlo
-/// afuera y liberarlo apenas el diálogo devuelve su resultado (patrón que había antes) rompe en
-/// depuración: el diálogo todavía se está animando hacia afuera y su campo sigue usando el
-/// controlador ya liberado, lo que deja el árbol de widgets en un estado inconsistente.
+/// Pide un texto en un dialogo y devuelve lo escrito, o null si se cancela. El controlador del
+/// campo vive dentro del dialogo y se libera cuando este desaparece: crearlo afuera y liberarlo
+/// apenas el dialogo devuelve su resultado rompe en depuracion, porque el dialogo todavia se esta
+/// animando hacia afuera y su campo sigue usando el controlador ya liberado.
 Future<String?> pedirTexto(
   BuildContext context, {
   required String titulo,

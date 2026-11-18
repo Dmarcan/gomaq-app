@@ -136,6 +136,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
                           onRefresh: () async {
                             try {
                               await context.read<SyncService>().sincronizar(completa: true);
+                              // si la sincronizacion falla (sin senal), igual se recarga lo que hay en el telefono
                             } catch (_) {}
                             await _cargar();
                           },
@@ -155,7 +156,8 @@ class _FlotaScreenState extends State<FlotaScreen> {
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                 ),
-                                // ancho fijo: con el del chip de cada estado, los codigos quedaban desalineados
+                                // ancho fijo: con el del chip de cada estado, los codigos
+                                // quedarian desalineados
                                 leading: estado == null
                                     ? null
                                     : SizedBox(

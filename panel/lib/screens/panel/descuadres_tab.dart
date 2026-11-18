@@ -8,8 +8,6 @@ import '../../utils/numeros.dart';
 import '../../widgets/dialogos.dart';
 import '../../widgets/estado_vacio.dart';
 
-/// Pestaña "Descuadres" de Insumos: existencias negativas por ubicación.
-///
 /// Un descuadre aparece cuando un mecánico registró el consumo de un repuesto que el sistema no
 /// tenía en su furgón. El administrativo lo cuadra de dos maneras: traspasando desde la bodega lo
 /// que faltaba cargar, o registrando el conteo físico (queda un ajuste con su motivo). El gerente
@@ -324,7 +322,6 @@ String formatoCampo(double n) {
       : redondeado.toString().replaceAll('.', ',');
 }
 
-/// Hoja con los movimientos de un insumo en una ubicación (origen o destino).
 class _MovimientosDelCaso extends StatefulWidget {
   final Map<String, dynamic> descuadre;
   final String lugar;

@@ -4,12 +4,8 @@ import '../services/api_client.dart';
 import '../theme/gomaq_theme.dart';
 import '../utils/numeros.dart';
 
-/// Piezas compartidas de los cuadros que se abren sobre el panel (crear, editar, confirmar).
-///
-/// Cada pantalla armaba el suyo con un AlertDialog pelado: un título, campos sueltos y dos
-/// botones de texto. Y peor que la falta de diseño: si faltaba un campo obligatorio, el cuadro
-/// se cerraba igual y la pantalla no hacía nada, sin avisar. Quien lo usaba creía que se había
-/// creado. Acá el cuadro sigue abierto y dice qué falta.
+/// Piezas compartidas de los cuadros que se abren sobre el panel (crear, editar, confirmar). Si
+/// falta un campo obligatorio el cuadro sigue abierto y dice que falta: nunca se cierra sin avisar.
 ///
 ///  - [CuadroDialogo]: el marco (encabezado con ícono, cuerpo que se desplaza, pie con acciones).
 ///  - [DialogoFormulario] / [mostrarFormulario]: un formulario dentro de ese marco, con
@@ -74,8 +70,8 @@ class CuadroDialogo extends StatelessWidget {
                 Container(
                   color: GomaqColors.fondoCalido,
                   padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-                  // Wrap y no Row: en un teléfono (375 px) dos botones con texto largo no caben en una fila
-                  // y se cortaban; así el segundo baja a la línea siguiente
+                  // Wrap y no Row: en un telefono (375 px) dos botones con texto largo no caben en
+                  // una fila y el segundo baja a la linea siguiente
                   child: Wrap(
                     alignment: WrapAlignment.end,
                     crossAxisAlignment: WrapCrossAlignment.center,
@@ -185,8 +181,8 @@ class _DialogoFormularioState extends State<DialogoFormulario> {
       await widget.alGuardar();
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
-      // cualquier fallo, no solo ApiException: sin red el error es de socket o de timeout, y
-      // antes el cuadro se quedaba en "Guardando..." sin poder cerrarse
+      // cualquier fallo, no solo ApiException: sin red el error es de socket o de timeout, y el
+      // cuadro se quedaria en "Guardando..." sin poder cerrarse
       if (mounted) {
         setState(() {
           _error = e is ApiException ? e.message : 'Sin conexión. Revisa tu internet y vuelve a intentar.';
@@ -329,8 +325,6 @@ Future<bool> mostrarConfirmacion(
   );
   return confirmado == true;
 }
-
-// ---- campos ----------------------------------------------------------------------------------
 
 /// Aspecto común de los campos de un formulario. El asterisco de los obligatorios va en la
 /// etiqueta, para que también lo lea un lector de pantalla.

@@ -9,12 +9,8 @@ import '../../widgets/estado_vacio.dart';
 // Se reexportan para que las pantallas y pruebas que ya importaban estas funciones desde aquí sigan igual.
 export '../../utils/seguimiento_cliente.dart';
 
-/// Lo que el cliente tiene abierto con GOMAQ: sus asistencias todavía sin orden de trabajo y
-/// todas sus órdenes en curso.
-///
-/// Antes solo mostraba las asistencias pedidas desde el portal: una OT creada por el
-/// administrativo (la mayoría) no aparecía, y el cliente veía "No tienes solicitudes" con dos
-/// trabajos en curso sobre sus equipos.
+/// Lo que el cliente tiene abierto con GOMAQ: sus asistencias todavia sin orden de trabajo y todas
+/// sus ordenes en curso, tambien las que creo el administrativo.
 class ClienteSeguimientoScreen extends StatefulWidget {
   const ClienteSeguimientoScreen({super.key});
 
@@ -117,7 +113,6 @@ class _ClienteSeguimientoScreenState extends State<ClienteSeguimientoScreen> {
     );
   }
 
-  /// Paso actual con su hora, lo que viene y quién atiende.
   List<String> _lineasResumen(Map<String, dynamic> item) {
     final proximo = proximoPaso(item['estado'] as String?);
     final tecnico = item['mecanico_nombre'] as String?;
@@ -265,8 +260,6 @@ class _SeguimientoDialog extends StatelessWidget {
                   ),
                 ),
               ],
-              // El botón "Contactar por WhatsApp" que había acá no hacía nada: solo avisaba que
-              // aún no estaba disponible. Vuelve cuando se active WhatsApp Business.
             ],
       ),
       acciones: [
@@ -287,7 +280,7 @@ class _SeguimientoDialog extends StatelessWidget {
           children: [
             Icon(
               completado ? (actual ? Icons.radio_button_checked : Icons.check_circle) : Icons.circle_outlined,
-              // estadoNeutro llega a 4,9:1 sobre blanco; el gris 500 anterior daba cerca de 2,7:1
+              // estadoNeutro llega a 4,9:1 sobre blanco (contraste AA)
               color: completado ? GomaqColors.accion : GomaqColors.estadoNeutro,
               size: 20,
             ),

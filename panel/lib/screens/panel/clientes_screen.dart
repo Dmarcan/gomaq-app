@@ -392,8 +392,9 @@ class _ClientesListaBodyState extends State<_ClientesListaBody> {
                     itemBuilder: (context, i) {
                       final c = _clientes[i];
                       final ubicado = c['latitud'] != null;
-                      // los datos del cliente ocupan todo el ancho y la acción va debajo: a un lado,
-                      // en un teléfono el botón se comía la mitad y partía el nombre y el correo
+                      // los datos del cliente ocupan todo el ancho y la accion va debajo: a un
+                      // lado, en un telefono el boton se comeria la mitad y partiria el nombre y
+                      // el correo
                       return Card(
                         child: Padding(
                           padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),

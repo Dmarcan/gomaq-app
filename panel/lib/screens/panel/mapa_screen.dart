@@ -161,6 +161,7 @@ class _MapaScreenState extends State<MapaScreen> {
     if (u == null || !widget.conMapa) return;
     try {
       _mapaCtrl.move(LatLng(u.latitud, u.longitud), 15);
+      // el mapa todavia no esta montado: no pasa nada, queda donde estaba
     } catch (_) {}
   }
 
@@ -393,8 +394,6 @@ class _MapaScreenState extends State<MapaScreen> {
     );
   }
 
-  // ---------------------------------------------------------------------------------- mapa
-
   Widget _mapa(DatosMapa d) {
     final marcadores = _marcadores(d);
     if (!widget.conMapa) {
@@ -487,6 +486,7 @@ class _MapaScreenState extends State<MapaScreen> {
     final puntos = [for (final g in grupos) LatLng(g.first.ubicacion!.latitud, g.first.ubicacion!.longitud)];
     try {
       _mapaCtrl.fitCamera(CameraFit.coordinates(coordinates: puntos, padding: const EdgeInsets.all(72), maxZoom: 18));
+      // el mapa todavia no esta montado: no pasa nada, queda donde estaba
     } catch (_) {}
   }
 
@@ -600,8 +600,6 @@ class _MapaScreenState extends State<MapaScreen> {
       ),
     );
   }
-
-  // ---------------------------------------------------------------------------------- fichas
 
   /// Ficha de lo seleccionado, armada con la carga más reciente (no una copia). Si lo seleccionado
   /// ya no está (el furgón llegó, el equipo cambió de lugar) lo dice y no se cierra sola.
@@ -840,8 +838,6 @@ class _MapaScreenState extends State<MapaScreen> {
   };
 
   String _hora(DateTime t) => '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-
-  // ---------------------------------------------------------------------------------- listas
 
   Widget _listas(DatosMapa d) {
     final ahora = DateTime.now();

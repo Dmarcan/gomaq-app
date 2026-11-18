@@ -9,8 +9,6 @@ import '../../widgets/dialogos.dart';
 import '../../widgets/estado_vacio.dart';
 import 'facturacion_screen.dart' show FacturaPendienteDialog;
 
-/// Pestaña "Arriendos en curso" de Facturación (solo lectura) con las reglas de cobro.
-///
 /// Muestra los equipos despachados que aún no vuelven: desde cuándo se cobran, cuántos días
 /// van y cuántos cortes de facturación llevan sin facturar. El gerente puede editar las reglas
 /// (día de facturación, hora de corte y si el día de corte cierra el período); el

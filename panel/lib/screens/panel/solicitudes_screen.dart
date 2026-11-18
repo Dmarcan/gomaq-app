@@ -56,7 +56,6 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
     }
   }
 
-  /// Aviso de que la lista viene filtrada desde el dashboard, con la salida para ver todas.
   Widget _encabezadoFiltro() {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
@@ -139,8 +138,6 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
                                   )
                                 : EstadoChip(estado: s['estado']),
                           ),
-                          // El cliente podía adjuntar una foto de la falla desde el portal, pero
-                          // no se mostraba en ninguna pantalla: se guardaba y nadie la veía.
                           if (s['evidencia_url'] != null) _adjunto(s['evidencia_url']),
                         ],
                       ),

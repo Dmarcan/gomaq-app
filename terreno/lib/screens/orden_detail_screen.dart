@@ -213,7 +213,8 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
       final diagnosticoBase = _orden!.diagnostico ?? '';
       if (_diagnosticoCtrl.text == _diagnosticoGuardado) _diagnosticoCtrl.text = diagnosticoBase;
       _diagnosticoGuardado = diagnosticoBase;
-      // la cabecera del talonario ahora vive tambien en el telefono: al reabrir la orden se ve lo ya llenado
+      // la cabecera del talonario tambien vive en el telefono: al reabrir la orden se ve lo ya
+      // llenado
       _tipoServicio = _orden!.tipoServicio;
       if (_observacionFinalCtrl.text.isEmpty) _observacionFinalCtrl.text = _orden!.observacionFinal ?? '';
       if (_folioPapelCtrl.text.isEmpty) _folioPapelCtrl.text = _orden!.folioPapel ?? '';
@@ -258,8 +259,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
     );
   }
 
-  /// Boton Guardar de las observaciones: guarda las iniciales y la cabecera con un solo aviso (antes
-  /// cada una mostraba el suyo y se apilaban unos 8 segundos sobre la barra inferior).
+  /// Boton Guardar de las observaciones: guarda las iniciales y la cabecera con un solo aviso.
   Future<void> _guardarObservaciones() async {
     await _guardarDiagnostico(aviso: false);
     await _guardarDatosOt(aviso: false);
@@ -534,7 +534,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
       decoration: BoxDecoration(
         color: GomaqColors.estadoAdvertencia.withValues(alpha: 0.12),
         borderRadius: BorderRadius.circular(8),
-        // borde con contraste 3:1 sobre la tarjeta (con el 50 % anterior daba 2,81:1)
+        // borde con contraste 3:1 sobre la tarjeta
         border: Border.all(color: GomaqColors.estadoAdvertencia.withValues(alpha: 0.8)),
       ),
       child: Column(
@@ -644,7 +644,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
       await _cargar();
       _intentarSincronizarAhora();
     } catch (_) {
-      // permiso de camara negado o camara ocupada: antes no pasaba nada y no se sabia por que
+      // permiso de camara negado o camara ocupada: se avisa en vez de no hacer nada
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('No se pudo abrir la cámara. Revisa que la app tenga permiso para usarla.')),
@@ -749,14 +749,12 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
     return true;
   }
 
-  /// Al salir con "atras" no se pierde nada de lo escrito: observaciones iniciales y finales.
-  ///
-  /// Lo encolado aqui se envia de inmediato, como tras cualquier otra accion de la pantalla. Antes
-  /// solo se encolaba: la lista de ordenes, al volver, recarga lo local pero no sincroniza, y el
-  /// cambio quedaba "por enviar" hasta el refresco periodico de la lista (hasta 3 minutos). La
-  /// sincronizacion se pide recien despues de que las dos tareas quedaron en la cola, para que la
-  /// pasada las incluya. No usa `_intentarSincronizarAhora` porque esa revisa `mounted` y lee del
-  /// `context`, y aqui la pantalla ya se esta cerrando: usa las referencias guardadas.
+  /// Al salir con "atras" no se pierde nada de lo escrito: observaciones iniciales y finales. Lo
+  /// encolado aqui se envia de inmediato: la lista de ordenes, al volver, recarga lo local pero no
+  /// sincroniza, y el cambio quedaria "por enviar" hasta el refresco periodico de la lista (hasta 3
+  /// minutos). La sincronizacion se pide despues de que las dos tareas quedaron en la cola, para
+  /// que la pasada las incluya. No usa `_intentarSincronizarAhora` porque esa revisa `mounted` y
+  /// lee del `context`, y aqui la pantalla ya se esta cerrando: usa las referencias guardadas.
   Future<void> _guardarAlSalir() async {
     final encolados = await Future.wait([_guardarObservacionesIniciales(), _guardarDatosPendientes()]);
     if (!encolados.contains(true) || !_conectividad.online) return;
@@ -793,8 +791,6 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
     if (mounted) await _cargar();
     _intentarSincronizarAhora();
   }
-
-  // ---------- Secciones de UI ----------
 
   /// `completa`: true = listo (verde), false = falta completarlo (amarillo), null = sin estado
   /// (seccion opcional o la orden ya esta cerrada). Ademas del color lleva texto e icono, para
@@ -865,7 +861,6 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
                     style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
                   ),
                 ),
-                // el informe dice que el mecanico consulta el historial tecnico del equipo
                 TextButton.icon(
                   onPressed: () => Navigator.push(
                     context,
@@ -991,7 +986,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
                 style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
             const SizedBox(height: 8),
             Focus(
-              // al salir del campo se guarda solo: antes se perdia si no se pulsaba Guardar
+              // al salir del campo se guarda solo, sin necesidad de pulsar Guardar
               onFocusChange: (tieneFoco) {
                 if (!tieneFoco && !soloLectura) _guardarObservacionesIniciales();
               },
@@ -1264,11 +1259,9 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
     return partes.join(' · ');
   }
 
-  /// Abre una OT para otro equipo intervenido durante esta misma visita.
-  ///
-  /// el jefe de taller lo describió como el caso donde el repuesto "queda en el aire": si el técnico
-  /// atiende una segunda máquina, su gasto tiene que quedar contra ESA máquina y no contra
-  /// la de la orden en curso, o el costo por equipo queda mal atribuido.
+  /// Abre una OT para otro equipo intervenido durante esta misma visita: si el tecnico atiende una
+  /// segunda maquina, su gasto tiene que quedar contra ESA maquina y no contra la de la orden en
+  /// curso, o el costo por equipo queda mal atribuido.
   Future<void> _intervenirOtroEquipo() async {
     final equipo = await elegirEquipo(context, excluirId: _orden?.maquinariaId);
     if (equipo == null || !mounted) return;
@@ -1359,9 +1352,9 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
               'Marca dónde se intervino en esta visita',
               style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario),
             ),
-            // Los 31 ítems estaban siempre desplegados: en terreno, con guantes y sol, eso
-            // es un scroll enorme para marcar una o dos casillas. Ahora son cinco grupos
-            // plegados, y cada uno se abre solo si ya tiene algo marcado.
+            // Los 31 items se agrupan en cinco grupos plegados: en terreno, con guantes y sol,
+            // tenerlos todos desplegados es un scroll enorme para marcar una o dos casillas. Cada
+            // grupo se abre solo si ya tiene algo marcado.
             for (final entrada in grupos.entries)
               Builder(builder: (context) {
                 final marcadosDelGrupo =
@@ -1580,8 +1573,8 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
     );
   }
 
-  /// Estado de sincronizacion siempre a la vista: antes solo estaba en la lista y, dentro de una
-  /// orden, no se sabia si lo que se acababa de guardar ya habia salido del telefono.
+  /// Estado de sincronizacion siempre a la vista, tambien dentro de una orden: asi se sabe si lo
+  /// que se acaba de guardar ya salio del telefono.
   Widget _indicadorSync() {
     final enviando = _sincronizador.sincronizando;
     final IconData icono;

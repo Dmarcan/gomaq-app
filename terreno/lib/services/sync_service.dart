@@ -38,9 +38,8 @@ class SyncService extends ChangeNotifier {
   bool _sesionExpirada = false;
   bool get sesionExpirada => _sesionExpirada;
 
-  /// Llamar tras un login exitoso: limpia el aviso de sesion expirada aunque la
-  /// cola este vacia (antes el banner quedaba pegado para siempre tras re-loguearse,
-  /// porque solo se limpiaba cuando una tarea de la cola sincronizaba con exito).
+  /// Llamar tras un login exitoso: limpia el aviso de sesion expirada aunque la cola este vacia
+  /// (solo se limpiaba cuando una tarea sincronizaba con exito).
   void reiniciarSesion() {
     if (_sesionExpirada) {
       _sesionExpirada = false;
@@ -59,17 +58,16 @@ class SyncService extends ChangeNotifier {
   /// Cuando se completo la ultima sincronizacion (null si aun no hubo ninguna en esta sesion).
   DateTime? get ultimaSincronizacion => _ultimaSincronizacion;
 
-  // id local (negativo) -> id real de las OT creadas en terreno que ya se sincronizaron. La pantalla de una
-  // OT recien creada sigue abierta cuando la cola le asigna su id real: sin esto seguia operando con el
-  // id local, que ya no existe, y todo lo que el mecanico hacia ahi quedaba huerfano en la cola.
+  // id local (negativo) -> id real de las OT creadas en terreno que ya se sincronizaron. La
+  // pantalla de una OT recien creada sigue abierta cuando la cola le asigna su id real: sin esto
+  // seguiria operando con el id local, que ya no existe, y todo lo que el mecanico hiciera ahi
+  // quedaria huerfano en la cola.
   final Map<int, int> _remapeos = {};
 
   /// El id con el que hay que operar una OT: el real si la creada en terreno ya se sincronizo.
   int resolverIdOrden(int id) => _remapeos[id] ?? id;
 
   Future<Database> get _db async => _abrirBase != null ? _abrirBase() : LocalDatabase.instance.database;
-
-  // ---------- Encolar acciones del mecanico (siempre escriben local primero) ----------
 
   /// [posicion] solo se manda al pasar a en camino (ver cuerpoPosicion): viaja dentro de la misma tarea
   /// para que el servidor la guarde unicamente si ese cambio de estado se aplico. Si la tarea llega
@@ -101,8 +99,8 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Cierra la OT. Ya no lleva `facturable`: en el talonario esa marca es por linea de
-  /// repuesto, y el backend la deriva de ahi (ver utils/facturableOt.js).
+  /// Cierra la OT. La marca `facturable` es por linea de repuesto en el talonario y el backend la
+  /// deriva de ahi (ver utils/facturableOt.js).
   Future<void> encolarFinalizar(
     int ordenId, {
     String? personaRecibe,
@@ -146,12 +144,11 @@ class SyncService extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Abre una OT para un segundo equipo intervenido en la misma visita.
-  ///
-  /// Devuelve el id LOCAL (negativo) con el que la OT vive hasta sincronizar. Se usa un
-  /// negativo derivado del reloj para que no choque nunca con un id del servidor, y para que
-  /// dos OT creadas sin señal no se pisen entre si. En milisegundos: con segundos, dos OT
-  /// creadas en el mismo segundo chocaban en la clave primaria.
+  /// Abre una OT para un segundo equipo intervenido en la misma visita. Devuelve el id LOCAL
+  /// (negativo) con el que la OT vive hasta sincronizar. Se usa un negativo derivado del reloj para
+  /// que no choque nunca con un id del servidor, y para que dos OT creadas sin senal no se pisen
+  /// entre si. En milisegundos: con segundos, dos OT creadas en el mismo segundo chocarian en la
+  /// clave primaria.
   Future<int> encolarOtEnTerreno({required int maquinariaId, required String maquinariaCodigo, String? motivo}) async {
     final db = await _db;
     final idLocal = -DateTime.now().millisecondsSinceEpoch;
@@ -226,9 +223,8 @@ class SyncService extends ChangeNotifier {
   }
 
   /// Tramo de trabajo (una visita). El papel trae dos bloques; aca puede haber varios.
-  ///
-  /// [reemplazaTramoLocalId]: al cerrar un tramo que estaba abierto, la fila abierta se borra en la misma
-  /// transaccion que crea la cerrada y su tarea (antes la pantalla la borraba aparte).
+  /// [reemplazaTramoLocalId]: al cerrar un tramo que estaba abierto, la fila abierta se borra en la
+  /// misma transaccion que crea la cerrada y su tarea.
   Future<void> encolarTramo(int ordenId,
       {required DateTime inicio, DateTime? termino, int? reemplazaTramoLocalId}) async {
     ordenId = resolverIdOrden(ordenId);
@@ -243,8 +239,9 @@ class SyncService extends ChangeNotifier {
         'termino': termino?.toUtc().toIso8601String(),
         'sincronizado': 0,
       });
-      // En UTC (con la Z): una hora local sin zona la interpretaba el servidor en la suya, y con un
-      // telefono en otra zona horaria (o con la hora mal puesta) el tramo salia corrido varias horas.
+      // En UTC (con la Z): el servidor interpretaria una hora local sin zona en la suya, y con un
+      // telefono en otra zona horaria (o con la hora mal puesta) el tramo saldria corrido varias
+      // horas.
       await _encolar(ordenId, 'tramo', {
         'tramo_local_id': tramoLocalId,
         'inicio': inicio.toUtc().toIso8601String(),
@@ -419,8 +416,7 @@ class SyncService extends ChangeNotifier {
 
   /// Tareas que no se han podido enviar y por que: las que ya pasaron a error y las que siguen
   /// pendientes pero fallaron en el ultimo intento (sin senal real, servidor lento o rechazo que
-  /// aun se reintenta). Antes estas ultimas eran invisibles: el aviso decia "5 cambios por
-  /// enviar" y al actualizar no cambiaba nada, sin explicar por que.
+  /// aun se reintenta).
   Future<List<Map<String, dynamic>>> tareasConProblema() async {
     final db = await _db;
     return db.query(
@@ -449,10 +445,10 @@ class SyncService extends ChangeNotifier {
   }
 
   /// Descarta una tarea en error (por ejemplo la de una OT que se reasigno a otro tecnico y
-  /// responde 403 siempre). Sin esto la tarea y la OT ajena quedaban en el telefono para
-  /// siempre, y frenaban las demas tareas de esa orden. Solo borra tareas en 'error'. Tambien
-  /// quita lo local que la tarea habia creado (repuesto, foto u orden nueva) para que no quede
-  /// una linea que parece enviada.
+  /// responde 403 siempre): sin esto la tarea y la OT ajena quedarian en el telefono para siempre y
+  /// frenarian las demas tareas de esa orden. Solo borra tareas en 'error'. Tambien quita lo local
+  /// que la tarea habia creado (repuesto, foto u orden nueva) para que no quede una linea que
+  /// parece enviada.
   Future<void> descartarTarea(int tareaId) async {
     final db = await _db;
     final filas = await db.query('cola_sincronizacion', where: "id = ? AND estado = 'error'", whereArgs: [tareaId]);
@@ -487,6 +483,7 @@ class SyncService extends ChangeNotifier {
     Map<String, dynamic> payload = {};
     try {
       payload = Map<String, dynamic>.from(jsonDecode(fila['payload'] as String) as Map);
+      // un payload ilegible se trata como vacio: la tarea se borra igual
     } catch (_) {}
     if (tipo == 'evidencia' && payload['evidencia_local_id'] != null) {
       await txn.delete('evidencias_locales', where: 'id = ?', whereArgs: [payload['evidencia_local_id']]);
@@ -503,11 +500,10 @@ class SyncService extends ChangeNotifier {
     await txn.delete('cola_sincronizacion', where: 'id = ?', whereArgs: [fila['id']]);
   }
 
-  /// Devuelve las tareas en error al estado pendiente (con reintentos en cero)
-  /// y dispara una sincronizacion inmediata.
-  /// El contador de fallos transitorios del payload tambien vuelve a cero y se borra la hora del
-  /// primero (el uuid y lo demas del payload no se tocan): si no, una tarea que llego al tope
-  /// volvia a error al primer fallo.
+  /// Devuelve las tareas en error al estado pendiente (con reintentos en cero) y dispara una
+  /// sincronizacion inmediata. El contador de fallos transitorios del payload tambien vuelve a cero
+  /// y se borra la hora del primero (el uuid y lo demas del payload no se tocan): si no, una tarea
+  /// que llego al tope volveria a error al primer fallo.
   Future<void> reintentarErrores() async {
     final db = await _db;
     await db.transaction((txn) async {
@@ -517,6 +513,7 @@ class SyncService extends ChangeNotifier {
         try {
           final payload = Map<String, dynamic>.from(jsonDecode(fila['payload'] as String) as Map);
           if (tieneMarcasFallosTransitorios(payload)) payloadNuevo = jsonEncode(sinFallosTransitorios(payload));
+          // un payload ilegible no se toca: la tarea vuelve a pendiente tal cual
         } catch (_) {}
         await txn.update(
           'cola_sincronizacion',
@@ -530,14 +527,12 @@ class SyncService extends ChangeNotifier {
     await sincronizar();
   }
 
-  // ---------- Sincronizacion ----------
-
   /// Sincronizacion rapida: envia la cola, baja las OT y el furgon. Es lo que hace falta tras cada
   /// accion del mecanico y al volver a la app. La completa agrega catalogos, flota e historial de
   /// equipos; se hace sola al abrir la app y cada pocas horas, o con `completa: true`.
   ///
   /// Si ya hay una en curso, se agenda una sola pasada mas para cuando termine (ver
-  /// PasadasEnSerie): antes la peticion se perdia.
+  /// PasadasEnSerie).
   Future<void> sincronizar({bool completa = false}) => _pasadas.pedir(completa: completa);
 
   Future<void> _pasada(bool completa) async {
@@ -591,9 +586,9 @@ class SyncService extends ChangeNotifier {
     await lote.commit(noResult: true);
 
     // OT que el servidor ya no le entrega a este mecanico (reasignadas a otro tecnico o
-    // eliminadas): antes quedaban para siempre en el telefono, y trabajar sobre ellas llenaba
-    // la cola de rechazos. Se conservan las que aun tienen cambios sin enviar, para no perder
-    // trabajo, y las creadas en terreno que todavia no existen en el servidor (id negativo).
+    // eliminadas): si quedaran en el telefono, trabajar sobre ellas llenaria la cola de rechazos.
+    // Se conservan las que aun tienen cambios sin enviar, para no perder trabajo, y las creadas en
+    // terreno que todavia no existen en el servidor (id negativo).
     final locales = await db.query('ordenes_locales', columns: ['id']);
     for (final fila in locales) {
       final id = fila['id'] as int;
@@ -829,8 +824,8 @@ class SyncService extends ChangeNotifier {
     final otsConFallo = <int>{};
 
     // Una tarea que ya quedo en 'error' en un ciclo anterior tambien frena las siguientes de su
-    // OT: antes la consulta solo traia las pendientes, y el cierre (o la evidencia posterior)
-    // pasaba por encima de un repuesto o una foto rechazados. Se libera al reintentar o descartar.
+    // OT: si no, el cierre (o la evidencia posterior) pasaria por encima de un repuesto o una foto
+    // rechazados. Se libera al reintentar o descartar.
     final enError = await db.query(
       'cola_sincronizacion',
       columns: ['orden_trabajo_id'],
@@ -1041,10 +1036,10 @@ class SyncService extends ChangeNotifier {
     await borrarArchivoLocal(rutaFirma);
   }
 
-  /// Pide la URL firmada para subir una foto o firma. Si el servidor responde que el
-  /// almacenamiento no esta disponible (5xx, 429, 408), el fallo se informa como de la subida de
-  /// fotos, para que el mecanico vea un motivo que entienda. Los rechazos (403, 409...) siguen
-  /// saliendo como ApiException y se tratan igual que antes.
+  /// Pide la URL firmada para subir una foto o firma. Si el servidor responde que el almacenamiento
+  /// no esta disponible (5xx, 429, 408), el fallo se informa como de la subida de fotos, para que
+  /// el mecanico vea un motivo que entienda. Los rechazos (403, 409...) siguen saliendo como
+  /// ApiException.
   Future<dynamic> _solicitarSubida(int ordenId, Map<String, dynamic> cuerpo) async {
     try {
       return await _api.post('/api/ordenes-trabajo/$ordenId/evidencia/solicitar-upload', cuerpo);

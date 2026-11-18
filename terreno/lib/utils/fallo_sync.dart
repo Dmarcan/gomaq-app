@@ -39,7 +39,7 @@ class DecisionFallo {
   const DecisionFallo(this.accion, this.mensaje, {this.mensajeAlAgotar});
 }
 
-/// Intentos de rechazo de negocio antes de pasar a error (sin cambio respecto de antes).
+/// Intentos de rechazo de negocio antes de pasar a error.
 const maxIntentosSync = 5;
 
 /// Fallos transitorios que se toleran antes de pasar la tarea a error. Ninguno gasta intentos; el

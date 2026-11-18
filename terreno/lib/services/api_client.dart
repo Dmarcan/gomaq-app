@@ -21,9 +21,8 @@ class ApiClient implements ApiCola {
   ApiClient._();
   static final ApiClient instance = ApiClient._();
 
-  // Servidor de produccion en Railway, con HTTPS: funciona con datos moviles en terreno, no
-  // solo dentro de la red de la oficina como el servidor local anterior (192.168.1.132).
-  // Para desarrollo contra un backend local: --dart-define=GOMAQ_API_URL=http://10.0.2.2:3000
+  // Servidor de produccion en Railway, con HTTPS: funciona con datos moviles en terreno. Para
+  // desarrollo contra un backend local: --dart-define=GOMAQ_API_URL=http://10.0.2.2:3000
   static const String baseUrl = String.fromEnvironment(
     'GOMAQ_API_URL',
     defaultValue: 'https://gomaq-app-production.up.railway.app',
@@ -31,8 +30,8 @@ class ApiClient implements ApiCola {
 
   final _storage = const FlutterSecureStorage();
 
-  // Los 12 s se mantienen explicitos (tambien en las subidas, como antes): en terreno con mala
-  // senal conviene fallar rapido y dejar la tarea en la cola. No hay aviso de sesion vencida.
+  // Los 12 s son explicitos tambien en las subidas: en terreno con mala senal conviene fallar
+  // rapido y dejar la tarea en la cola. No hay aviso de sesion vencida.
   late final ClienteApi _api = ClienteApi(
     baseUrl: baseUrl,
     tokenProvider: leerToken,

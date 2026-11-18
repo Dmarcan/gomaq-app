@@ -307,7 +307,6 @@ class _GuiasScreenState extends State<GuiasScreen> {
     }
   }
 
-  /// Adjunta el PDF a una guia que se registro sin documento.
   Future<void> _adjuntarDocumento(Map<String, dynamic> guia) async {
     final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
     if (resultado == null || resultado.files.single.bytes == null) return;

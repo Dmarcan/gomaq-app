@@ -1,11 +1,9 @@
 import 'package:flutter/material.dart';
 import '../theme/gomaq_theme.dart';
 
-/// Etiqueta de estado (equipo, orden, solicitud, notificación).
-///
-/// Antes cada pantalla armaba su propio Chip con el valor de la base tal cual ("en_terreno") y
-/// el color de estado como texto, que en ámbar no llegaba al contraste mínimo. Ahora el nombre
-/// es legible y el texto usa la variante oscura del color.
+/// Etiqueta de estado (equipo, orden, solicitud, notificacion). Muestra un nombre legible y no el
+/// valor de la base ("en_terreno"); el texto usa la variante oscura del color porque el ambar claro
+/// no llega al contraste minimo.
 class EstadoChip extends StatelessWidget {
   final String? estado;
 

@@ -7,15 +7,10 @@ import '../../utils/formato.dart';
 import '../../widgets/estado_vacio.dart';
 import '../../widgets/pestanas.dart';
 
-/// Costo real por equipo (entrevista el jefe de taller, punto 1).
-///
-/// Responde textualmente lo que él pidió: "no sabemos si en los tres meses que estuvo la
-/// máquina se gastó más plata de la que dejaba el arriendo". Arriba, las cifras de toda la flota;
-/// abajo, los equipos con lo que hay que decidir primero: los que salen a pérdida.
-///
-/// Además del gasto y el margen, cada equipo muestra las medidas con que la industria del
-/// arriendo lo evalúa y que salen de datos que ya existen: qué parte del ingreso se va en
-/// repuestos, cuánto cuesta cada hora de uso (horómetro) y cuántos días estuvo arrendado (guías).
+/// Costo real por equipo. Arriba, las cifras de toda la flota; abajo, los equipos con lo que hay
+/// que decidir primero: los que salen a perdida. Ademas del gasto y el margen, cada equipo muestra
+/// la parte del ingreso que se va en repuestos, el costo por hora de uso (horometro) y los dias
+/// arrendado (guias).
 class RentabilidadScreen extends StatefulWidget {
   const RentabilidadScreen({super.key});
 
@@ -43,7 +38,6 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
   String? _error;
   int _meses = 12;
 
-  // la tabla armaba 500 filas de una vez: ahora llegan de a tramos desde el servidor
   static const _porPagina = 50;
   int _total = 0;
   bool _hayMas = false;
@@ -163,8 +157,6 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
     });
     _cargar();
   }
-
-  // ---- pantalla ------------------------------------------------------------------------------
 
   @override
   Widget build(BuildContext context) {

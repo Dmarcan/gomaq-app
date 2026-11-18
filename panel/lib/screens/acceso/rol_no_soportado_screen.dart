@@ -3,9 +3,8 @@ import 'package:provider/provider.dart';
 import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
 
-/// Pantalla para roles que no tienen interfaz en la web (hoy: mecanico).
-/// Antes un mecanico que entraba por navegador aterrizaba en el panel de
-/// administracion con casi todas las secciones fallando por permisos.
+/// Roles sin interfaz en la web (hoy: mecanico): se les explica en vez de mostrarles un panel que
+/// no les sirve.
 class RolNoSoportadoScreen extends StatelessWidget {
   const RolNoSoportadoScreen({super.key});
 

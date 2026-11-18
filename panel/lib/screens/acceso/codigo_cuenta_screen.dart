@@ -7,7 +7,6 @@ import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../utils/validadores_acceso.dart';
 
-/// Para qué se usa el código de 6 dígitos.
 enum ModoCodigo {
   /// Cuenta interna invitada: la persona elige su contraseña y la cuenta queda activa (`/activar`).
   activar,

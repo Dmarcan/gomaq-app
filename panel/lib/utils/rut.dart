@@ -1,7 +1,5 @@
-// RUT chileno: formato y dígito verificador.
-//
-// Un RUT mal tipeado (un dígito cambiado) se guardaba tal cual y después no coincidía con la
-// factura ni con el SII. El dígito verificador detecta casi todos esos errores al escribirlo.
+// RUT chileno: formato y digito verificador, que detecta casi todos los errores de tipeo (un
+// digito cambiado) al escribirlo.
 
 /// Verdadero si [texto] es un RUT con dígito verificador correcto. Acepta "12.345.678-5",
 /// "12345678-5" y "123456785", y la K en mayúscula o minúscula.

@@ -11,9 +11,9 @@ import '../utils/direcciones.dart';
 import '../utils/mapa_config.dart';
 import '../utils/ubicacion.dart';
 
-/// Ubicar un lugar escribiendo su dirección, como en Mercado Libre: a medida que se escribe
-/// aparecen sugerencias; al elegir una se ve el punto en un mapa, y si no cae exacto se toca el
-/// mapa para ajustarlo. Nadie tiene que conocer ni escribir coordenadas.
+/// Ubicar un lugar escribiendo su direccion: a medida que se escribe aparecen sugerencias; al
+/// elegir una se ve el punto en un mapa, y si no cae exacto se toca el mapa para ajustarlo. Nadie
+/// tiene que conocer ni escribir coordenadas.
 ///
 /// Opcionalmente ofrece también "Usar mi ubicación actual" ([obtenerUbicacion]), útil cuando quien
 /// lo usa está físicamente en el lugar (por ejemplo la bodega).

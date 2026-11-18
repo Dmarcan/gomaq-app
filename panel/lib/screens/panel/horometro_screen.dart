@@ -7,12 +7,9 @@ import '../../widgets/dialogos.dart';
 import '../../widgets/estado_vacio.dart';
 import '../../utils/numeros.dart';
 
-/// Horometro y mantencion preventiva (entrevista el jefe de taller/la administrativa, 20-21 julio 2026).
-///
-/// Dos pestanas que responden a dos cosas distintas que pidieron:
-///  - "Por medir": la agenda del mes. Los equipos arrendados a los que todavia no se les toma
-///    la lectura; al registrarla desaparecen de la lista.
-///  - "Mantencion": los equipos que ya cumplieron el intervalo o estan a 50 h o menos.
+/// Dos pestanas: "Por medir" (la agenda del mes: equipos arrendados a los que todavia no se les
+/// toma la lectura; al registrarla desaparecen de la lista) y "Mantencion" (equipos que ya
+/// cumplieron el intervalo o estan a 50 h o menos).
 class HorometroScreen extends StatefulWidget {
   /// Filtro que llega por la URL desde el dashboard: 'vencida' o 'proxima'. Abre la pestaña
   /// Mantención y deja solo esos equipos (el mismo criterio con que el dashboard cuenta).
@@ -115,9 +112,8 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        // el titulo lo pone el marco del panel (admin_dashboard_screen): repetirlo aca
-        // dejaba dos encabezados uno encima del otro
-        // mismo margen de 24 px que el título del marco: antes el texto quedaba pegado a la barra
+        // el titulo lo pone el marco del panel (admin_dashboard_screen): repetirlo dejaria dos
+        // encabezados uno encima del otro. Mismo margen de 24 px que el titulo del marco.
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: 24),
           child: Text(
@@ -146,8 +142,7 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
   }
 
   /// Fila de equipo con sus acciones. Con ancho de escritorio las acciones van a la derecha; en un
-  /// teléfono (<600 px) iban también a la derecha y dejaban al título ~100 px (una palabra por
-  /// línea), así que pasan debajo.
+  /// telefono (<600 px) dejarian al titulo ~100 px (una palabra por linea), asi que pasan debajo.
   Widget _filaConAcciones(
     BuildContext context, {
     required Widget leading,
@@ -239,7 +234,6 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
     );
   }
 
-  /// Aviso de que la lista viene filtrada desde el dashboard, con la salida para ver todas.
   Widget _chipFiltro(int cantidad) {
     final texto = _filtro == 'vencida' ? 'vencidas' : 'por vencer';
     return Padding(
@@ -301,7 +295,6 @@ class _HorometroScreenState extends State<HorometroScreen> with SingleTickerProv
   }
 }
 
-/// Registrar una lectura de horómetro desde el panel (origen 'panel').
 class _DialogoLectura extends StatefulWidget {
   final Map<String, dynamic> equipo;
   const _DialogoLectura({required this.equipo});
@@ -434,7 +427,6 @@ class _DialogoReiniciarState extends State<_DialogoReiniciar> {
   }
 }
 
-// Historial de lecturas del equipo, con el cliente que lo tenía en cada una.
 class _DialogoHistorial extends StatefulWidget {
   final int maquinariaId;
   final String codigo;

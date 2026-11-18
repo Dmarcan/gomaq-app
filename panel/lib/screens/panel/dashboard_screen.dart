@@ -9,8 +9,8 @@ import '../../widgets/bloque_pendientes.dart';
 import '../../widgets/estado_vacio.dart';
 
 class DashboardScreen extends StatefulWidget {
-  /// Navega a una ruta del panel. El filtro viaja como query en la URL, asi que el
-  /// estado "Flota filtrada por arrendados" tambien se puede compartir y sobrevive a un F5.
+  /// El filtro viaja como query en la URL: el estado "Flota filtrada por arrendados" se puede
+  /// compartir y sobrevive a un F5.
   final void Function(String ruta, {Map<String, String>? filtro}) onNavegar;
 
   /// Costura para las pruebas: devuelve resumen, ventas por ejecutivo y OTs por mes (por defecto, el servidor).
@@ -64,8 +64,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       if (mounted) setState(() => _cargando = false);
     }
   }
-
-  // ---------- helpers ----------
 
   /// Postgres devuelve COUNT(*) como string via JSON ("5"): parseo defensivo.
   static int _entero(dynamic v) => v is num ? v.toInt() : int.tryParse('$v') ?? 0;
@@ -147,8 +145,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ---------- grafico 1: dona de estado operativo ----------
-
   Widget _donaEstadoFlota(Map<String, dynamic> flota) {
     final datos = [
       ('operativa', 'Operativa', _entero(flota['operativas']), GomaqColors.estadoPositivo),
@@ -164,8 +160,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Row(
       children: [
         Expanded(
-          // El radio sale del espacio disponible: con radios fijos (46 + 34) la dona medía 160 px
-          // y en pantallas angostas se salía de su tarjeta.
+          // El radio sale del espacio disponible: con radios fijos (46 + 34) la dona mediria 160
+          // px y en pantallas angostas se saldria de su tarjeta.
           child: LayoutBuilder(
             builder: (context, restricciones) {
               final radioTotal = (restricciones.biggest.shortestSide / 2 - 4).clamp(30.0, 80.0);
@@ -202,7 +198,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
           ),
         ),
         const SizedBox(width: 8),
-        // leyenda navegable: mantiene la funcionalidad de las tarjetas anteriores
         Expanded(
           child: Column(
             mainAxisAlignment: MainAxisAlignment.center,
@@ -234,8 +229,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
       ],
     );
   }
-
-  // ---------- grafico 2: linea de OTs por mes ----------
 
   Widget _lineaOtsPorMes() {
     if (_otsPorMes.isEmpty) {
@@ -327,8 +320,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
     );
   }
 
-  // ---------- grafico 3: barras de ventas por ejecutivo ----------
-
   Widget _barrasVentas(List ejecutivos) {
     var maximo = 0.0;
     for (final e in ejecutivos) {
@@ -417,8 +408,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final ejecutivos = (_ventasPorEjecutivo?['ejecutivos'] as List?) ?? const [];
     final totalVentas = (_ventasPorEjecutivo?['total_general'] as num?) ?? 0;
 
-    // En un teléfono (<600 px) los bloques que iban lado a lado se apilan: la leyenda de la dona
-    // quedaba de ~40 px (el texto bajaba una letra por línea) y los 4 atajos se cortaban.
+    // En un telefono (<600 px) los bloques lado a lado se apilan: la leyenda de la dona quedaria
+    // de ~40 px (el texto bajaria una letra por linea) y los 4 atajos se cortarian.
     final compacto = MediaQuery.sizeOf(context).width < 600;
 
     final cobranza = _resumen!['cobranza'];
@@ -461,8 +452,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
       child: ListView(
         padding: EdgeInsets.all(compacto ? 16 : 24),
         children: [
-          // La acción principal va arriba: antes "Crear Orden de Trabajo" quedaba al final de la
-          // página, fuera de la vista, y además solo llevaba a la lista sin abrir el formulario.
+          // La accion principal va arriba: al final de la pagina quedaria fuera de la vista.
           if (compacto)
             Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -472,8 +462,8 @@ class _DashboardScreenState extends State<DashboardScreen> {
             Row(children: [Expanded(child: resumen), botonNuevaOt]),
           const SizedBox(height: 20),
 
-          // Lo accionable va primero: los pendientes quedaban bajo los gráficos, a casi dos pantallas
-          // de scroll en un teléfono.
+          // Lo accionable va primero: bajo los graficos, los pendientes quedarian a casi dos
+          // pantallas de scroll en un telefono.
           BloquePendientes(compacto: compacto, onNavegar: widget.onNavegar, rol: context.read<AuthService>().rol),
           const SizedBox(height: 24),
 
@@ -509,7 +499,6 @@ class _DashboardScreenState extends State<DashboardScreen> {
             const SizedBox(height: 24),
           ],
 
-          // estado operativo (dona con leyenda navegable) + OTs por mes, lado a lado
           if (compacto)
             Column(children: [panelDona, const SizedBox(height: 16), panelLinea])
           else

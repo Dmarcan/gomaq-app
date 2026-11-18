@@ -1,8 +1,7 @@
 import 'package:flutter/material.dart';
 import '../theme/gomaq_theme.dart';
 
-/// Seccion atenuada con candado: comunica que se habilita en un paso posterior
-/// del flujo (patron tomado del diseño Stitch y del proyecto PruebaMantencion).
+/// Seccion atenuada con candado: comunica que se habilita en un paso posterior del flujo.
 class SeccionBloqueada extends StatelessWidget {
   final String titulo;
   final IconData icono;

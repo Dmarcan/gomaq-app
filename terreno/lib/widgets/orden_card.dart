@@ -69,8 +69,8 @@ class OrdenCard extends StatelessWidget {
                 ),
               ],
               const SizedBox(height: 14),
-              // Un solo boton: antes "Ver detalles", "Continuar" y la tarjeta hacian lo mismo,
-              // tres objetivos para una sola accion. La tarjeta entera sigue siendo tocable.
+              // un solo boton (evita tres objetivos para una sola accion); la tarjeta entera sigue
+              // siendo tocable
               SizedBox(
                 width: double.infinity,
                 child: _activa

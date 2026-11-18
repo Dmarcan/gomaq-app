@@ -7,8 +7,8 @@ import 'package:gomaq_web/services/auth_service.dart';
 import 'package:intl/date_symbol_data_local.dart';
 import 'package:provider/provider.dart';
 
-/// Facturas emitidas tiene su propia pantalla (`/facturas?filtro=vencidas`) y Facturar quedó con tres pestañas.
-/// Sin servidor las consultas fallan: la prueba mira el filtro elegido, que no depende de la respuesta.
+/// Facturas emitidas tiene su propia pantalla (`/facturas?filtro=vencidas`). Sin servidor las
+/// consultas fallan: la prueba mira el filtro elegido, que no depende de la respuesta.
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 

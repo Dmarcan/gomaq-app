@@ -50,8 +50,8 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
   // ubicación de la empresa marcada con "Usar mi ubicación actual"; opcional
   Coordenada? _ubicacion;
 
-  /// Lleva la vista al primer campo con error: en un teléfono el formulario no cabe y el error
-  /// podía quedar fuera de pantalla sin que se viera por qué no se envió.
+  /// Lleva la vista al primer campo con error: en un telefono el formulario no cabe y el error
+  /// puede quedar fuera de pantalla.
   void _irAlPrimerError() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       for (final llave in _llavesCampos) {
@@ -67,7 +67,6 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
   }
 
   Future<void> _registrar() async {
-    // cada campo muestra su propio error; el formulario no se envía si alguno falla
     if (!(_formKey.currentState?.validate() ?? false)) {
       setState(() => _error = 'Revisa los campos marcados.');
       _irAlPrimerError();
@@ -101,8 +100,8 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
     } on ApiException catch (e) {
       setState(() => _error = e.message);
     } catch (_) {
-      // fallo de red/timeout: sin este catch el usuario quedaba sin spinner, sin error
-      // y sin saber si su cuenta se creo (mismo manejo que el login)
+      // fallo de red o timeout: sin este catch el usuario queda sin spinner, sin error y sin saber
+      // si su cuenta se creo (mismo manejo que el login)
       setState(() => _error = 'No se pudo conectar al servidor. Revisa tu conexión e intenta de nuevo.');
     } finally {
       if (mounted) setState(() => _enviando = false);
@@ -184,7 +183,6 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
     );
   }
 
-  /// Paso opcional tras enviar la solicitud: el código de 6 dígitos que llegó al correo escrito.
   Widget _construirVerificacion() {
     return Column(
       mainAxisSize: MainAxisSize.min,
@@ -261,8 +259,8 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
     );
   }
 
-  /// Dos campos lado a lado cuando hay espacio; uno bajo el otro en un teléfono, donde cada uno
-  /// quedaba de unos 140 px y las etiquetas se cortaban ("Repetir contra...").
+  /// Dos campos lado a lado cuando hay espacio; uno bajo el otro en un telefono, donde cada uno
+  /// quedaria de unos 140 px y las etiquetas se cortarian.
   Widget _enFila(Widget a, Widget b) {
     return LayoutBuilder(
       builder: (context, c) {

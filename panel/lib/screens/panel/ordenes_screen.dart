@@ -124,7 +124,6 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
 
   late String _pestana = _pestanaValida(widget.pestanaInicial);
 
-  // Búsqueda y filtro: la API ya los soportaba, pero la pantalla no los ofrecía
   String _busqueda = '';
   String? _estadoFiltro;
   Timer? _esperaBusqueda;
@@ -372,8 +371,8 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
     return LayoutBuilder(
       builder: (context, c) {
         final puedeAsignar = context.watch<AuthService>().esAdministrativo && _pestana == 'sin_asignar';
-        // con la columna del botón Asignar la tabla necesita más ancho: entre 600 y 800 px el estado
-        // quedaba aplastado, así que hasta 800 se muestran tarjetas
+        // con la columna del boton Asignar la tabla necesita mas ancho: hasta 800 px se muestran
+        // tarjetas
         final tabla = c.maxWidth >= (puedeAsignar ? 800 : 600);
         return RefreshIndicator(
           onRefresh: _recargarTodo,
@@ -448,8 +447,8 @@ class _OrdenesScreenState extends State<OrdenesScreen> {
                   },
                 );
                 final conSelector = _pestana == 'todas';
-                // Bajo 600 px el selector va debajo del buscador: al lado le dejaba unos 150 px al
-                // texto y el aviso de qué se busca quedaba cortado.
+                // Bajo 600 px el selector va debajo del buscador: al lado dejaria unos 150 px al
+                // texto y el aviso de que se busca quedaria cortado.
                 if (caja.maxWidth < 600) {
                   return Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,

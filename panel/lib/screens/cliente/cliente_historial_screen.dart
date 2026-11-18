@@ -5,8 +5,7 @@ import '../../utils/formato.dart';
 import '../../utils/seguimiento_cliente.dart';
 import '../../widgets/estado_vacio.dart';
 
-/// Trabajos terminados sobre los equipos del cliente. Los que siguen en curso están en
-/// Seguimiento: antes aparecían acá también, sin estado, y no se distinguían de los cerrados.
+/// Trabajos terminados sobre los equipos del cliente; los que siguen en curso estan en Seguimiento.
 class ClienteHistorialScreen extends StatefulWidget {
   const ClienteHistorialScreen({super.key});
 
@@ -99,8 +98,8 @@ class _ClienteHistorialScreenState extends State<ClienteHistorialScreen> {
               ),
               trailing: facturaUrl != null
                   ? TextButton.icon(
-                      // la API ya entrega una URL firmada completa; antes se le anteponía la
-                      // dirección del servidor y el enlace quedaba roto fuera del mismo origen
+                      // la API ya entrega una URL firmada completa: no se le antepone la direccion
+                      // del servidor
                       onPressed: () => abrirEnlace(facturaUrl),
                       icon: const Icon(Icons.picture_as_pdf, size: 18),
                       label: const Text('Factura'),

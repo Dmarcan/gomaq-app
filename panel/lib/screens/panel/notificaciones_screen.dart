@@ -238,7 +238,6 @@ class _NotificacionesScreenState extends State<NotificacionesScreen> {
     }
   }
 
-  /// Aviso de que la lista viene filtrada desde el dashboard, con la salida para ver todos.
   bool get _hayProveedorSinConectar =>
       _notificaciones.any((n) => n['estado'] == 'error' && errorProveedorSinConectar(n['ultimo_error']));
 

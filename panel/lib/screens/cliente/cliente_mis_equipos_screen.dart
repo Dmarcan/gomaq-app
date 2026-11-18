@@ -170,8 +170,7 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
                         subtitle: Text(m['ubicacion'] ?? 'Sin ubicación registrada'),
                         trailing: EstadoChip(estado: m['estado']),
                       ),
-                      // Antes la única forma de pedir asistencia era tocar la tarjeta, y nada lo
-                      // indicaba: un cliente con un equipo en falla no encontraba cómo pedir ayuda.
+                      // boton explicito: tocar la tarjeta no indica que se puede pedir asistencia
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 12),
                         child: Wrap(

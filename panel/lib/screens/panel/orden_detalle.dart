@@ -17,7 +17,6 @@ import '../../widgets/estado_chip.dart';
 import '../../widgets/estado_vacio.dart';
 import '../../widgets/motivo_cambio_dialogo.dart';
 
-
 /// Abre el detalle de una orden por su id (con el campo para aprobar la valorización si
 /// corresponde). Lo usa Facturación, cuyas filas no traen todos los datos de la orden.
 Future<void> abrirDetalleOrden(BuildContext context, int id, {VoidCallback? onCambio}) async {
@@ -104,7 +103,7 @@ class DetalleOrden extends StatefulWidget {
 class DetalleOrdenState extends State<DetalleOrden> {
   List<dynamic> _mecanicos = [];
   List<dynamic> _lineas = [];
-  // hasta que termina la primera carga no se dice "sin repuestos" (aparecía un instante de más)
+  // hasta que termina la primera carga no se dice "sin repuestos"
   bool _cargandoLineas = true;
   // línea de tiempo de la orden (solo administrativo y gerente)
   List<dynamic> _historial = [];
@@ -113,7 +112,6 @@ class DetalleOrdenState extends State<DetalleOrden> {
   int? _mecanicoSeleccionado;
   final _valorizacionCtrl = TextEditingController();
   bool _cargandoAccion = false;
-  // avisos en su campo: antes cada uno era un mensaje pasajero abajo, o un boton que no hacia nada
   String? _errorMecanico;
   String? _errorValorizacion;
   String? _errorFolio;
@@ -208,7 +206,6 @@ class DetalleOrdenState extends State<DetalleOrden> {
       final data = await ApiClient.instance.get('/api/usuarios?rol=mecanico');
       if (mounted) setState(() => _mecanicos = data);
     } catch (_) {
-      // antes se tragaba el error y el selector de mecánico quedaba vacío sin explicación
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: const Text('No se pudo cargar la lista de mecánicos.'),

@@ -10,9 +10,8 @@ import 'services/auth_service.dart';
 import 'theme/gomaq_theme.dart';
 
 Future<void> main() async {
-  // URLs limpias, sin el "#" de la estrategia por hash. El backend ya devuelve index.html
-  // para cualquier ruta que no sea /api (el fallback de SPA en server.js), que es justo lo
-  // que esta estrategia necesita para que un F5 en /flota no termine en un 404.
+  // URLs limpias, sin el "#" de la estrategia por hash. El backend devuelve index.html para toda
+  // ruta fuera de /api (fallback de SPA en server.js), que es lo que necesita un F5 en /flota.
   usePathUrlStrategy();
 
   // Flutter Web deja apagada la capa de accesibilidad hasta que alguien encuentra un botón

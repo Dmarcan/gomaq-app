@@ -1,8 +1,6 @@
-// Lectura de números escritos como se hace en Chile.
-//
-// Los formularios leían los campos con `double.tryParse`, que solo entiende el punto como
-// decimal. Alguien que escribe el costo de un repuesto como "18.500" (punto de miles, como en
-// todo Chile) dejaba guardado 18,5 pesos, sin ningún aviso; y "12,5" no se leía como número.
+// Lectura de numeros escritos como se hace en Chile. double.tryParse solo entiende el punto como
+// decimal: "18.500" (punto de miles) quedaria guardado como 18,5 pesos sin aviso, y "12,5" no se
+// leeria como numero.
 
 final _soloNumero = RegExp(r'^-?[\d.,]+$');
 final _conMiles = RegExp(r'^-?\d{1,3}(\.\d{3})+$');

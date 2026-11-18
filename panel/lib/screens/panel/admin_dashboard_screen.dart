@@ -9,11 +9,8 @@ import '../../utils/pendientes.dart';
 import '../../widgets/cambiar_mi_clave.dart';
 import '../../widgets/confirmar_cerrar_sesion.dart';
 
-/// Marco del panel: barra lateral fija y el contenido de la seccion activa.
-///
-/// Antes era un StatefulWidget con `int _seccion`, asi que la URL nunca cambiaba: F5 volvia
-/// al Dashboard y no habia enlaces profundos. Ahora es el shell de go_router y la seccion la
-/// determina la ruta, con lo que el boton atras del navegador y compartir un enlace funcionan.
+/// Marco del panel: barra lateral fija y el contenido de la seccion activa, que determina la ruta
+/// (shell de go_router).
 class AdminDashboardScreen extends StatefulWidget {
   final String rutaActual;
   final Widget child;
@@ -64,8 +61,8 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
   Widget build(BuildContext context) {
     final auth = context.watch<AuthService>();
 
-    // Por debajo de 900 px la barra lateral fija (240 px) dejaba el contenido apretado o
-    // cortado: pasa a un menú desplegable que se abre con el botón del encabezado.
+    // Bajo 900 px la barra lateral fija (240 px) deja el contenido apretado: pasa a un menu
+    // desplegable que se abre con el boton del encabezado.
     return LayoutBuilder(
       builder: (context, restricciones) {
         final compacto = restricciones.maxWidth < 900;
@@ -118,10 +115,10 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
         Expanded(
           child: KeyedSubtree(
             key: _refreshKey,
-            // Cada página del navegador interno del ShellRoute trae una barrera modal con
-            // BlockSemantics, que ocultaba al lector de pantalla todo lo dibujado antes en el mismo
-            // contenedor: el menú lateral y este encabezado no existían en el árbol de
-            // accesibilidad. Un contenedor propio limita la barrera al contenido de la sección.
+            // Cada pagina del navegador interno del ShellRoute trae una barrera modal con
+            // BlockSemantics que oculta al lector de pantalla todo lo dibujado antes en el mismo
+            // contenedor (el menu lateral y este encabezado). Un contenedor propio limita la
+            // barrera al contenido de la seccion.
             child: Semantics(container: true, child: widget.child),
           ),
         ),
@@ -188,8 +185,6 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
     );
   }
 
-  /// El menu con encabezado por area. Eran 13 items planos, que es mas de lo que alguien
-  /// escanea de una mirada.
   List<Widget> _menuAgrupado({required bool cerrarAlNavegar}) {
     final widgets = <Widget>[];
     String? grupoAnterior;
@@ -199,7 +194,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
           padding: EdgeInsets.fromLTRB(24, grupoAnterior == null ? 4 : 18, 24, 6),
           child: Text(
             item.grupo.toUpperCase(),
-            // white38 a 10 px no se leía (WCAG 1.4.3); white70 da 8,5:1 sobre la barra
+            // white38 a 10 px no se lee (WCAG 1.4.3); white70 da 8,5:1 sobre la barra
             style: const TextStyle(color: Colors.white70, fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 1),
           ),
         ));

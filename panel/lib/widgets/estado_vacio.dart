@@ -4,10 +4,8 @@ import '../services/api_client.dart';
 /// La G de GOMAQ en gris, para estados vacíos del portal del cliente.
 const gGomaqGris = 'assets/g_gomaq_gris.png';
 
-/// Pantalla o lista sin datos: qué es, por qué está vacía y cómo empezar.
-///
-/// Antes varias secciones (Asistencias, el catálogo de Insumos) quedaban completamente en
-/// blanco cuando no había datos, y no se distinguía de una pantalla que no cargó.
+/// Pantalla o lista sin datos: que es, por que esta vacia y como empezar. Asi no se confunde con
+/// una pantalla que no cargo.
 class EstadoVacio extends StatelessWidget {
   /// Ícono del estado. Si se pasa [imagen] no se usa (uno de los dos es obligatorio).
   final IconData? icono;

@@ -3,8 +3,7 @@ import 'package:provider/provider.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
 
-/// Qué cambio falló, en palabras del mecánico. Antes mostraba el nombre interno de la
-/// tarea y el id local ("insumo · OT #-1726...").
+/// Que cambio fallo, en palabras del mecanico (no el nombre interno de la tarea ni el id local).
 String describirTarea(Map<String, dynamic> tarea) {
   const nombres = {
     'insumo': 'Repuesto',

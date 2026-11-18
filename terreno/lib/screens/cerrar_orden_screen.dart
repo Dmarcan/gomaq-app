@@ -91,7 +91,7 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
   }
 
   /// Cerrar es lo unico irreversible de la orden (despues no se agregan fotos ni repuestos), asi
-  /// que se confirma con un resumen. Antes cerraba al primer toque y volvia a la lista sin avisar.
+  /// que se confirma con un resumen.
   Future<void> _confirmarYCerrar() async {
     if (_cerrando) return;
     final lectura = _lecturaEscrita;
@@ -172,7 +172,8 @@ class _CerrarOrdenScreenState extends State<CerrarOrdenScreen> {
       syncService.sincronizar().catchError((_) {});
 
       if (!mounted) return;
-      // el aviso sobrevive al cambio de pantalla: sin esto el cierre volvia a la lista en silencio
+      // el aviso sobrevive al cambio de pantalla, para que el cierre no vuelva a la lista en
+      // silencio
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('${etiquetaOt(ordenId)} cerrada. Si no hay señal, se enviará cuando vuelva.')),
       );

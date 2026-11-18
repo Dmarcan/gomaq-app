@@ -1,8 +1,8 @@
 import 'package:url_launcher/url_launcher.dart';
 
-/// Abre un enlace (PDF de guía o factura, ya con URL firmada completa) fuera de la app: en una
-/// pestaña nueva en el navegador y en el navegador del teléfono en Android. Reemplaza el
-/// `dart:html` que solo existe en la web y no dejaba compilar el panel a Android.
+/// Abre un enlace (PDF de guia o factura, con URL firmada completa) fuera de la app: en una pestana
+/// nueva en la web y en el navegador del telefono en Android. No usa dart:html para que el panel
+/// compile tambien a Android.
 Future<void> abrirEnlace(String url) async {
   await launchUrl(
     Uri.parse(url),
