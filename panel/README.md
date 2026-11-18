@@ -20,5 +20,5 @@ flutter test && flutter analyze
 flutter build apk --release    # apunta por defecto al servidor de Railway
 ```
 
-El cliente HTTP y el formato de fechas y montos viven en `../comun`. Mas contexto: `../CLAUDE.md` y
+El cliente HTTP y el formato de fechas y montos viven en `../comun`. Decisiones de arquitectura:
 `../docs/tecnica/PLAN_ARQUITECTURA_FRONTEND.md`.

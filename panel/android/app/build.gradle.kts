@@ -18,8 +18,6 @@ android {
         // Distinto del de la app del mecanico (cl.gomaq.gomaq_mecanico) para que convivan en un telefono.
         // El namespace queda como el paquete de MainActivity y no tiene que coincidir con este id.
         applicationId = "cl.gomaq.gomaq_panel"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         // Uses the version code from pubspec.yaml. When using split APKs, 1000 * ABI_VERSION
@@ -32,8 +30,7 @@ android {
 
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            // Firmado con la clave de depuración.
             signingConfig = signingConfigs.getByName("debug")
         }
     }

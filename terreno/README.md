@@ -19,4 +19,4 @@ flutter build apk --release    # apunta por defecto al servidor de Railway
 ```
 
 Antes de actualizar el APK en un telefono, sincronizar hasta ver "Todo enviado": desinstalar la
-app borra la cola pendiente. Mas contexto: `../CLAUDE.md`.
+app borra la cola pendiente.

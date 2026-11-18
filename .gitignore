@@ -13,3 +13,9 @@ backend/public/
 
 # reporte TAP del CI (cuenta de pruebas omitidas)
 tap.txt
+
+# Notas de trabajo locales (no van al repositorio)
+ESTADO.md
+CLAUDE.md
+AGENTS.md
+docs/tecnica/revision_pre_demo_trabajo/env.ps1
