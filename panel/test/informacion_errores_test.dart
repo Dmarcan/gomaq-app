@@ -76,5 +76,16 @@ void main() {
       );
       expect(textoDetalleNotificacion({'estado': 'pendiente', 'intentos': 0}), 'Estado: pendiente (0 intentos)');
     });
+
+    test('un pendiente que ya falló muestra el motivo, sin cambiar lo que se puede hacer con él', () {
+      final n = {'estado': 'pendiente', 'intentos': 0, 'ultimo_error': 'Credencial de FCM rechazada', 'canal': 'push'};
+      expect(textoDetalleNotificacion(n), 'Pendiente (0 intentos): Credencial de FCM rechazada');
+      expect(puedeReintentarAviso(n), isFalse);
+      expect(esAvisoSinProveedor(n), isFalse);
+      // un pendiente con el error vacío o en blanco sigue con el texto de siempre
+      expect(textoDetalleNotificacion({'estado': 'pendiente', 'intentos': 1, 'ultimo_error': '  '}), 'Estado: pendiente (1 intentos)');
+      // el motivo no se agrega a los demás estados
+      expect(textoDetalleNotificacion({'estado': 'enviado', 'intentos': 1, 'ultimo_error': 'nota'}), 'Estado: enviado (1 intentos)');
+    });
   });
 }

@@ -259,14 +259,19 @@ async function avisarAjusteInventario(client, { insumoId, ubicacionId, delta, mo
 /**
  * Avisos con problemas (los que mueven la alarma del dashboard): en error los que van al cliente (los
  * internos no cuentan mientras el proveedor sea un stub) y los pendientes que llevan mas de 10 min
- * vencidos sin que nadie los tome (el worker esta caido). Parametro $1: TIPOS_INTERNOS.
+ * vencidos sin que nadie los tome (el worker esta caido). Tambien cuentan, de cualquier tipo, los pendientes que ya
+ * traen un error y llevan mas de 10 min desde que se crearon: es lo que deja un fallo de configuracion (clave de
+ * Firebase o de Resend mala), donde el worker espera una hora sin gastar intentos y la fila nunca queda "atrasada".
+ * Un push interno que termina en 'error' definitivo (token muerto) NO cuenta: el dispositivo se descarta solo.
+ * Parametro $1: TIPOS_INTERNOS.
  */
 const SQL_AVISOS_EN_ERROR = `(estado = 'error' AND COALESCE(payload->>'tipo', '') <> ALL($1::text[]))`;
 const SQL_AVISOS_ATRASADOS = `(estado = 'pendiente' AND intentos < 5 AND proximo_intento < now() - interval '10 minutes')`;
-const SQL_AVISOS_PROBLEMAS = `(${SQL_AVISOS_EN_ERROR} OR ${SQL_AVISOS_ATRASADOS})`;
+const SQL_AVISOS_PENDIENTES_CON_ERROR = `(estado = 'pendiente' AND ultimo_error IS NOT NULL AND created_at < now() - interval '10 minutes')`;
+const SQL_AVISOS_PROBLEMAS = `(${SQL_AVISOS_EN_ERROR} OR ${SQL_AVISOS_ATRASADOS} OR ${SQL_AVISOS_PENDIENTES_CON_ERROR})`;
 
 module.exports = {
-    SQL_AVISOS_PROBLEMAS, SQL_AVISOS_EN_ERROR, SQL_AVISOS_ATRASADOS,
+    SQL_AVISOS_PROBLEMAS, SQL_AVISOS_EN_ERROR, SQL_AVISOS_ATRASADOS, SQL_AVISOS_PENDIENTES_CON_ERROR,
     TIPOS_AVISO, TIPOS_INTERNOS, MOTIVOS_AJUSTE_CON_AVISO,
     TIPOS_CON_ENVIO, pushHabilitado, tieneProveedor, encolarNotificacion,
     encolarAMecanico, encolarADispositivos, encolarAGerentes, encolarAOficina, encolarAClientes,

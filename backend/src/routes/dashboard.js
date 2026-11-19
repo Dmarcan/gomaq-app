@@ -3,7 +3,7 @@ require('../utils/asyncErrores');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 
-const { TIPOS_INTERNOS, SQL_AVISOS_PROBLEMAS, SQL_AVISOS_EN_ERROR, SQL_AVISOS_ATRASADOS } = require('../utils/avisos');
+const { TIPOS_INTERNOS, SQL_AVISOS_PROBLEMAS, SQL_AVISOS_EN_ERROR, SQL_AVISOS_ATRASADOS, SQL_AVISOS_PENDIENTES_CON_ERROR } = require('../utils/avisos');
 const { SQL_SOLICITUDES_POR_ATENDER, sqlGuiasSinDocumento, SQL_CUENTAS_POR_APROBAR, SQL_DESCUADRES } = require('../utils/pendientes');
 const { cargarAlertasMantencion, contarAlertas } = require('../utils/mantencion');
 const { cargarArriendos, filtrarPorFacturar, filtrarConAviso } = require('../utils/arriendos');
@@ -44,6 +44,10 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
     const notificacionesAtrasadas = await pool.query(
         `SELECT COUNT(*) AS n FROM notificaciones_pendientes WHERE ${SQL_AVISOS_ATRASADOS}`
     );
+    // pendientes que ya fallaron (con su motivo) y llevan mas de 10 min: una clave mala del proveedor los deja esperando
+    const notificacionesPendientesConError = await pool.query(
+        `SELECT COUNT(*) AS n FROM notificaciones_pendientes WHERE ${SQL_AVISOS_PENDIENTES_CON_ERROR}`
+    );
     // despachos registrados sin PDF: el equipo ya salio y falta el respaldo
     const guiasSinDocumento = await pool.query(`SELECT COUNT(*) AS n FROM guias WHERE ${sqlGuiasSinDocumento()}`);
     // la aprobacion de cuentas de clientes vive en una pestaña de Clientes: el atajo la hace visible
@@ -64,6 +68,7 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
             solicitudes_pendientes: Number(solicitudesPendientes.rows[0].n),
             notificaciones_error: Number(notificacionesError.rows[0].n),
             notificaciones_atrasadas: Number(notificacionesAtrasadas.rows[0].n),
+            notificaciones_pendientes_con_error: Number(notificacionesPendientesConError.rows[0].n),
             guias_sin_documento: Number(guiasSinDocumento.rows[0].n),
             cuentas_por_aprobar: Number(cuentasPorAprobar.rows[0].n),
         },

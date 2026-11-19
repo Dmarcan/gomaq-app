@@ -74,6 +74,12 @@ String _detalleBase(Map n) {
     return 'Error tras ${n['intentos']} intentos: ${n['ultimo_error'] ?? ''}';
   }
   if (n['estado'] == 'cancelado') return 'Cancelada: ${n['ultimo_error'] ?? 'ya no corresponde enviarla'}';
+  // un pendiente que ya falló (por ejemplo una clave mala del proveedor, que el worker reintenta cada hora sin
+  // gastar intentos) muestra el motivo, para que se vea por qué no sale
+  final motivo = '${n['ultimo_error'] ?? ''}'.trim();
+  if (n['estado'] == 'pendiente' && motivo.isNotEmpty) {
+    return 'Pendiente (${n['intentos']} intentos): $motivo';
+  }
   return 'Estado: ${n['estado']} (${n['intentos']} intentos)';
 }
 

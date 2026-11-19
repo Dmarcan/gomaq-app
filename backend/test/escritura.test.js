@@ -5667,6 +5667,42 @@ describe('bloque 6 (parte 1): contratos para el dashboard, Ordenes y el portal',
         }
     });
 
+    test('un aviso pendiente con error y mas de 10 min cuenta como problema; sin error, reciente u otro estado no', async (t) => {
+        if (!requiereBase(t)) return;
+        const total = async () => (await pedir('GET', '/api/notificaciones?problemas=1', 'administrativo')).body.total;
+        const pendientes = async () => (await pedir('GET', '/api/dashboard/pendientes', 'administrativo')).body.avisos_con_problemas;
+        const antes = await total();
+        assert.equal(await pendientes(), antes);
+        const ids = [];
+        const insertar = async (canal, tipo, estado, error, minutos, intentos = 0) => {
+            // proximo_intento en el futuro: la fila no es "atrasada", solo el error la hace contar
+            const r = await pool.query(
+                `INSERT INTO notificaciones_pendientes (canal, destinatario, payload, estado, intentos, ultimo_error, created_at, proximo_intento)
+                 VALUES ($1, 'z@gomaq.test', $2, $3, $4, $5, now() - ($6 || ' minutes')::interval, now() + interval '1 hour') RETURNING id`,
+                [canal, JSON.stringify({ tipo }), estado, intentos, error, String(minutos)]);
+            ids.push(r.rows[0].id);
+            return r.rows[0].id;
+        };
+        try {
+            const cuenta = await insertar('push', 'ot_asignada', 'pendiente', 'Credencial de FCM rechazada', 30);
+            await insertar('push', 'ot_asignada', 'pendiente', null, 30);
+            await insertar('push', 'ot_asignada', 'pendiente', 'Credencial de FCM rechazada', 2);
+            await insertar('push', 'ot_asignada', 'cancelado', 'El aviso tiene mas de 6 horas', 30);
+            await insertar('push', 'ot_asignada', 'enviado', 'nota', 30);
+            await insertar('push', 'ot_asignada', 'error', 'token muerto', 30, 5);
+            assert.equal(await total(), antes + 1, 'solo el pendiente viejo con error suma');
+            assert.equal(await pendientes(), antes + 1, 'el numero del dashboard es el de la lista');
+            const lista = (await pedir('GET', '/api/notificaciones?problemas=1', 'administrativo')).body.items;
+            const fila = lista.find((x) => x.id === cuenta);
+            assert.ok(fila, 'aparece en la lista de problemas');
+            assert.equal(fila.ultimo_error, 'Credencial de FCM rechazada', 'la pantalla recibe el motivo');
+            const resumen = (await pedir('GET', '/api/dashboard/resumen', 'administrativo')).body;
+            assert.ok(Number.isInteger(resumen.atajos.notificaciones_pendientes_con_error) && resumen.atajos.notificaciones_pendientes_con_error >= 1);
+        } finally {
+            await pool.query('DELETE FROM notificaciones_pendientes WHERE id = ANY($1)', [ids]);
+        }
+    });
+
     describe('portal: GET /ordenes-trabajo/mias', () => {
         async function conVehiculo(usar) {
             const existente = await pool.query('SELECT id FROM vehiculos WHERE usuario_id = $1', [datos.mecanicoId]);
