@@ -163,9 +163,10 @@ o `adb install`. En teléfonos con MIUI, si falla con `INSTALL_FAILED_USER_RESTR
 USB" en Opciones de desarrollador. Antes de actualizar un APK, el teléfono debe sincronizar hasta ver "Todo
 enviado": desinstalar borra la cola pendiente.
 
-**Firma:** el release se firma hoy con la clave de depuración (`terreno/android/app/build.gradle.kts`). Sirve
-para instalar a mano; para distribuir hay que generar un keystore propio. Los `*.jks`, `*.keystore` y
-`key.properties` están en `.gitignore`.
+**Firma:** `terreno/android/app/build.gradle.kts` y el del panel leen `android/key.properties` (plantilla:
+`key.properties.example`, con el comando `keytool` para generar la llave). Con ese archivo el release se firma con
+la llave propia; sin él, con la clave de depuración, que sirve para instalar a mano pero no para publicar. Los
+`*.jks`, `*.keystore` y `key.properties` están en `.gitignore`: la llave y sus claves nunca van al repositorio.
 
 ### Panel
 

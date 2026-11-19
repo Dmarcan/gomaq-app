@@ -1,0 +1,12 @@
+# Copia este archivo como key.properties (sin .example) y completa los valores. key.properties NO se sube
+# al repositorio (esta en .gitignore) y las claves no se escriben en el chat, en issues ni en commits.
+#
+# 1. Genera la llave una sola vez y guardala fuera del repo, con copia de respaldo:
+#      keytool -genkey -v -keystore <ruta>/gomaq-release.jks -keyalg RSA -keysize 2048 -validity 10000 -alias gomaq
+# 2. Completa estos cuatro campos. storeFile es relativo a esta carpeta (android/) o una ruta absoluta.
+#
+# Sin key.properties el APK release se firma con la clave de depuracion: sirve para probar, no para publicar.
+storeFile=../../../llaves/gomaq-release.jks
+storePassword=
+keyAlias=gomaq
+keyPassword=

@@ -50,5 +50,6 @@ lib/theme/, utils/, widgets/
 - Antes de actualizar el APK en un teléfono, sincronizar hasta ver "Todo enviado": desinstalar la app borra la
   cola pendiente.
 - Un cambio que toca la cola se despliega con el backend primero y el APK después.
-- El APK release se firma hoy con la clave de depuración (`android/app/build.gradle.kts`); para distribuir hay
-  que crear un keystore propio (ver [../docs/DESPLIEGUE.md](../docs/DESPLIEGUE.md), sección 6).
+- El APK release se firma con la llave de `android/key.properties` si existe (plantilla: `android/key.properties.example`;
+  la llave la genera quien publica y no se sube al repo); sin ese archivo usa la clave de depuración, válida solo
+  para instalar a mano. Detalle en [../docs/DESPLIEGUE.md](../docs/DESPLIEGUE.md), sección 6.

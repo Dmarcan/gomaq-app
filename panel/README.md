@@ -52,6 +52,7 @@ web/                         index.html, manifest y service worker de push
 - Estado con `provider`; lints de `flutter_lints` (`analysis_options.yaml`).
 - El cliente HTTP y el formato de fechas y montos viven en `../comun`.
 - Tipografías Inter y Barlow incluidas en `assets/fonts/` (licencia OFL).
-- El APK release se firma hoy con la clave de depuración (`android/app/build.gradle.kts`); para distribuir hay
-  que crear un keystore propio (ver [../docs/DESPLIEGUE.md](../docs/DESPLIEGUE.md), sección 6).
+- El APK release se firma con la llave de `android/key.properties` si existe (plantilla: `android/key.properties.example`;
+  la llave la genera quien publica y no se sube al repo); sin ese archivo usa la clave de depuración, válida solo
+  para instalar a mano. Detalle en [../docs/DESPLIEGUE.md](../docs/DESPLIEGUE.md), sección 6.
 - Decisiones de arquitectura: [../docs/tecnica/PLAN_ARQUITECTURA_FRONTEND.md](../docs/tecnica/PLAN_ARQUITECTURA_FRONTEND.md).
