@@ -4,7 +4,9 @@ import '../theme/gomaq_theme.dart';
 import 'dialogos.dart';
 import 'estado_vacio.dart';
 
-/// Fotos de una orden de trabajo (antes y después) para la vista previa de la factura.
+/// Fotos de una orden de trabajo (antes y después): la vista previa de la factura (administrativo) y el
+/// detalle de la orden en el portal del cliente (`paraCliente`, siempre con `cargador`: el cliente no
+/// tiene acceso a /evidencia).
 ///
 /// Las URLs vienen firmadas por una hora: si una vence mientras el cuadro sigue abierto, la miniatura
 /// muestra un ícono en vez de romperse y el botón Recargar pide URLs nuevas. Las fotos NO se adjuntan
@@ -14,7 +16,9 @@ class FotosOrden extends StatefulWidget {
 
   /// Cómo se piden las fotos; por defecto el servidor. Se puede reemplazar en las pruebas.
   final Future<List<dynamic>> Function()? cargador;
-  const FotosOrden({super.key, required this.ordenId, this.cargador});
+  /// En el portal del cliente: sin la nota del correo, que habla de lo que hace el administrativo.
+  final bool paraCliente;
+  const FotosOrden({super.key, required this.ordenId, this.cargador, this.paraCliente = false});
 
   @override
   State<FotosOrden> createState() => _FotosOrdenState();
@@ -71,7 +75,12 @@ class _FotosOrdenState extends State<FotosOrden> {
 
   Widget _miniatura(Map<String, dynamic> foto) {
     final url = foto['url'] as String?;
-    return InkWell(
+    final momento = foto['tipo'] == 'despues' ? 'después' : 'antes';
+    return Semantics(
+      button: url != null,
+      label: url == null ? 'Foto $momento no disponible' : 'Ampliar foto $momento',
+      excludeSemantics: true,
+      child: InkWell(
       onTap: url == null ? null : () => _ampliar(foto),
       child: Container(
         width: 72,
@@ -91,6 +100,7 @@ class _FotosOrdenState extends State<FotosOrden> {
                   child: Icon(Icons.broken_image_outlined, color: GomaqColors.estadoNeutro),
                 ),
               ),
+      ),
       ),
     );
   }
@@ -119,7 +129,7 @@ class _FotosOrdenState extends State<FotosOrden> {
       children: [
         Row(
           children: [
-            const Expanded(child: TituloSeccion('Fotos de la orden')),
+            Expanded(child: TituloSeccion(widget.paraCliente ? 'Fotos del trabajo' : 'Fotos de la orden')),
             if (!_cargando) TextButton.icon(onPressed: _cargar, icon: const Icon(Icons.refresh, size: 16), label: const Text('Recargar')),
           ],
         ),
@@ -133,8 +143,10 @@ class _FotosOrdenState extends State<FotosOrden> {
           _grupo('Antes', antes),
           _grupo('Después', despues),
         ],
-        const SizedBox(height: 4),
-        const Text('Las fotos no se adjuntan al correo.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+        if (!widget.paraCliente) ...[
+          const SizedBox(height: 4),
+          const Text('Las fotos no se adjuntan al correo.', style: TextStyle(fontSize: 12, color: Colors.black54)),
+        ],
       ],
     );
   }

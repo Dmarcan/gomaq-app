@@ -4,10 +4,14 @@ import '../../utils/enlaces.dart';
 import '../../utils/formato.dart';
 import '../../utils/seguimiento_cliente.dart';
 import '../../widgets/estado_vacio.dart';
+import 'cliente_orden_detalle_screen.dart';
 
 /// Trabajos terminados sobre los equipos del cliente; los que siguen en curso estan en Seguimiento.
 class ClienteHistorialScreen extends StatefulWidget {
-  const ClienteHistorialScreen({super.key});
+  /// Cómo se piden las órdenes y el detalle de una; por defecto el servidor. Se pueden reemplazar en las pruebas.
+  final Future<List<dynamic>> Function()? cargador;
+  final Future<Map<String, dynamic>> Function(int ordenId)? cargadorDetalle;
+  const ClienteHistorialScreen({super.key, this.cargador, this.cargadorDetalle});
 
   @override
   State<ClienteHistorialScreen> createState() => _ClienteHistorialScreenState();
@@ -30,7 +34,9 @@ class _ClienteHistorialScreenState extends State<ClienteHistorialScreen> {
       _error = null;
     });
     try {
-      final data = await ApiClient.instance.get('/api/ordenes-trabajo/mias') as List;
+      final data = widget.cargador != null
+          ? await widget.cargador!()
+          : await ApiClient.instance.get('/api/ordenes-trabajo/mias') as List;
       if (!mounted) return;
       setState(() => _ordenes = data.where((o) => o['estado'] == 'finalizada').toList());
     } catch (e) {
@@ -75,6 +81,15 @@ class _ClienteHistorialScreenState extends State<ClienteHistorialScreen> {
           final tieneDiagnostico = (o['diagnostico'] as String?)?.isNotEmpty ?? false;
           return Card(
             child: ListTile(
+              // abre el detalle con Navigator: el router devuelve al cliente a /portal con cualquier otra ruta
+              onTap: o['id'] is int
+                  ? () => Navigator.of(context).push(MaterialPageRoute<void>(
+                        builder: (_) => ClienteOrdenDetalleScreen(
+                          ordenId: o['id'] as int,
+                          cargador: widget.cargadorDetalle == null ? null : () => widget.cargadorDetalle!(o['id'] as int),
+                        ),
+                      ))
+                  : null,
               isThreeLine: (tieneMotivo ? 1 : 0) + 1 + (tieneDiagnostico ? 1 : 0) + (explicacionCobro(o['cobro'] as String?) != null ? 1 : 0) >= 2,
               title: Text(tituloOrden(o)),
               subtitle: Column(

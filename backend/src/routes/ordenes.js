@@ -7,8 +7,9 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { verificarDuenoOrden, contactoCliente, MENSAJE_OT_CERRADA, SQL_OT_SIN_ASIGNAR } = require('../utils/ordenes');
 const { cobroParaCliente } = require('../utils/cobroCliente');
+const { armarDetalleOtCliente } = require('../utils/detalleOtCliente');
 const { estadoTrasAsignar, evaluarCambioEstado, evaluarCierre, parsearEstados, EN_CURSO_PANEL, ESTADOS } = require('../utils/estadosOt');
-const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
+const { supabase, BUCKET, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { urlFirmadaONull } = require('../utils/urlsFirmadas');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
@@ -313,6 +314,51 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     }));
 
     res.json(conUrlFirmada);
+});
+
+// GET /api/ordenes-trabajo/mias/:id - el detalle de una orden del cliente para el historial del portal:
+// linea de tiempo, motivo, diagnostico, observacion final y fotos antes/despues. Va antes de /:id.
+// El cliente_id sale siempre del token: una orden de otra empresa responde 404 igual que una que no existe.
+// No lleva factura ni la foto de la solicitud, y nunca montos ni coordenadas (utils/detalleOtCliente.js).
+router.get('/mias/:id', verifyToken, requireRole('cliente'), async (req, res) => {
+    if (!req.user.cliente_id) {
+        return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
+    }
+    res.set('Cache-Control', 'no-store');
+    const ot = await pool.query(
+        `SELECT ot.id, ot.estado, ot.motivo, ot.diagnostico, ot.observacion_final, ot.fecha_creacion, ot.fecha_cierre,
+                ot.facturable, ot.valorizacion,
+                (SELECT COUNT(*)::int FROM movimientos_insumo mi
+                 WHERE mi.orden_trabajo_id = ot.id AND mi.anulada_at IS NULL AND mi.facturable = 'pendiente') AS lineas_pendientes,
+                m.codigo AS maquinaria_codigo, m.tipo AS maquinaria_tipo,
+                u.nombre AS mecanico_nombre
+         FROM ordenes_trabajo ot
+         JOIN maquinarias m ON m.id = ot.maquinaria_id
+         LEFT JOIN usuarios u ON u.id = ot.mecanico_id
+         WHERE ot.id = $1 AND ot.cliente_id = $2`,
+        [req.params.id, req.user.cliente_id]
+    );
+    const orden = ot.rows[0];
+    if (!orden) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+
+    // solo las columnas que la linea de tiempo necesita: nunca detalle, usuario_id ni origen
+    const [eventos, evidencias] = await Promise.all([
+        pool.query(
+            `SELECT tipo, estado_anterior, estado_nuevo, rol, ocurrio_en, registrado_en, aplicado, hora_dudosa
+             FROM ordenes_eventos WHERE orden_trabajo_id = $1
+             ORDER BY (tipo = 'creacion') DESC, id`,
+            [orden.id]
+        ),
+        pool.query(
+            'SELECT id, tipo, path, created_at FROM evidencias_fotograficas WHERE orden_trabajo_id = $1 ORDER BY created_at',
+            [orden.id]
+        ),
+    ]);
+    const fotos = await Promise.all(evidencias.rows.map(async (f) => ({
+        id: f.id, tipo: f.tipo, created_at: f.created_at, url: await urlFirmadaONull(supabase, BUCKET, f.path),
+    })));
+
+    res.json(armarDetalleOtCliente({ orden, eventos: eventos.rows, fotos }));
 });
 
 router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
