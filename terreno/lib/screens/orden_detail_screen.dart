@@ -398,7 +398,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
                   ),
                   const SizedBox(height: 6),
                   const Text(
-                    'Estás cerca del destino. Si ya estás en el lugar, confirma para iniciar el trabajo.',
+                    'Estás cerca del destino. Si ya estás en el lugar, confirma tu llegada.',
                     style: TextStyle(color: GomaqColors.textoSecundario, fontSize: 13),
                   ),
                   const SizedBox(height: 8),
@@ -408,7 +408,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
                       FilledButton.icon(
                         onPressed: _iniciarTrabajo,
                         icon: const Icon(Icons.play_circle_outline),
-                        label: const Text('Llegué · Iniciar trabajo'),
+                        label: const Text('Llegué al lugar'),
                       ),
                       TextButton(
                         onPressed: () => PosicionService.llegada.value = null,
@@ -1007,7 +1007,38 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
 
   /// Observaciones FINALES del talonario: que se hizo, ademas del folio del papel y los botones de
   /// guardar. Va junto a las fotos DESPUES, que es lo ultimo que se documenta antes de cerrar.
-  Widget _seccionObservacionesFinales({required bool soloLectura, required bool enTerreno}) {
+  /// Tras "Llegué al lugar" la orden queda en terreno; este es el paso siguiente. Antes estaba al final de la
+  /// pantalla, bajo Observaciones finales, y no se veía.
+  Widget _tarjetaPasarAReparacion() {
+    return Card(
+      margin: const EdgeInsets.only(bottom: 12),
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Ya estás en el lugar', style: TextStyle(fontWeight: FontWeight.bold)),
+            const SizedBox(height: 6),
+            const Text(
+              'Cuando empieces a reparar, pasa la orden a reparación para que el cliente lo vea.',
+              style: TextStyle(color: GomaqColors.textoSecundario, fontSize: 13),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              width: double.infinity,
+              child: FilledButton.icon(
+                onPressed: () => _guardarDiagnostico(estado: 'en_reparacion'),
+                icon: const Icon(Icons.handyman_outlined),
+                label: const Text('Pasar a reparación'),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _seccionObservacionesFinales({required bool soloLectura}) {
     return _tarjeta(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -1047,16 +1078,6 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
                       label: const Text('Guardar'),
                     ),
                   ),
-                  if (enTerreno) ...[
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: OutlinedButton.icon(
-                        onPressed: () => _guardarDiagnostico(estado: 'en_reparacion'),
-                        icon: const Icon(Icons.handyman_outlined, size: 18),
-                        label: const Text('Pasar a reparación'),
-                      ),
-                    ),
-                  ],
                 ],
               ),
             ],
@@ -1496,7 +1517,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
         accionSecundaria = _iniciarTrabajo;
         break;
       case 'en_camino':
-        texto = 'LLEGUÉ · INICIAR TRABAJO';
+        texto = 'LLEGUÉ AL LUGAR';
         icono = Icons.play_circle_outline;
         accion = _iniciarTrabajo;
         break;
@@ -1640,6 +1661,9 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
         children: [
           _cabecera(orden),
 
+          // en el lugar pero sin empezar a reparar: el paso que sigue va arriba, a la vista
+          if (orden.estado == 'en_terreno') _tarjetaPasarAReparacion(),
+
           // ya aceptado el trabajo y hasta llegar: la ruta al cliente
           if (orden.estado == 'en_camino') _tarjetaLlegada(orden),
           if (orden.estado == 'aceptada' || orden.estado == 'en_camino') _tarjetaComoLlegar(orden),
@@ -1665,7 +1689,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
             _seccionTipoServicio(soloLectura: false),
             _seccionChecklist(soloLectura: false),
             _seccionInsumos(soloLectura: false),
-            _seccionObservacionesFinales(soloLectura: false, enTerreno: orden.estado == 'en_terreno'),
+            _seccionObservacionesFinales(soloLectura: false),
             _seccionFotos(
               tipo: 'despues',
               titulo: 'Fotos DESPUÉS',
@@ -1680,7 +1704,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
             _seccionTipoServicio(soloLectura: true),
             _seccionChecklist(soloLectura: true),
             _seccionInsumos(soloLectura: true),
-            _seccionObservacionesFinales(soloLectura: true, enTerreno: false),
+            _seccionObservacionesFinales(soloLectura: true),
             _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: false),
             _seccionFotos(tipo: 'despues', titulo: 'Fotos DESPUÉS', puedeAgregar: false),
             _seccionTramos(soloLectura: true),
@@ -1690,7 +1714,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
             _seccionTipoServicio(soloLectura: false),
             _seccionChecklist(soloLectura: false),
             _seccionInsumos(soloLectura: false),
-            _seccionObservacionesFinales(soloLectura: false, enTerreno: false),
+            _seccionObservacionesFinales(soloLectura: false),
             _seccionFotos(tipo: 'antes', titulo: 'Fotos ANTES', puedeAgregar: true),
             _seccionFotos(tipo: 'despues', titulo: 'Fotos DESPUÉS', puedeAgregar: true),
             _seccionTramos(soloLectura: false),

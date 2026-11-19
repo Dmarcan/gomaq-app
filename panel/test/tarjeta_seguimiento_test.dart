@@ -38,4 +38,36 @@ void main() {
     expect(find.byType(ListTile), findsOneWidget);
     expect(tester.widget<ListTile>(find.byType(ListTile)).trailing, isA<EstadoChip>());
   });
+
+  testWidgets('la barra de pasos y la hora de llegada se ven sin tocar la tarjeta', (tester) async {
+    tester.view.physicalSize = const Size(375, 800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: TarjetaSeguimiento(
+          item: item,
+          lineas: const ['Paso 4 de 6: Técnico en camino'],
+          llegada: 'Llega en ~20 min (hora estimada 22:15)',
+          alTocar: () {},
+        ),
+      ),
+    ));
+    expect(tester.takeException(), isNull);
+    expect(find.byType(BarraPasos), findsOneWidget);
+    expect(find.byWidgetPredicate((w) => w is Semantics && w.properties.label == 'Paso 4 de 6: Técnico en camino'), findsOneWidget);
+    expect(find.text('Llega en ~20 min (hora estimada 22:15)'), findsOneWidget);
+  });
+
+  testWidgets('sin llegada no hay recuadro, y con un estado desconocido tampoco barra', (tester) async {
+    await montar(tester, 375);
+    expect(find.byIcon(Icons.schedule), findsNothing);
+    expect(find.byType(BarraPasos), findsOneWidget);
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: TarjetaSeguimiento(item: const {'titulo': 'x', 'estado': 'raro'}, lineas: const ['a'], alTocar: () {}),
+      ),
+    ));
+    expect(find.byType(BarraPasos), findsNothing);
+  });
 }

@@ -106,6 +106,7 @@ class _ClienteSeguimientoScreenState extends State<ClienteSeguimientoScreen> {
           return TarjetaSeguimiento(
             item: item,
             lineas: lineas,
+            llegada: textoLlegada(item),
             alTocar: () => showDialog(context: context, builder: (_) => _SeguimientoDialog(item: item)),
           );
         },
@@ -114,16 +115,12 @@ class _ClienteSeguimientoScreenState extends State<ClienteSeguimientoScreen> {
   }
 
   List<String> _lineasResumen(Map<String, dynamic> item) {
-    final proximo = proximoPaso(item['estado'] as String?);
     final tecnico = item['mecanico_nombre'] as String?;
     final vehiculo = descripcionVehiculo(item);
     final detalle = item['detalle'] as String?;
-    final llegada = textoLlegada(item);
+    // el avance va en la barra de pasos y la hora de llegada en su recuadro (TarjetaSeguimiento): aquí solo el resto
     return [
       resumenPaso(item),
-      // lo que más le importa al cliente mientras espera: cuándo llega el técnico
-      ?llegada,
-      if (proximo != null) 'Siguiente: $proximo',
       if (tecnico != null && tecnico.isNotEmpty) (vehiculo == null ? 'Técnico: $tecnico' : 'Técnico: $tecnico · $vehiculo'),
       if (detalle != null && detalle.isNotEmpty) detalle,
     ];
@@ -137,7 +134,10 @@ class TarjetaSeguimiento extends StatelessWidget {
   final Map<String, dynamic> item;
   final List<String> lineas;
   final VoidCallback alTocar;
-  const TarjetaSeguimiento({super.key, required this.item, required this.lineas, required this.alTocar});
+
+  /// "Llega en ~20 min (hora estimada 22:15)", solo con el técnico en camino. Va destacada: es lo que el cliente espera.
+  final String? llegada;
+  const TarjetaSeguimiento({super.key, required this.item, required this.lineas, required this.alTocar, this.llegada});
 
   @override
   Widget build(BuildContext context) {
@@ -156,6 +156,22 @@ class TarjetaSeguimiento extends StatelessWidget {
           ),
       ],
     );
+    // el avance se ve sin tocar: barra de pasos arriba y, con el técnico en camino, la hora de llegada abajo
+    final paso = pasoParaCliente(item['estado'] as String?);
+    final cuerpo = Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        if (paso != null) ...[
+          BarraPasos(paso: paso),
+          const SizedBox(height: 8),
+        ],
+        DefaultTextStyle.merge(style: Theme.of(context).textTheme.bodyMedium, child: resumen),
+        if (llegada != null) ...[
+          const SizedBox(height: 10),
+          _RecuadroLlegada(texto: llegada!),
+        ],
+      ],
+    );
     return Card(
       child: angosto
           ? InkWell(
@@ -169,18 +185,87 @@ class TarjetaSeguimiento extends StatelessWidget {
                     const SizedBox(height: 8),
                     Text('${item['titulo']}', style: Theme.of(context).textTheme.titleMedium),
                     const SizedBox(height: 4),
-                    DefaultTextStyle.merge(style: Theme.of(context).textTheme.bodyMedium, child: resumen),
+                    cuerpo,
                   ],
                 ),
               ),
             )
           : ListTile(
-              isThreeLine: lineas.length >= 2,
+              isThreeLine: true,
               title: Text('${item['titulo']}'),
-              subtitle: resumen,
+              subtitle: cuerpo,
               trailing: chip,
               onTap: alTocar,
             ),
+    );
+  }
+}
+
+/// Los seis pasos del seguimiento en una fila: los hechos van rellenos, el actual con anillo y los que faltan
+/// vacíos. El lector de pantalla oye "Paso 4 de 6: Técnico en camino"; los puntos no se leen uno a uno.
+class BarraPasos extends StatelessWidget {
+  final int paso;
+  const BarraPasos({super.key, required this.paso});
+
+  @override
+  Widget build(BuildContext context) {
+    final total = pasosParaCliente.length;
+    Widget punto(int i) {
+      final hecho = i < paso;
+      final actual = i == paso;
+      return Container(
+        width: 14,
+        height: 14,
+        decoration: BoxDecoration(
+          shape: BoxShape.circle,
+          color: hecho ? GomaqColors.accion : Colors.white,
+          border: Border.all(color: (hecho || actual) ? GomaqColors.accion : GomaqColors.estadoNeutro, width: actual ? 4 : 2),
+        ),
+      );
+    }
+
+    return Semantics(
+      label: 'Paso ${paso + 1} de $total: ${pasosParaCliente[paso]}',
+      child: ExcludeSemantics(
+        child: Row(
+          children: [
+            for (var i = 0; i < total; i++) ...[
+              punto(i),
+              if (i < total - 1)
+                Expanded(child: Container(height: 2, color: i < paso ? GomaqColors.accion : GomaqColors.estadoNeutro.withValues(alpha: 0.4))),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// La hora de llegada del técnico, destacada. Se anuncia sola cuando cambia (liveRegion).
+class _RecuadroLlegada extends StatelessWidget {
+  final String texto;
+  const _RecuadroLlegada({required this.texto});
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      liveRegion: true,
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: GomaqColors.accion.withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: GomaqColors.accion.withValues(alpha: 0.35)),
+        ),
+        child: Row(
+          children: [
+            const ExcludeSemantics(child: Icon(Icons.schedule, size: 18, color: GomaqColors.accion)),
+            const SizedBox(width: 8),
+            Expanded(child: Text(texto, style: const TextStyle(fontWeight: FontWeight.w600))),
+          ],
+        ),
+      ),
     );
   }
 }
