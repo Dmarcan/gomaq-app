@@ -1,5 +1,5 @@
 const { test, describe } = require('node:test');
-const assert = require('node:assert');
+const assert = require('node:assert/strict');
 const path = require('path');
 
 const { rutaAdjuntoSolicitud } = require('../src/utils/rutaArchivo');

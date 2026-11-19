@@ -7,7 +7,7 @@ Esquema de PostgreSQL de GOMAQ.
   `backend/scripts/migrar.js` en orden y una sola vez cada uno; el registro queda en `schema_migraciones`.
 - `scripts/`: `semilla_pruebas.sql` (cuentas y datos ficticios para el entorno local; no usar en producción),
   `fixture_migraciones_base.sql` (filas para probar migraciones, ver su encabezado) y
-  `limpiar_datos_prueba.sql` (borra datos de prueba por identificadores fijos: leerlo antes de correrlo).
+  `limpiar_datos_prueba.sql` (borra datos de prueba por identificadores fijos; pide confirmación explícita, ver su cabecera, y no entra en la imagen de despliegue).
 - `datos/`: `equipos_gomaq.json` alimenta `backend/scripts/cargar_equipos.js`; `clientes_gomaq.ejemplo.json`
   muestra el formato de `cargar_clientes.js` (el archivo real `clientes_gomaq.json` está en `.gitignore`: lleva
   datos personales); `casos_corte_cobro.json` lo usan pruebas del cálculo de días de arriendo.

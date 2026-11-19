@@ -1,7 +1,7 @@
 process.env.TZ = 'America/Santiago'; // solo para las funciones antiguas, que dependen de la zona del proceso
 
 const { test, describe } = require('node:test');
-const assert = require('node:assert');
+const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 

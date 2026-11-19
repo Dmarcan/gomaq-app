@@ -10,3 +10,6 @@ terreno
 docs
 panel/android
 backend/test
+
+# scripts de la base solo para desarrollo (semilla, fixtures y limpieza de datos de prueba)
+db/scripts

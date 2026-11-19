@@ -1,7 +1,18 @@
 -- Limpieza de datos de prueba creados durante las verificaciones de desarrollo.
--- NO se ejecuta automaticamente: correr a mano cuando se decida, con
---   cat db/scripts/limpiar_datos_prueba.sql | sudo -u postgres psql -d gomaq
--- Revisa cada bloque antes de correr - borra datos de forma permanente.
+-- NO se ejecuta automaticamente ni viaja en la imagen de despliegue (.dockerignore). Solo para una base
+-- de desarrollo; borra de forma permanente, asi que hay que confirmarlo a proposito:
+--   PGOPTIONS="-c gomaq.limpieza_confirmada=si" psql "$DATABASE_URL" -f db/scripts/limpiar_datos_prueba.sql
+-- Sin esa opcion el script se detiene antes de borrar nada. Lee cada bloque antes de correrlo.
+
+\set ON_ERROR_STOP on
+
+DO $guarda$
+BEGIN
+    IF coalesce(current_setting('gomaq.limpieza_confirmada', true), '') <> 'si' THEN
+        RAISE EXCEPTION 'Limpieza no confirmada: ver la cabecera de limpiar_datos_prueba.sql';
+    END IF;
+END
+$guarda$;
 
 BEGIN;
 

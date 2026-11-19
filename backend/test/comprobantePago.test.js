@@ -1,6 +1,6 @@
 // Comprobante de pago: tipos de archivo que acepta el subidor y la migracion 040.
 const test = require('node:test');
-const assert = require('node:assert');
+const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { subidaComprobante } = require('../src/middleware/upload');

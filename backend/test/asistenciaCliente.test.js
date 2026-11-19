@@ -1,5 +1,5 @@
 const { test, describe } = require('node:test');
-const assert = require('node:assert');
+const assert = require('node:assert/strict');
 
 const { validarGravedad, gravedadMayor, estadoPorGravedad, SQL_ASISTENCIA_ABIERTA } = require('../src/utils/asistenciaCliente');
 const { estadoTrasCierre } = require('../src/utils/estadoEquipo');

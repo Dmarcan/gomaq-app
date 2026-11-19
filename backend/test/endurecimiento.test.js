@@ -1,7 +1,7 @@
 // Endurecimiento del backend: limites del pool, /api/health con 503 y apagado ordenado.
 // Arranca server.js de verdad con una base inalcanzable (no necesita Postgres).
 const test = require('node:test');
-const assert = require('node:assert');
+const assert = require('node:assert/strict');
 const { spawn } = require('node:child_process');
 const path = require('node:path');
 const net = require('node:net');

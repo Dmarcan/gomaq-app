@@ -1,5 +1,5 @@
 const { test, describe } = require('node:test');
-const assert = require('node:assert');
+const assert = require('node:assert/strict');
 
 const { ajustarEta, calcularQuietoDesde } = require('../src/utils/etaViaje');
 const { distanciaMetros } = require('../src/utils/geo');

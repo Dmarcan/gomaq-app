@@ -1,5 +1,5 @@
 const { test, describe } = require('node:test');
-const assert = require('node:assert');
+const assert = require('node:assert/strict');
 
 const { MOTIVOS_AJUSTE, MOTIVOS_CONTEO, validarMotivoAjuste, leerCantidadEstricta, calcularAjuste, reconstruirDescuadre } = require('../src/utils/stock');
 

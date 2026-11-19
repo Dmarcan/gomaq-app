@@ -1,5 +1,5 @@
 const { test, describe } = require('node:test');
-const assert = require('node:assert');
+const assert = require('node:assert/strict');
 
 const { ErrorOrs, hayLlave, tipoDeEstadoHttp, interpretarRespuesta, calcularRuta, BASE_URL_POR_DEFECTO } = require('../src/services/ors');
 

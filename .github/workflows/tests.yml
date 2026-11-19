@@ -106,7 +106,7 @@ jobs:
           exit 1
 
       - name: Tests
-        run: npm test -- --test-reporter=spec --test-reporter-destination=stdout --test-reporter=tap --test-reporter-destination=tap.txt
+        run: node --test --test-concurrency=1 --test-timeout=60000 --test-reporter=spec --test-reporter-destination=stdout --test-reporter=tap --test-reporter-destination=tap.txt "test/**/*.test.js"
 
       # una prueba omitida (por falta de datos o de la base) no debe pasar en silencio
       - name: Ninguna prueba omitida

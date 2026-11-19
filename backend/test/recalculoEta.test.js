@@ -1,5 +1,5 @@
 const { test, describe } = require('node:test');
-const assert = require('node:assert');
+const assert = require('node:assert/strict');
 
 const { decidirRecalculo, CONFIG_POR_DEFECTO } = require('../src/utils/recalculoEta');
 

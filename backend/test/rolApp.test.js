@@ -3,7 +3,7 @@
 // Postgres y que quien corre la prueba pueda asumir el rol (superusuario, como en el CI).
 const test = require('node:test');
 const { exigirBaseLocal } = require('./_entornoPruebas');
-const assert = require('node:assert');
+const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 

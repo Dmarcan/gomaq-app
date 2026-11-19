@@ -1,5 +1,5 @@
 const { test, describe } = require('node:test');
-const assert = require('node:assert');
+const assert = require('node:assert/strict');
 
 const { finesDePeriodo, finesVencidos, proponerPeriodo, validarPeriodo, resumirArriendoEnCurso } = require('../src/utils/periodosArriendo');
 const { diasEntre, inicioCobroDia } = require('../src/utils/diasArriendo');

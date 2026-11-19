@@ -1,5 +1,5 @@
 const { test, describe } = require('node:test');
-const assert = require('node:assert');
+const assert = require('node:assert/strict');
 
 const { formatearDia, textoPorDefecto, validarTexto, validarFolio, MAX_ASUNTO, MAX_CUERPO } = require('../src/utils/correoFactura');
 

@@ -1,7 +1,7 @@
 // Opcion --hasta de scripts/migrar.js (sin base de datos). Sin la opcion el script debe seguir
 // aplicando todo, como en cada despliegue: leerHasta devuelve null y no filtra nada.
 const test = require('node:test');
-const assert = require('node:assert');
+const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 const { leerHasta } = require('../scripts/migrar');

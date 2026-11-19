@@ -2,7 +2,7 @@
 const test = require('node:test');
 const { after } = test;
 const { exigirBaseLocal } = require('./_entornoPruebas');
-const assert = require('node:assert');
+const assert = require('node:assert/strict');
 const { PLAZOS_DIAS, REGLAS, validarPlazos, contarRetencion, ejecutarRetencion, iniciarRetencion } = require('../src/utils/retencion');
 
 test('plazos acordados y validacion', () => {

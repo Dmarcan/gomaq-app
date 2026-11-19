@@ -202,7 +202,8 @@ railway ssh --service gomaq-worker "node scripts/usuarios-demo.js borrar"
 ### Datos de prueba
 
 `db/scripts/limpiar_datos_prueba.sql` borra datos de prueba por identificadores fijos (por ejemplo folios de
-factura concretos). No correrlo contra una base con datos reales sin leerlo antes.
+factura concretos). No viaja en la imagen y se detiene si no se confirma con
+`PGOPTIONS="-c gomaq.limpieza_confirmada=si"`. No correrlo contra una base con datos reales.
 
 ## 8. Reglas de operación
 
