@@ -2,7 +2,7 @@ const { MAX_MONTO_PESOS } = require('./validacion');
 // Reglas de los cambios a las lineas de repuesto de una OT.
 //
 // Una linea es lo que se cobra: agregarla, anularla o corregir su facturable, cantidad o precio
-// cambia lo que el cliente paga. Por eso los tres caminos de routes/insumos.js pasan por las mismas
+// cambia lo que el cliente paga. Por eso los tres caminos de routes/insumos/lineasOrden.js pasan por las mismas
 // reglas, que viven aca como funciones puras (se prueban sin base, test/auditoriaLinea.test.js):
 //
 //   - con la OT cerrada (finalizada) el cambio exige un motivo: un codigo de la lista mas un texto;

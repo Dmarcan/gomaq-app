@@ -238,7 +238,7 @@ async function stockBodega(insumoId) {
 }
 
 // Claves EXACTAS de cada OT de GET /api/ordenes-trabajo/mias (lista blanca, derivada del SELECT de
-// routes/ordenes.js): toda columna nueva que se agregue ahi debe decidirse aqui a proposito. Son las
+// routes/ordenes/consulta.js): toda columna nueva que se agregue ahi debe decidirse aqui a proposito. Son las
 // mismas siempre (abierta o finalizada, con o sin vehiculo o cobro; lo ausente va en null).
 const CLAVES_OT_PORTAL = [
     'id', 'estado', 'motivo', 'diagnostico', 'fecha_creacion', 'fecha_cierre',

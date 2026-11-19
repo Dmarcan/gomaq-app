@@ -45,7 +45,8 @@ anonimizados.
 server.js            Arranque: valida variables, helmet/CORS, monta rutas, sirve public/, /api/health
 src/config/          Pool de PostgreSQL (db.js) y cliente de Supabase (supabase.js)
 src/middleware/      auth (verifyToken, requireRole), límites de intentos, subidas, errores
-src/routes/          Un archivo por recurso, montado en /api/<recurso>
+src/routes/          Un archivo por recurso, montado en /api/<recurso>; insumos, ordenes y usuarios
+                    son carpetas con un router por tema (index.js los une en el mismo orden)
 src/services/        Integraciones: Resend, FCM, OpenRouteService, geocodificador, sesiones, códigos de cuenta
 src/utils/           Reglas de negocio puras (estados de la OT, mantención, facturable, stock, cobranza, ETA...)
 src/workers/         Worker de notificaciones (patrón outbox)

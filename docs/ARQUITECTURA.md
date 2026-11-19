@@ -57,7 +57,9 @@ Decisiones de estructura del front-end (workspace de Dart, por qué `terreno/` v
   `America/Santiago` (los cortes de día del arriendo dependen de ella).
 - `src/routes/`: un archivo por recurso (auth, maquinarias, guías, órdenes de trabajo, evidencias, facturas,
   facturación, insumos, vehículos, horómetro, checklist, rentabilidad, clientes, ejecutivos, solicitudes,
-  registro de clientes, usuarios, notificaciones, dispositivos, mapa, geocodificar, dashboard).
+  registro de clientes, usuarios, notificaciones, dispositivos, mapa, geocodificar, dashboard). Los tres más
+  grandes (insumos, órdenes y usuarios) son carpetas con un router por tema; su `index.js` los registra en el orden
+  en que estaban las rutas, que importa porque algunas llevan parámetros (`/:id`).
 - `src/utils/`: reglas puras y testeables sin base de datos (estados de la OT, mantención, facturable,
   rentabilidad, stock, parseo de PDF, cobranza, ETA, retención, etc.).
 - `src/services/`: integraciones externas (Resend, FCM por HTTP v1 sin `firebase-admin`, OpenRouteService,

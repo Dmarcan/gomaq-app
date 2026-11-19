@@ -27,7 +27,7 @@ const montoONulo = (v) => (montoVacio(v) ? null : montoEnteroONulo(v));
 // subir PDF de factura ya emitida en el SII (va a Supabase Storage)
 //
 // La fila de la OT se bloquea (FOR NO KEY UPDATE) en la misma transaccion que inserta la factura: asi un
-// cambio de linea que corre al mismo tiempo (routes/insumos.js, que tambien bloquea la OT) termina
+// cambio de linea que corre al mismo tiempo (routes/insumos/, que tambien bloquea la OT) termina
 // antes o empieza despues, y la factura nunca queda sobre lineas distintas a las que se cobraron.
 // La subida del PDF va antes, fuera de la transaccion: no conviene tener la OT bloqueada mientras
 // se espera a Supabase, y si algo falla despues el archivo se borra.

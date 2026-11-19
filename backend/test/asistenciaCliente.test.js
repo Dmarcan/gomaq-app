@@ -114,7 +114,7 @@ test('la ruta de solicitudes crea la OT con su evento de creacion en la misma tr
 test('la foto de la solicitud tiene su ruta para el tecnico', () => {
     const fs = require('node:fs');
     const path = require('node:path');
-    const codigo = fs.readFileSync(path.join(__dirname, '../src/routes/ordenes.js'), 'utf8');
+    const codigo = fs.readFileSync(path.join(__dirname, '../src/routes/ordenes/asignacion.js'), 'utf8');
     assert.match(codigo, /router\.get\('\/:id\/foto-solicitud'/);
     assert.match(codigo, /requireRole\('gerente', 'administrativo', 'mecanico'\)[^\n]*\n[\s\S]*?foto-solicitud|foto-solicitud'[^\n]*requireRole\('gerente', 'administrativo', 'mecanico'\)/);
 });
