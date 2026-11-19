@@ -10,6 +10,7 @@ const { validarCoordenadas } = require('../utils/geo');
 const { rutValido, MENSAJE_RUT_INVALIDO } = require('../utils/rut');
 const { normalizarCorreo } = require('../utils/correo');
 const { validarPassword } = require('../utils/cuentasInternas');
+const { conTransaccion } = require('../utils/transaccion');
 
 const router = express.Router();
 
@@ -18,24 +19,20 @@ const router = express.Router();
 // El correo sale despues de responder; nunca bloquea ni hace fallar el registro.
 async function iniciarVerificacion(solicitud) {
     if (!correoDisponible().disponible) return 'no_disponible';
-    let client;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        const codigo = await crearCodigo(client, {
-            proposito: 'verificar_correo', solicitudClienteId: solicitud.id, email: solicitud.email, canal: 'correo',
+        return await conTransaccion(pool, async (client, { confirmar }) => {
+            const codigo = await crearCodigo(client, {
+                proposito: 'verificar_correo', solicitudClienteId: solicitud.id, email: solicitud.email, canal: 'correo',
+            });
+            await confirmar();
+            enviarCodigoPorCorreo(pool, {
+                ...codigo, proposito: 'verificar_correo', email: solicitud.email, nombre: solicitud.nombre_contacto,
+            }).catch(() => {});
+            return 'enviada';
         });
-        await client.query('COMMIT');
-        enviarCodigoPorCorreo(pool, {
-            ...codigo, proposito: 'verificar_correo', email: solicitud.email, nombre: solicitud.nombre_contacto,
-        }).catch(() => {});
-        return 'enviada';
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error('verificacion de correo:', err);
         return 'no_disponible';
-    } finally {
-        if (client) client.release();
     }
 }
 
@@ -141,47 +138,43 @@ router.post('/verificar', limiteCodigo, async (req, res) => {
     const codigo = normalizarCodigo(req.body && req.body.codigo);
     if (!email || !codigo) return res.status(400).json({ error: 'Escribe tu correo y el código de 6 dígitos' });
 
-    let client;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        const r = await client.query(
-            `SELECT c.id, c.proposito, c.codigo_hmac, c.intentos, c.expira_at, c.usado_at, c.revocado_at, c.solicitud_cliente_id
-             FROM codigos_cuenta c
-             JOIN solicitudes_cliente s ON s.id = c.solicitud_cliente_id
-             WHERE lower(c.email) = $1 AND lower(s.email) = $1 AND s.estado = 'pendiente'
-               AND c.proposito = 'verificar_correo'
-               AND c.usado_at IS NULL AND c.revocado_at IS NULL AND c.expira_at > now()
-             ORDER BY c.created_at DESC
-             LIMIT 5
-             FOR UPDATE OF c`,
-            [email]
-        );
-        const valido = r.rows.find((f) => evaluarCanje(f, {
-            hmacIngresado: hmacCodigo({ secreto: process.env.JWT_SECRET, proposito: 'verificar_correo', email, codigo }),
-        }) === 'ok');
-        if (!valido) {
-            if (r.rows.length > 0) {
-                await client.query('UPDATE codigos_cuenta SET intentos = intentos + 1 WHERE id = ANY($1::int[])', [r.rows.map((f) => f.id)]);
+        return await conTransaccion(pool, async (client, { confirmar }) => {
+            const r = await client.query(
+                `SELECT c.id, c.proposito, c.codigo_hmac, c.intentos, c.expira_at, c.usado_at, c.revocado_at, c.solicitud_cliente_id
+                 FROM codigos_cuenta c
+                 JOIN solicitudes_cliente s ON s.id = c.solicitud_cliente_id
+                 WHERE lower(c.email) = $1 AND lower(s.email) = $1 AND s.estado = 'pendiente'
+                   AND c.proposito = 'verificar_correo'
+                   AND c.usado_at IS NULL AND c.revocado_at IS NULL AND c.expira_at > now()
+                 ORDER BY c.created_at DESC
+                 LIMIT 5
+                 FOR UPDATE OF c`,
+                [email]
+            );
+            const valido = r.rows.find((f) => evaluarCanje(f, {
+                hmacIngresado: hmacCodigo({ secreto: process.env.JWT_SECRET, proposito: 'verificar_correo', email, codigo }),
+            }) === 'ok');
+            if (!valido) {
+                if (r.rows.length > 0) {
+                    await client.query('UPDATE codigos_cuenta SET intentos = intentos + 1 WHERE id = ANY($1::int[])', [r.rows.map((f) => f.id)]);
+                }
+                await confirmar();
+                return res.status(400).json({ error: ERROR_VERIFICACION });
             }
-            await client.query('COMMIT');
-            return res.status(400).json({ error: ERROR_VERIFICACION });
-        }
-        await client.query('UPDATE solicitudes_cliente SET correo_verificado_at = now() WHERE id = $1', [valido.solicitud_cliente_id]);
-        await client.query('UPDATE codigos_cuenta SET usado_at = now() WHERE id = $1', [valido.id]);
-        await client.query(
-            `UPDATE codigos_cuenta SET revocado_at = now()
-             WHERE solicitud_cliente_id = $1 AND id <> $2 AND usado_at IS NULL AND revocado_at IS NULL`,
-            [valido.solicitud_cliente_id, valido.id]
-        );
-        await client.query('COMMIT');
-        res.json({ ok: true });
+            await client.query('UPDATE solicitudes_cliente SET correo_verificado_at = now() WHERE id = $1', [valido.solicitud_cliente_id]);
+            await client.query('UPDATE codigos_cuenta SET usado_at = now() WHERE id = $1', [valido.id]);
+            await client.query(
+                `UPDATE codigos_cuenta SET revocado_at = now()
+                 WHERE solicitud_cliente_id = $1 AND id <> $2 AND usado_at IS NULL AND revocado_at IS NULL`,
+                [valido.solicitud_cliente_id, valido.id]
+            );
+            await confirmar();
+            res.json({ ok: true });
+        });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'No se pudo verificar el correo' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -197,11 +190,8 @@ router.post('/reenviar-codigo', limiteRecuperar, async (req, res) => {
 
 async function reenviarCodigo(email) {
     if (!correoDisponible().disponible) return;
-    let client;
     let envio = null;
-    try {
-        client = await pool.connect();
-        await client.query('BEGIN');
+    await conTransaccion(pool, async (client) => {
         const r = await client.query(
             `SELECT id, nombre_contacto FROM solicitudes_cliente
              WHERE lower(email) = $1 AND estado = 'pendiente' AND correo_verificado_at IS NULL FOR UPDATE`,
@@ -223,13 +213,7 @@ async function reenviarCodigo(email) {
                 envio = { ...codigo, proposito: 'verificar_correo', email, nombre: s.nombre_contacto };
             }
         }
-        await client.query('COMMIT');
-    } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
-        throw err;
-    } finally {
-        if (client) client.release();
-    }
+    });
     if (envio) enviarCodigoPorCorreo(pool, envio).catch(() => {});
 }
 

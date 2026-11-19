@@ -14,6 +14,7 @@ const {
 } = require('../utils/codigosCuenta');
 const { crearCodigo, enviarCodigoPorCorreo } = require('../services/codigosCuenta');
 const { crearSesion, revocarSesiones } = require('../services/sesiones');
+const { conTransaccion } = require('../utils/transaccion');
 
 const router = express.Router();
 
@@ -128,10 +129,7 @@ router.post('/recuperar', limiteRecuperar, async (req, res) => {
 
 async function procesarRecuperacion(email) {
     let envio = null;
-    let client;
-    try {
-        client = await pool.connect();
-        await client.query('BEGIN');
+    await conTransaccion(pool, async (client) => {
         const r = await client.query(
             `SELECT id, nombre FROM usuarios WHERE lower(email) = $1 AND estado_cuenta = 'activo' FOR UPDATE`,
             [email]
@@ -154,13 +152,7 @@ async function procesarRecuperacion(email) {
                 envio = { ...codigo, proposito: 'recuperar_password', email, nombre: usuario.nombre };
             }
         }
-        await client.query('COMMIT');
-    } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
-        throw err;
-    } finally {
-        if (client) client.release();
-    }
+    });
 
     if (envio) enviarCodigoPorCorreo(pool, envio).catch((err) => console.error('No se pudo enviar el codigo por correo:', err && err.message));
 }
@@ -174,62 +166,58 @@ router.post('/codigo/confirmar', limiteCodigo, async (req, res) => {
     const v = validarConfirmacion(req.body);
     if (!v.ok) return res.status(400).json({ error: v.error });
 
-    let client;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        // el correo de la cuenta tiene que seguir siendo el del codigo: si se cambio, el codigo no sirve
-        const r = await client.query(
-            `SELECT c.id, c.proposito, c.codigo_hmac, c.intentos, c.expira_at, c.usado_at, c.revocado_at,
-                    c.usuario_id, u.estado_cuenta
-             FROM codigos_cuenta c
-             JOIN usuarios u ON u.id = c.usuario_id
-             WHERE lower(c.email) = $1 AND lower(u.email) = $1
-               AND c.proposito IN ('recuperar_password', 'invitacion')
-               AND c.usado_at IS NULL AND c.revocado_at IS NULL AND c.expira_at > now()
-             ORDER BY c.created_at DESC
-             LIMIT 5
-             FOR UPDATE OF c`,
-            [v.email]
-        );
-        const valido = r.rows.find((f) =>
-            canjePermitido(f.proposito, f.estado_cuenta)
-            && evaluarCanje(f, {
-                hmacIngresado: hmacCodigo({ secreto: process.env.JWT_SECRET, proposito: f.proposito, email: v.email, codigo: v.codigo }),
-            }) === 'ok');
+        return await conTransaccion(pool, async (client, { confirmar }) => {
+            // el correo de la cuenta tiene que seguir siendo el del codigo: si se cambio, el codigo no sirve
+            const r = await client.query(
+                `SELECT c.id, c.proposito, c.codigo_hmac, c.intentos, c.expira_at, c.usado_at, c.revocado_at,
+                        c.usuario_id, u.estado_cuenta
+                 FROM codigos_cuenta c
+                 JOIN usuarios u ON u.id = c.usuario_id
+                 WHERE lower(c.email) = $1 AND lower(u.email) = $1
+                   AND c.proposito IN ('recuperar_password', 'invitacion')
+                   AND c.usado_at IS NULL AND c.revocado_at IS NULL AND c.expira_at > now()
+                 ORDER BY c.created_at DESC
+                 LIMIT 5
+                 FOR UPDATE OF c`,
+                [v.email]
+            );
+            const valido = r.rows.find((f) =>
+                canjePermitido(f.proposito, f.estado_cuenta)
+                && evaluarCanje(f, {
+                    hmacIngresado: hmacCodigo({ secreto: process.env.JWT_SECRET, proposito: f.proposito, email: v.email, codigo: v.codigo }),
+                }) === 'ok');
 
-        if (!valido) {
-            // cada intento fallido descuenta en todos los codigos vigentes de ese correo
-            if (r.rows.length > 0) {
-                await client.query('UPDATE codigos_cuenta SET intentos = intentos + 1 WHERE id = ANY($1::int[])', [r.rows.map((f) => f.id)]);
+            if (!valido) {
+                // cada intento fallido descuenta en todos los codigos vigentes de ese correo
+                if (r.rows.length > 0) {
+                    await client.query('UPDATE codigos_cuenta SET intentos = intentos + 1 WHERE id = ANY($1::int[])', [r.rows.map((f) => f.id)]);
+                }
+                await confirmar();
+                return res.status(400).json({ error: ERROR_CODIGO });
             }
-            await client.query('COMMIT');
-            return res.status(400).json({ error: ERROR_CODIGO });
-        }
 
-        const hash = await bcrypt.hash(v.password, 10);
-        await client.query(
-            `UPDATE usuarios SET password_hash = $1, password_cambiada_at = now(),
-                    estado_cuenta = CASE WHEN $3 = 'invitacion' THEN 'activo'::estado_cuenta_usuario ELSE estado_cuenta END
-             WHERE id = $2`,
-            [hash, valido.usuario_id, valido.proposito]
-        );
-        await revocarSesiones(client, valido.usuario_id, { motivo: 'clave' });
-        await client.query('UPDATE codigos_cuenta SET usado_at = now() WHERE id = $1', [valido.id]);
-        await client.query(
-            `UPDATE codigos_cuenta SET revocado_at = now()
-             WHERE usuario_id = $1 AND id <> $2 AND usado_at IS NULL AND revocado_at IS NULL`,
-            [valido.usuario_id, valido.id]
-        );
-        await client.query('COMMIT');
-        console.log(`Cuenta ${valido.usuario_id}: código de ${valido.proposito} canjeado`);
-        res.json({ ok: true, proposito: valido.proposito });
+            const hash = await bcrypt.hash(v.password, 10);
+            await client.query(
+                `UPDATE usuarios SET password_hash = $1, password_cambiada_at = now(),
+                        estado_cuenta = CASE WHEN $3 = 'invitacion' THEN 'activo'::estado_cuenta_usuario ELSE estado_cuenta END
+                 WHERE id = $2`,
+                [hash, valido.usuario_id, valido.proposito]
+            );
+            await revocarSesiones(client, valido.usuario_id, { motivo: 'clave' });
+            await client.query('UPDATE codigos_cuenta SET usado_at = now() WHERE id = $1', [valido.id]);
+            await client.query(
+                `UPDATE codigos_cuenta SET revocado_at = now()
+                 WHERE usuario_id = $1 AND id <> $2 AND usado_at IS NULL AND revocado_at IS NULL`,
+                [valido.usuario_id, valido.id]
+            );
+            await confirmar();
+            console.log(`Cuenta ${valido.usuario_id}: código de ${valido.proposito} canjeado`);
+            res.json({ ok: true, proposito: valido.proposito });
+        });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'No se pudo confirmar el código' });
-    } finally {
-        if (client) client.release();
     }
 });
 

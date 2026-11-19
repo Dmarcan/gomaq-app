@@ -29,6 +29,7 @@ const { crearXlsx, TIPO_XLSX } = require('../utils/xlsx');
 const {
     NOMBRE_HOJA: NOMBRE_HOJA_EXPORTACION, MAX_FILAS: MAX_FILAS_EXPORTACION, armarHoja, cargarFilasExportacion,
 } = require('../utils/exportarFacturacion');
+const { conTransaccion } = require('../utils/transaccion');
 const { num, vacio } = require('../utils/valores');
 
 const router = express.Router();
@@ -219,13 +220,6 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
         return res.status(400).json({ error: 'Id de guía inválido' });
     }
     let rutaStorage = null;
-    let client = null;
-    const rechazar = async (estado, cuerpo) => {
-        await client.query('ROLLBACK');
-        if (rutaStorage) await borrarArchivoSubido(BUCKET_DOCUMENTOS, rutaStorage);
-        rutaStorage = null;
-        return res.status(estado).json(cuerpo);
-    };
     try {
         // el despacho del arriendo: directo, o el que cierra la recepcion indicada
         let despachoId = conPeriodo ? idOrigen : null;
@@ -244,50 +238,56 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
             .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });
         if (errorSubida) throw errorSubida;
 
-        client = await pool.connect();
-        await client.query('BEGIN');
-        // el mismo candado por despacho que usa el trigger de facturas (migracion 023) y despues el
-        // bloqueo de la fila: serializa dos facturas simultaneas del mismo arriendo
-        await client.query('SELECT pg_advisory_xact_lock(70215, $1)', [despachoId]);
-        const bloqueo = await client.query(
-            `SELECT id FROM guias WHERE id = $1 AND tipo = 'despacho' AND fallido = false FOR UPDATE`, [despachoId]);
-        if (bloqueo.rows.length === 0) return await rechazar(404, { error: 'Arriendo no encontrado' });
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            // rechazar deshace la transaccion y borra el PDF recien subido antes de responder
+            const rechazar = async (estado, cuerpo) => {
+                await deshacer();
+                if (rutaStorage) await borrarArchivoSubido(BUCKET_DOCUMENTOS, rutaStorage);
+                rutaStorage = null;
+                return res.status(estado).json(cuerpo);
+            };
+            // el mismo candado por despacho que usa el trigger de facturas (migracion 023) y despues el
+            // bloqueo de la fila: serializa dos facturas simultaneas del mismo arriendo
+            await client.query('SELECT pg_advisory_xact_lock(70215, $1)', [despachoId]);
+            const bloqueo = await client.query(
+                `SELECT id FROM guias WHERE id = $1 AND tipo = 'despacho' AND fallido = false FOR UPDATE`, [despachoId]);
+            if (bloqueo.rows.length === 0) return await rechazar(404, { error: 'Arriendo no encontrado' });
 
-        const [arriendo] = await cargarArriendos(client, config, { despachoId });
-        if (arriendo.facturado_completo || arriendo.facturado_de_mas) {
-            return await rechazar(409, { error: conPeriodo ? 'El arriendo ya está facturado completo' : 'Este arriendo ya tiene su factura' });
-        }
-        // panel antiguo: se factura hasta el fin del arriendo
-        const desde = conPeriodo ? periodo_desde : arriendo.desde;
-        const hasta = conPeriodo ? periodo_hasta : arriendo.fin;
-        if (!conPeriodo && arriendo.en_curso) {
-            return await rechazar(409, { error: 'El arriendo aún no tiene recepción: factura por período' });
-        }
-        const veredicto = conPeriodo
-            ? validarPeriodo({ desde, hasta }, arriendo)
-            : (arriendo.nada_que_facturar
-                ? { ok: false, codigo: 'nada_que_facturar', estado: 409, mensaje: 'No hay días por facturar en este arriendo' }
-                : { ok: true });
-        if (!veredicto.ok) {
-            return await rechazar(veredicto.estado, {
-                error: veredicto.mensaje, codigo: veredicto.codigo, propuesta: respuestaPropuesta(arriendo, config),
-            });
-        }
-        // la guia de recepcion solo se ata a la factura que cierra el arriendo
-        const cierra = arriendo.fin !== null && hasta === arriendo.fin && arriendo.guia_recepcion_id !== null;
-        const result = await client.query(
-            `INSERT INTO facturas (maquinaria_id, guia_recepcion_id, guia_despacho_id, periodo_desde, periodo_hasta,
-                                   cliente_id, folio, archivo_url, monto, monto_traslado,
-                                   monto_neto, traslado_entrega, traslado_retiro, fecha_emision, fecha_vencimiento)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
-            [arriendo.maquinaria_id, cierra ? arriendo.guia_recepcion_id : null, arriendo.guia_despacho_id, desde, hasta,
-             arriendo.cliente_id, folioValido.folio, rutaStorage, montoONulo(monto), trasladoValido.traslado,
-             netoValido.neto, trasladoValido.entrega, trasladoValido.retiro, fechas.fecha_emision, fechas.fecha_vencimiento]
-        );
-        await client.query('COMMIT');
-        res.status(201).json(conFechasTexto(result.rows[0]));
+            const [arriendo] = await cargarArriendos(client, config, { despachoId });
+            if (arriendo.facturado_completo || arriendo.facturado_de_mas) {
+                return await rechazar(409, { error: conPeriodo ? 'El arriendo ya está facturado completo' : 'Este arriendo ya tiene su factura' });
+            }
+            // panel antiguo: se factura hasta el fin del arriendo
+            const desde = conPeriodo ? periodo_desde : arriendo.desde;
+            const hasta = conPeriodo ? periodo_hasta : arriendo.fin;
+            if (!conPeriodo && arriendo.en_curso) {
+                return await rechazar(409, { error: 'El arriendo aún no tiene recepción: factura por período' });
+            }
+            const veredicto = conPeriodo
+                ? validarPeriodo({ desde, hasta }, arriendo)
+                : (arriendo.nada_que_facturar
+                    ? { ok: false, codigo: 'nada_que_facturar', estado: 409, mensaje: 'No hay días por facturar en este arriendo' }
+                    : { ok: true });
+            if (!veredicto.ok) {
+                return await rechazar(veredicto.estado, {
+                    error: veredicto.mensaje, codigo: veredicto.codigo, propuesta: respuestaPropuesta(arriendo, config),
+                });
+            }
+            // la guia de recepcion solo se ata a la factura que cierra el arriendo
+            const cierra = arriendo.fin !== null && hasta === arriendo.fin && arriendo.guia_recepcion_id !== null;
+            const result = await client.query(
+                `INSERT INTO facturas (maquinaria_id, guia_recepcion_id, guia_despacho_id, periodo_desde, periodo_hasta,
+                                       cliente_id, folio, archivo_url, monto, monto_traslado,
+                                       monto_neto, traslado_entrega, traslado_retiro, fecha_emision, fecha_vencimiento)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15) RETURNING *`,
+                [arriendo.maquinaria_id, cierra ? arriendo.guia_recepcion_id : null, arriendo.guia_despacho_id, desde, hasta,
+                 arriendo.cliente_id, folioValido.folio, rutaStorage, montoONulo(monto), trasladoValido.traslado,
+                 netoValido.neto, trasladoValido.entrega, trasladoValido.retiro, fechas.fecha_emision, fechas.fecha_vencimiento]
+            );
+            await confirmar();
+            res.status(201).json(conFechasTexto(result.rows[0]));
+        });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         if (rutaStorage) {
             await borrarArchivoSubido(BUCKET_DOCUMENTOS, rutaStorage);
         }
@@ -300,8 +300,6 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
         }
         console.error(err);
         res.status(500).json({ error: 'Error al subir factura de arriendo' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -329,26 +327,23 @@ router.put('/configuracion', verifyToken, requireRole('gerente'), async (req, re
     // guardan ni cambian quien/cuando: un PUT con solo ellas responde 200 con la configuracion vigente
     const vigentes = Object.entries(valores).filter(([clave]) => !CLAVES_OBSOLETAS.has(clave));
     if (vigentes.length === 0) return res.json(await leerConfiguracion(pool));
-    let client;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        for (const [clave, valor] of vigentes) {
-            await client.query(
-                `INSERT INTO configuracion (clave, valor, actualizado_por, actualizado_at)
-                 VALUES ($1, $2::jsonb, $3, now())
-                 ON CONFLICT (clave) DO UPDATE
-                 SET valor = EXCLUDED.valor, actualizado_por = EXCLUDED.actualizado_por, actualizado_at = now()`,
-                [clave, JSON.stringify(valor), req.user.id]);
-        }
-        await client.query('COMMIT');
+        await conTransaccion(pool, async (client, { confirmar }) => {
+            for (const [clave, valor] of vigentes) {
+                await client.query(
+                    `INSERT INTO configuracion (clave, valor, actualizado_por, actualizado_at)
+                     VALUES ($1, $2::jsonb, $3, now())
+                     ON CONFLICT (clave) DO UPDATE
+                     SET valor = EXCLUDED.valor, actualizado_por = EXCLUDED.actualizado_por, actualizado_at = now()`,
+                    [clave, JSON.stringify(valor), req.user.id]);
+            }
+            await confirmar();
+        });
+        // con la conexion de la transaccion ya devuelta al pool
         res.json(await leerConfiguracion(pool));
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al guardar la configuración' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -478,7 +473,6 @@ router.patch('/:facturaId/pago', verifyToken, requireRole('administrativo'), sub
         return res.status(400).json({ error: 'El comprobante se adjunta junto con la fecha de pago' });
     }
     const id = Number(req.params.facturaId);
-    let client;
     let rutaNueva = null;
     const borrarArchivo = async (ruta) => {
         if (ruta) await borrarArchivoSubido(BUCKET_DOCUMENTOS, ruta);
@@ -497,49 +491,49 @@ router.patch('/:facturaId/pago', verifyToken, requireRole('administrativo'), sub
                 throw errorSubida;
             }
         }
-        client = await pool.connect();
-        await client.query('BEGIN');
-        const fila = await client.query(
-            'SELECT fecha_pago, comprobante_pago_ruta FROM facturas WHERE id = $1 FOR UPDATE', [id]
-        );
-        if (fila.rows.length === 0) {
-            await client.query('ROLLBACK');
-            await borrarArchivo(rutaNueva);
-            return res.status(404).json({ error: 'Factura no encontrada' });
-        }
-        const previa = fila.rows[0];
-        // pasar de por cobrar a pagada exige el comprobante. Cambiar la fecha de una factura que ya estaba
-        // pagada antes de existir el comprobante no lo exige (quedan "sin comprobante", sin pedirles nada)
-        if (conPago && pago.fecha_pago && previa.fecha_pago === null && !rutaNueva) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'Para marcar la factura como pagada adjunta el comprobante de pago (foto JPG, PNG o PDF de hasta 10 MB)' });
-        }
-        const deshacePago = conPago && pago.fecha_pago === null;
-        // deshacer el pago borra el comprobante; subir uno nuevo reemplaza al anterior
-        const rutaFinal = deshacePago ? null : (rutaNueva || previa.comprobante_pago_ruta);
-        await client.query(
-            `UPDATE facturas SET
-                 fecha_pago = CASE WHEN $2 THEN $3::date ELSE fecha_pago END,
-                 anulada_nc = CASE WHEN $4 THEN $5::varchar ELSE anulada_nc END,
-                 comprobante_pago_ruta = $6
-             WHERE id = $1`,
-            [id, conPago, conPago ? pago.fecha_pago : null, conNc, conNc ? nc.anulada_nc : null, rutaFinal]
-        );
-        await client.query('COMMIT');
-        // ya confirmado: el archivo anterior (reemplazado o de un pago deshecho) ya no lo usa nadie
-        if (previa.comprobante_pago_ruta && previa.comprobante_pago_ruta !== rutaFinal) {
-            await borrarArchivo(previa.comprobante_pago_ruta);
-        }
+        const resultado = await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            const fila = await client.query(
+                'SELECT fecha_pago, comprobante_pago_ruta FROM facturas WHERE id = $1 FOR UPDATE', [id]
+            );
+            if (fila.rows.length === 0) {
+                await deshacer();
+                await borrarArchivo(rutaNueva);
+                return res.status(404).json({ error: 'Factura no encontrada' });
+            }
+            const previa = fila.rows[0];
+            // pasar de por cobrar a pagada exige el comprobante. Cambiar la fecha de una factura que ya estaba
+            // pagada antes de existir el comprobante no lo exige (quedan "sin comprobante", sin pedirles nada)
+            if (conPago && pago.fecha_pago && previa.fecha_pago === null && !rutaNueva) {
+                await deshacer();
+                return res.status(400).json({ error: 'Para marcar la factura como pagada adjunta el comprobante de pago (foto JPG, PNG o PDF de hasta 10 MB)' });
+            }
+            const deshacePago = conPago && pago.fecha_pago === null;
+            // deshacer el pago borra el comprobante; subir uno nuevo reemplaza al anterior
+            const rutaFinal = deshacePago ? null : (rutaNueva || previa.comprobante_pago_ruta);
+            await client.query(
+                `UPDATE facturas SET
+                     fecha_pago = CASE WHEN $2 THEN $3::date ELSE fecha_pago END,
+                     anulada_nc = CASE WHEN $4 THEN $5::varchar ELSE anulada_nc END,
+                     comprobante_pago_ruta = $6
+                 WHERE id = $1`,
+                [id, conPago, conPago ? pago.fecha_pago : null, conNc, conNc ? nc.anulada_nc : null, rutaFinal]
+            );
+            await confirmar();
+            // ya confirmado: el archivo anterior (reemplazado o de un pago deshecho) ya no lo usa nadie
+            if (previa.comprobante_pago_ruta && previa.comprobante_pago_ruta !== rutaFinal) {
+                await borrarArchivo(previa.comprobante_pago_ruta);
+            }
+            return 'confirmada';
+        });
+        // los rechazos ya respondieron dentro de la transaccion
+        if (resultado !== 'confirmada') return resultado;
         const r = await cargarEmitidas(pool, { id });
         res.json(r.items[0]);
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         // si la base fallo con el archivo ya subido, no dejarlo huerfano
         await borrarArchivo(rutaNueva);
         console.error(err);
         res.status(500).json({ error: 'Error al registrar el pago de la factura' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -593,81 +587,77 @@ router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (r
     if (!(monto_traslado === undefined || monto_traslado === null || monto_traslado === '') && montoEnteroONulo(monto_traslado) === null) {
         return res.status(400).json({ error: 'El traslado debe ser un número entero de pesos, sin puntos ni decimales, de hasta 10 dígitos' });
     }
-    let client;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        // se bloquea la fila: serializa con encolarCorreoFactura (que tambien la bloquea), asi un envio no
-        // puede colarse entre la revision de abajo y el UPDATE
-        const fila = await client.query(
-            `SELECT id, monto, monto_traslado, monto_neto, traslado_entrega, traslado_retiro,
-                    to_char(fecha_emision, 'YYYY-MM-DD') AS fecha_emision, to_char(fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento
-             FROM facturas WHERE id = $1 FOR UPDATE`, [req.params.facturaId]);
-        if (fila.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Factura no encontrada' });
-        }
-        // con un correo pendiente el texto ya quedo congelado como lo vio el administrativo:
-        // corregir folio o monto ahora lo dejaria distinto de la factura
-        if (await hayEnvioPendiente(client, req.params.facturaId)) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ error: 'La factura tiene un envío pendiente: espera a que salga o cancélalo antes de corregirla' });
-        }
-        // monto y traslado finales (lo nuevo o lo ya guardado) deben seguir cuadrando
-        // NUMERIC llega como texto con decimales ('249900.00'): se pasa a numero entero antes de validar
-        const guardada = fila.rows[0];
-        const montoGuardado = num(guardada.monto);
-        const montoFinal = montoONulo(monto) ?? montoGuardado;
-        const rechazarCambio = async (mensaje) => {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ error: mensaje });
-        };
-        // neto final: lo enviado (null lo borra) o lo guardado; no mayor que el monto final
-        const netoFinal = validarNeto(montoFinal, tiene(cuerpo, 'monto_neto') ? cuerpo.monto_neto : num(guardada.monto_neto));
-        if (netoFinal.error) return await rechazarCambio(netoFinal.error);
-        const trasladoEnviado = !vacio(monto_traslado);
-        const trasladoBase = trasladoEnviado ? monto_traslado : num(guardada.monto_traslado);
-        const partesEnviadas = tiene(cuerpo, 'traslado_entrega') || tiene(cuerpo, 'traslado_retiro');
-        let traslado;
-        if (partesEnviadas && (!vacio(cuerpo.traslado_entrega) || !vacio(cuerpo.traslado_retiro))) {
-            traslado = resolverTraslado({
-                monto: montoFinal, neto: netoFinal.neto, monto_traslado: trasladoEnviado ? monto_traslado : undefined,
-                traslado_entrega: cuerpo.traslado_entrega, traslado_retiro: cuerpo.traslado_retiro,
-            });
-        } else {
-            const v = validarTraslado(montoFinal, trasladoBase, netoFinal.neto);
-            traslado = v.error ? v : {
-                traslado: v.traslado,
-                // partes enviadas vacias = sin division; sin partes, la guardada (el trigger la borra si ya no cuadra)
-                entrega: partesEnviadas ? null : num(guardada.traslado_entrega),
-                retiro: partesEnviadas ? null : num(guardada.traslado_retiro),
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            // se bloquea la fila: serializa con encolarCorreoFactura (que tambien la bloquea), asi un envio no
+            // puede colarse entre la revision de abajo y el UPDATE
+            const fila = await client.query(
+                `SELECT id, monto, monto_traslado, monto_neto, traslado_entrega, traslado_retiro,
+                        to_char(fecha_emision, 'YYYY-MM-DD') AS fecha_emision, to_char(fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento
+                 FROM facturas WHERE id = $1 FOR UPDATE`, [req.params.facturaId]);
+            if (fila.rows.length === 0) {
+                await deshacer();
+                return res.status(404).json({ error: 'Factura no encontrada' });
+            }
+            // con un correo pendiente el texto ya quedo congelado como lo vio el administrativo:
+            // corregir folio o monto ahora lo dejaria distinto de la factura
+            if (await hayEnvioPendiente(client, req.params.facturaId)) {
+                await deshacer();
+                return res.status(409).json({ error: 'La factura tiene un envío pendiente: espera a que salga o cancélalo antes de corregirla' });
+            }
+            // monto y traslado finales (lo nuevo o lo ya guardado) deben seguir cuadrando
+            // NUMERIC llega como texto con decimales ('249900.00'): se pasa a numero entero antes de validar
+            const guardada = fila.rows[0];
+            const montoGuardado = num(guardada.monto);
+            const montoFinal = montoONulo(monto) ?? montoGuardado;
+            const rechazarCambio = async (mensaje) => {
+                await deshacer();
+                return res.status(400).json({ error: mensaje });
             };
-        }
-        if (traslado.error) return await rechazarCambio(traslado.error);
-        // fechas finales: el vencimiento no puede quedar antes de la emision (solo si se cambio alguna)
-        const emisionFinal = tiene(cuerpo, 'fecha_emision') ? fechasEnviadas.fecha_emision : guardada.fecha_emision;
-        const vencimientoFinal = tiene(cuerpo, 'fecha_vencimiento') ? fechasEnviadas.fecha_vencimiento : guardada.fecha_vencimiento;
-        if ((tiene(cuerpo, 'fecha_emision') || tiene(cuerpo, 'fecha_vencimiento'))
-            && emisionFinal && vencimientoFinal && vencimientoFinal < emisionFinal) {
-            return await rechazarCambio('La fecha de vencimiento no puede ser anterior a la emisión');
-        }
-        const result = await client.query(
-            `UPDATE facturas SET folio = COALESCE($1, folio), monto = COALESCE($2, monto), monto_traslado = $3,
-                    monto_neto = $4, traslado_entrega = $5, traslado_retiro = $6, fecha_emision = $7, fecha_vencimiento = $8
-             WHERE id = $9 RETURNING *`,
-            [folioNuevo, montoONulo(monto), traslado.traslado, netoFinal.neto, traslado.entrega, traslado.retiro,
-             emisionFinal, vencimientoFinal, req.params.facturaId]
-        );
-        // un correo anterior que agoto sus reintentos (error) llevaba el folio y el monto viejos
-        await cancelarCorreosPrevios(client, req.params.facturaId, 'Factura corregida');
-        await client.query('COMMIT');
-        res.json(conFechasTexto(result.rows[0]));
+            // neto final: lo enviado (null lo borra) o lo guardado; no mayor que el monto final
+            const netoFinal = validarNeto(montoFinal, tiene(cuerpo, 'monto_neto') ? cuerpo.monto_neto : num(guardada.monto_neto));
+            if (netoFinal.error) return await rechazarCambio(netoFinal.error);
+            const trasladoEnviado = !vacio(monto_traslado);
+            const trasladoBase = trasladoEnviado ? monto_traslado : num(guardada.monto_traslado);
+            const partesEnviadas = tiene(cuerpo, 'traslado_entrega') || tiene(cuerpo, 'traslado_retiro');
+            let traslado;
+            if (partesEnviadas && (!vacio(cuerpo.traslado_entrega) || !vacio(cuerpo.traslado_retiro))) {
+                traslado = resolverTraslado({
+                    monto: montoFinal, neto: netoFinal.neto, monto_traslado: trasladoEnviado ? monto_traslado : undefined,
+                    traslado_entrega: cuerpo.traslado_entrega, traslado_retiro: cuerpo.traslado_retiro,
+                });
+            } else {
+                const v = validarTraslado(montoFinal, trasladoBase, netoFinal.neto);
+                traslado = v.error ? v : {
+                    traslado: v.traslado,
+                    // partes enviadas vacias = sin division; sin partes, la guardada (el trigger la borra si ya no cuadra)
+                    entrega: partesEnviadas ? null : num(guardada.traslado_entrega),
+                    retiro: partesEnviadas ? null : num(guardada.traslado_retiro),
+                };
+            }
+            if (traslado.error) return await rechazarCambio(traslado.error);
+            // fechas finales: el vencimiento no puede quedar antes de la emision (solo si se cambio alguna)
+            const emisionFinal = tiene(cuerpo, 'fecha_emision') ? fechasEnviadas.fecha_emision : guardada.fecha_emision;
+            const vencimientoFinal = tiene(cuerpo, 'fecha_vencimiento') ? fechasEnviadas.fecha_vencimiento : guardada.fecha_vencimiento;
+            if ((tiene(cuerpo, 'fecha_emision') || tiene(cuerpo, 'fecha_vencimiento'))
+                && emisionFinal && vencimientoFinal && vencimientoFinal < emisionFinal) {
+                return await rechazarCambio('La fecha de vencimiento no puede ser anterior a la emisión');
+            }
+            const result = await client.query(
+                `UPDATE facturas SET folio = COALESCE($1, folio), monto = COALESCE($2, monto), monto_traslado = $3,
+                        monto_neto = $4, traslado_entrega = $5, traslado_retiro = $6, fecha_emision = $7, fecha_vencimiento = $8
+                 WHERE id = $9 RETURNING *`,
+                [folioNuevo, montoONulo(monto), traslado.traslado, netoFinal.neto, traslado.entrega, traslado.retiro,
+                 emisionFinal, vencimientoFinal, req.params.facturaId]
+            );
+            // un correo anterior que agoto sus reintentos (error) llevaba el folio y el monto viejos
+            await cancelarCorreosPrevios(client, req.params.facturaId, 'Factura corregida');
+            await confirmar();
+            res.json(conFechasTexto(result.rows[0]));
+        });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al actualizar la factura' });
-    } finally {
-        if (client) client.release();
     }
 });
 

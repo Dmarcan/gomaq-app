@@ -107,7 +107,8 @@ test('la ruta de solicitudes crea la OT con su evento de creacion en la misma tr
     assert.match(post, /INSERT INTO ordenes_trabajo/);
     assert.match(post, /tipo: 'creacion'/);
     assert.match(post, /fijarDestinoOt/);
-    assert.ok(post.indexOf('INSERT INTO ordenes_trabajo') < post.indexOf("COMMIT"));
+    // la orden se crea dentro del callback de la transaccion, que confirma al terminar
+    assert.ok(post.indexOf('conTransaccion') < post.indexOf('INSERT INTO ordenes_trabajo'));
 });
 
 test('la foto de la solicitud tiene su ruta para el tecnico', () => {

@@ -12,6 +12,7 @@ const { diaSantiago, diasEntre } = require('../utils/diasArriendo');
 const { verificarDuenoOrden, MENSAJE_OT_CERRADA } = require('../utils/ordenes');
 const { parsearPaginacion, envolver } = require('../utils/paginacion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
+const { conTransaccion } = require('../utils/transaccion');
 const { num } = require('../utils/valores');
 
 const router = express.Router();
@@ -292,61 +293,57 @@ router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrati
 router.get('/descuadres', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     // una sola instantanea: los negativos y sus movimientos se leen en la misma transaccion de solo
     // lectura, asi un movimiento que se confirma entre las dos consultas no deja un caso a medias
-    let client;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-        const negativos = await client.query(
-            `SELECT su.ubicacion_id, su.insumo_id, su.cantidad, i.nombre AS insumo_nombre, i.unidad_medida,
-                    u.nombre AS ubicacion_nombre, u.tipo AS ubicacion_tipo, v.patente, usr.nombre AS mecanico_nombre,
-                    to_char(now() AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD') AS hoy
-             FROM stock_ubicacion su
-             JOIN insumos i ON i.id = su.insumo_id
-             JOIN ubicaciones_stock u ON u.id = su.ubicacion_id
-             LEFT JOIN vehiculos v ON v.id = u.vehiculo_id
-             LEFT JOIN usuarios usr ON usr.id = v.usuario_id
-             WHERE su.cantidad < 0
-             ORDER BY su.cantidad ASC, su.ubicacion_id, su.insumo_id`
-        );
-        // eventos de los pares negativos: el origen resta al crearse, el destino suma, y una linea
-        // anulada devuelve lo que habia restado (mismo criterio que la anulacion de lineas)
-        const eventos = negativos.rows.length === 0 ? { rows: [] } : await client.query(
-            `WITH neg AS (SELECT ubicacion_id, insumo_id FROM stock_ubicacion WHERE cantidad < 0)
-             SELECT n.ubicacion_id, n.insumo_id, mi.created_at AS at, -mi.cantidad AS delta, mi.id
-             FROM neg n JOIN movimientos_insumo mi ON mi.insumo_id = n.insumo_id AND mi.ubicacion_origen_id = n.ubicacion_id
-             UNION ALL
-             SELECT n.ubicacion_id, n.insumo_id, mi.created_at, mi.cantidad, mi.id
-             FROM neg n JOIN movimientos_insumo mi ON mi.insumo_id = n.insumo_id AND mi.ubicacion_destino_id = n.ubicacion_id
-             UNION ALL
-             SELECT n.ubicacion_id, n.insumo_id, mi.anulada_at, mi.cantidad, mi.id
-             FROM neg n JOIN movimientos_insumo mi ON mi.insumo_id = n.insumo_id AND mi.ubicacion_origen_id = n.ubicacion_id
-             WHERE mi.anulada_at IS NOT NULL
-             ORDER BY at, id`
-        );
-        await client.query('COMMIT');
-        const porPar = new Map();
-        for (const e of eventos.rows) {
-            const clave = `${e.ubicacion_id}:${e.insumo_id}`;
-            if (!porPar.has(clave)) porPar.set(clave, []);
-            porPar.get(clave).push({ at: e.at, delta: Number(e.delta) });
-        }
-        res.json(negativos.rows.map(({ hoy, ...f }) => {
-            const r = reconstruirDescuadre(f.cantidad, porPar.get(`${f.ubicacion_id}:${f.insumo_id}`) || []);
-            return {
-                ...f,
-                cantidad: num(f.cantidad),
-                negativo_desde: r.negativo_desde,
-                ultimo_movimiento_at: r.ultimo_movimiento_at,
-                sin_origen: r.sin_origen,
-                dias: r.negativo_desde ? Math.max(0, diasEntre(diaSantiago(r.negativo_desde), hoy) - 1) : null,
-            };
-        }));
+        return await conTransaccion(pool, async (client, { confirmar }) => {
+            const negativos = await client.query(
+                `SELECT su.ubicacion_id, su.insumo_id, su.cantidad, i.nombre AS insumo_nombre, i.unidad_medida,
+                        u.nombre AS ubicacion_nombre, u.tipo AS ubicacion_tipo, v.patente, usr.nombre AS mecanico_nombre,
+                        to_char(now() AT TIME ZONE 'America/Santiago', 'YYYY-MM-DD') AS hoy
+                 FROM stock_ubicacion su
+                 JOIN insumos i ON i.id = su.insumo_id
+                 JOIN ubicaciones_stock u ON u.id = su.ubicacion_id
+                 LEFT JOIN vehiculos v ON v.id = u.vehiculo_id
+                 LEFT JOIN usuarios usr ON usr.id = v.usuario_id
+                 WHERE su.cantidad < 0
+                 ORDER BY su.cantidad ASC, su.ubicacion_id, su.insumo_id`
+            );
+            // eventos de los pares negativos: el origen resta al crearse, el destino suma, y una linea
+            // anulada devuelve lo que habia restado (mismo criterio que la anulacion de lineas)
+            const eventos = negativos.rows.length === 0 ? { rows: [] } : await client.query(
+                `WITH neg AS (SELECT ubicacion_id, insumo_id FROM stock_ubicacion WHERE cantidad < 0)
+                 SELECT n.ubicacion_id, n.insumo_id, mi.created_at AS at, -mi.cantidad AS delta, mi.id
+                 FROM neg n JOIN movimientos_insumo mi ON mi.insumo_id = n.insumo_id AND mi.ubicacion_origen_id = n.ubicacion_id
+                 UNION ALL
+                 SELECT n.ubicacion_id, n.insumo_id, mi.created_at, mi.cantidad, mi.id
+                 FROM neg n JOIN movimientos_insumo mi ON mi.insumo_id = n.insumo_id AND mi.ubicacion_destino_id = n.ubicacion_id
+                 UNION ALL
+                 SELECT n.ubicacion_id, n.insumo_id, mi.anulada_at, mi.cantidad, mi.id
+                 FROM neg n JOIN movimientos_insumo mi ON mi.insumo_id = n.insumo_id AND mi.ubicacion_origen_id = n.ubicacion_id
+                 WHERE mi.anulada_at IS NOT NULL
+                 ORDER BY at, id`
+            );
+            await confirmar();
+            const porPar = new Map();
+            for (const e of eventos.rows) {
+                const clave = `${e.ubicacion_id}:${e.insumo_id}`;
+                if (!porPar.has(clave)) porPar.set(clave, []);
+                porPar.get(clave).push({ at: e.at, delta: Number(e.delta) });
+            }
+            res.json(negativos.rows.map(({ hoy, ...f }) => {
+                const r = reconstruirDescuadre(f.cantidad, porPar.get(`${f.ubicacion_id}:${f.insumo_id}`) || []);
+                return {
+                    ...f,
+                    cantidad: num(f.cantidad),
+                    negativo_desde: r.negativo_desde,
+                    ultimo_movimiento_at: r.ultimo_movimiento_at,
+                    sin_origen: r.sin_origen,
+                    dias: r.negativo_desde ? Math.max(0, diasEntre(diaSantiago(r.negativo_desde), hoy) - 1) : null,
+                };
+            }));
+        }, { inicio: 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al consultar los descuadres de stock' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -494,36 +491,32 @@ router.post('/:id/ingreso', verifyToken, requireRole('administrativo'), async (r
     if (cantidadValidaONulo(cantidad) === null) {
         return res.status(400).json({ error: 'Indica una cantidad mayor a 0, con hasta 2 decimales' });
     }
-    let client;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        const existe = await client.query('SELECT id FROM insumos WHERE id = $1', [req.params.id]);
-        if (existe.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Insumo no encontrado' });
-        }
-        // una compra entra siempre a la bodega central; de ahi se reparte a los furgones
-        const bodega = await bodegaCentral(client);
-        if (!bodega) {
-            await client.query('ROLLBACK');
-            return res.status(500).json({ error: 'No hay una bodega central configurada' });
-        }
-        await moverStock(client, { ubicacionId: bodega, insumoId: req.params.id, delta: cantidad });
-        await client.query(
-            `INSERT INTO movimientos_insumo (insumo_id, cantidad, tipo, usuario_id, ubicacion_destino_id)
-             VALUES ($1, $2, 'ingreso', $3, $4)`,
-            [req.params.id, cantidad, req.user.id, bodega]
-        );
-        const result = await client.query('SELECT * FROM insumos WHERE id = $1', [req.params.id]);
-        await client.query('COMMIT');
-        res.json(result.rows[0]);
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            const existe = await client.query('SELECT id FROM insumos WHERE id = $1', [req.params.id]);
+            if (existe.rows.length === 0) {
+                await deshacer();
+                return res.status(404).json({ error: 'Insumo no encontrado' });
+            }
+            // una compra entra siempre a la bodega central; de ahi se reparte a los furgones
+            const bodega = await bodegaCentral(client);
+            if (!bodega) {
+                await deshacer();
+                return res.status(500).json({ error: 'No hay una bodega central configurada' });
+            }
+            await moverStock(client, { ubicacionId: bodega, insumoId: req.params.id, delta: cantidad });
+            await client.query(
+                `INSERT INTO movimientos_insumo (insumo_id, cantidad, tipo, usuario_id, ubicacion_destino_id)
+                 VALUES ($1, $2, 'ingreso', $3, $4)`,
+                [req.params.id, cantidad, req.user.id, bodega]
+            );
+            const result = await client.query('SELECT * FROM insumos WHERE id = $1', [req.params.id]);
+            await confirmar();
+            res.json(result.rows[0]);
+        });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al registrar ingreso de stock' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -898,85 +891,81 @@ router.post('/orden/:ordenId/linea/:lineaId/anular', verifyToken, requireRole('m
     const { ordenId, lineaId } = req.params;
     if (!esIdPositivo(ordenId)) return res.status(400).json({ error: 'Id de orden inválido' });
     if (!esIdPositivo(lineaId)) return res.status(400).json({ error: 'Id de línea inválido' });
-    let client = null;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        const orden = await bloquearOrden(client, ordenId);
-        if (!orden) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        }
-        if (req.user.rol === 'mecanico') {
-            if (orden.mecanico_id !== req.user.id) {
-                await client.query('ROLLBACK');
-                return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            const orden = await bloquearOrden(client, ordenId);
+            if (!orden) {
+                await deshacer();
+                return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
             }
-            if (orden.estado === 'finalizada') {
-                await client.query('ROLLBACK');
-                return res.status(409).json({ error: 'La orden ya está cerrada: pide al administrativo que anule la línea' });
+            if (req.user.rol === 'mecanico') {
+                if (orden.mecanico_id !== req.user.id) {
+                    await deshacer();
+                    return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
+                }
+                if (orden.estado === 'finalizada') {
+                    await deshacer();
+                    return res.status(409).json({ error: 'La orden ya está cerrada: pide al administrativo que anule la línea' });
+                }
             }
-        }
 
-        const lineaResult = await client.query(
-            `SELECT * FROM movimientos_insumo
-             WHERE id = $1 AND orden_trabajo_id = $2 AND tipo = 'salida' FOR UPDATE`,
-            [lineaId, ordenId]
-        );
-        const linea = lineaResult.rows[0];
-        if (!linea) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Línea no encontrada en esta orden de trabajo' });
-        }
-        if (linea.anulada_at) {
-            await client.query('ROLLBACK');
-            return res.json(linea);
-        }
-        const compuertas = evaluarCompuertas({
-            estado: orden.estado, facturaFolio: orden.factura_folio,
-            motivoCodigo: req.body ? req.body.motivo_codigo : undefined, motivo: req.body ? req.body.motivo : undefined,
-        });
-        if (!compuertas.ok) {
-            await client.query('ROLLBACK');
-            return res.status(compuertas.status).json({ error: compuertas.error });
-        }
-
-        const antes = orden.valorizacion === null ? [] : await lineasVigentes(client, orden.id);
-        if (linea.insumo_id && linea.ubicacion_origen_id) {
-            await moverStock(client, {
-                ubicacionId: linea.ubicacion_origen_id,
-                insumoId: linea.insumo_id,
-                delta: Number(linea.cantidad),
+            const lineaResult = await client.query(
+                `SELECT * FROM movimientos_insumo
+                 WHERE id = $1 AND orden_trabajo_id = $2 AND tipo = 'salida' FOR UPDATE`,
+                [lineaId, ordenId]
+            );
+            const linea = lineaResult.rows[0];
+            if (!linea) {
+                await deshacer();
+                return res.status(404).json({ error: 'Línea no encontrada en esta orden de trabajo' });
+            }
+            if (linea.anulada_at) {
+                await deshacer();
+                return res.json(linea);
+            }
+            const compuertas = evaluarCompuertas({
+                estado: orden.estado, facturaFolio: orden.factura_folio,
+                motivoCodigo: req.body ? req.body.motivo_codigo : undefined, motivo: req.body ? req.body.motivo : undefined,
             });
-        }
-        const anulada = await client.query(
-            `UPDATE movimientos_insumo SET anulada_at = now(), anulada_por = $1 WHERE id = $2 RETURNING *`,
-            [req.user.id, lineaId]
-        );
-        const facturableOt = await recalcularFacturableOt(client, ordenId);
-        await dejarEvento(client, {
-            ordenId: orden.id, tipo: 'linea_anulada', origen: origenDelCambio(req), usuario: req.user,
-            detalle: detalleDeLinea({
-                lineaId: linea.id,
-                insumo: await nombreDeLinea(client, linea),
-                campo: 'anulada',
-                antes: false,
-                despues: true,
-                compuertas,
-            }),
+            if (!compuertas.ok) {
+                await deshacer();
+                return res.status(compuertas.status).json({ error: compuertas.error });
+            }
+
+            const antes = orden.valorizacion === null ? [] : await lineasVigentes(client, orden.id);
+            if (linea.insumo_id && linea.ubicacion_origen_id) {
+                await moverStock(client, {
+                    ubicacionId: linea.ubicacion_origen_id,
+                    insumoId: linea.insumo_id,
+                    delta: Number(linea.cantidad),
+                });
+            }
+            const anulada = await client.query(
+                `UPDATE movimientos_insumo SET anulada_at = now(), anulada_por = $1 WHERE id = $2 RETURNING *`,
+                [req.user.id, lineaId]
+            );
+            const facturableOt = await recalcularFacturableOt(client, ordenId);
+            await dejarEvento(client, {
+                ordenId: orden.id, tipo: 'linea_anulada', origen: origenDelCambio(req), usuario: req.user,
+                detalle: detalleDeLinea({
+                    lineaId: linea.id,
+                    insumo: await nombreDeLinea(client, linea),
+                    campo: 'anulada',
+                    antes: false,
+                    despues: true,
+                    compuertas,
+                }),
+            });
+            await anularValorizacionSiCorresponde(client, req, orden, antes, {
+                tipoCambio: 'linea_anulada', lineaId: linea.id, compuertas, facturableOt,
+            });
+            await avisarSiPasoAPorValorizar(client, req, orden, facturableOt);
+            await confirmar();
+            res.json({ ...anulada.rows[0], orden_facturable: facturableOt });
         });
-        await anularValorizacionSiCorresponde(client, req, orden, antes, {
-            tipoCambio: 'linea_anulada', lineaId: linea.id, compuertas, facturableOt,
-        });
-        await avisarSiPasoAPorValorizar(client, req, orden, facturableOt);
-        await client.query('COMMIT');
-        res.json({ ...anulada.rows[0], orden_facturable: facturableOt });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al anular la línea' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -1005,120 +994,116 @@ router.patch('/orden/:ordenId/linea/:lineaId', verifyToken, requireRole('adminis
     }
     const llave = cabecera === undefined ? null : cabecera.trim().toLowerCase();
     const mensajeNoEncontrada = 'Línea no encontrada en esta orden de trabajo, o ya anulada';
-    let client = null;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        const orden = await bloquearOrden(client, req.params.ordenId);
-        if (!orden) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: mensajeNoEncontrada });
-        }
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            const orden = await bloquearOrden(client, req.params.ordenId);
+            if (!orden) {
+                await deshacer();
+                return res.status(404).json({ error: mensajeNoEncontrada });
+            }
 
-        // el reintento de un cambio que ya se hizo (la respuesta se perdio): se responde el estado
-        // actual. La llave solo vale para esta linea; usada en otra cosa es un error del cliente.
-        if (llave) {
-            const previo = await client.query(
-                `SELECT orden_trabajo_id, detalle->>'linea_id' AS linea_id FROM ordenes_eventos
-                 WHERE uuid_cliente = $1 AND tipo = 'linea_modificada'`,
-                [llave]
+            // el reintento de un cambio que ya se hizo (la respuesta se perdio): se responde el estado
+            // actual. La llave solo vale para esta linea; usada en otra cosa es un error del cliente.
+            if (llave) {
+                const previo = await client.query(
+                    `SELECT orden_trabajo_id, detalle->>'linea_id' AS linea_id FROM ordenes_eventos
+                     WHERE uuid_cliente = $1 AND tipo = 'linea_modificada'`,
+                    [llave]
+                );
+                if (previo.rows[0]) {
+                    if (previo.rows[0].orden_trabajo_id !== orden.id || previo.rows[0].linea_id !== String(req.params.lineaId)) {
+                        await deshacer();
+                        return res.status(409).json({ error: 'Idempotency-Key ya fue usada en otra operación' });
+                    }
+                    const actual = await client.query(
+                        'SELECT * FROM movimientos_insumo WHERE id = $1 AND orden_trabajo_id = $2',
+                        [req.params.lineaId, req.params.ordenId]
+                    );
+                    await deshacer();
+                    if (actual.rows.length === 0) return res.status(404).json({ error: mensajeNoEncontrada });
+                    return res.json({ ...actual.rows[0], orden_facturable: orden.facturable, ya_registrada: true });
+                }
+            }
+
+            const lineaResult = await client.query(
+                `SELECT * FROM movimientos_insumo
+                 WHERE id = $1 AND orden_trabajo_id = $2 AND anulada_at IS NULL FOR UPDATE`,
+                [req.params.lineaId, req.params.ordenId]
             );
-            if (previo.rows[0]) {
-                if (previo.rows[0].orden_trabajo_id !== orden.id || previo.rows[0].linea_id !== String(req.params.lineaId)) {
-                    await client.query('ROLLBACK');
+            const linea = lineaResult.rows[0];
+            if (!linea) {
+                await deshacer();
+                return res.status(404).json({ error: mensajeNoEncontrada });
+            }
+
+            const cambios = difLinea(linea, { facturable, precio_unitario, descripcion });
+            const campos = Object.keys(cambios);
+            if (campos.length === 0) {
+                // nada cambia: ni la linea ni el historial se tocan
+                await deshacer();
+                return res.json({ ...linea, orden_facturable: orden.facturable });
+            }
+            const compuertas = evaluarCompuertas({
+                estado: orden.estado, facturaFolio: orden.factura_folio,
+                motivoCodigo: req.body.motivo_codigo, motivo: req.body.motivo,
+            });
+            if (!compuertas.ok) {
+                await deshacer();
+                return res.status(compuertas.status).json({ error: compuertas.error });
+            }
+
+            const antes = orden.valorizacion === null ? [] : await lineasVigentes(client, orden.id);
+            const result = await client.query(
+                `UPDATE movimientos_insumo
+                 SET facturable = COALESCE($1::estado_facturable_linea, facturable),
+                     precio_unitario = COALESCE($2, precio_unitario),
+                     descripcion = COALESCE($3, descripcion)
+                 WHERE id = $4 AND orden_trabajo_id = $5 AND anulada_at IS NULL
+                 RETURNING *`,
+                [
+                    facturable || null,
+                    precio_unitario === undefined || precio_unitario === null || precio_unitario === '' ? null : precio_unitario,
+                    descripcion === undefined ? null : descripcion,
+                    req.params.lineaId,
+                    req.params.ordenId,
+                ]
+            );
+            const facturableOt = await recalcularFacturableOt(client, req.params.ordenId);
+            // un evento por campo que cambio; la llave de idempotencia va en el primero (el indice
+            // unico es por uuid y tipo, asi que no puede repetirse en los demas)
+            const insumo = await nombreDeLinea(client, linea);
+            // "despues" sale de la fila ya guardada, no de lo pedido: es lo que de verdad quedo
+            const guardada = result.rows[0];
+            const valorGuardado = (campo) => {
+                const v = guardada[campo];
+                return (campo === 'precio_unitario' || campo === 'cantidad') && v !== null ? Number(v) : v;
+            };
+            for (const [i, campo] of campos.entries()) {
+                const registrado = await dejarEvento(client, {
+                    ordenId: orden.id, tipo: 'linea_modificada', origen: origenDelCambio(req), usuario: req.user,
+                    uuidCliente: i === 0 ? llave : null,
+                    detalle: detalleDeLinea({
+                        lineaId: linea.id, insumo, campo,
+                        antes: cambios[campo].antes, despues: valorGuardado(campo), compuertas,
+                    }),
+                });
+                if (!registrado) {
+                    // el evento ya existia (misma llave y tipo): no se deja un cambio sin su rastro,
+                    // se deshace todo y se avisa
+                    await deshacer();
                     return res.status(409).json({ error: 'Idempotency-Key ya fue usada en otra operación' });
                 }
-                const actual = await client.query(
-                    'SELECT * FROM movimientos_insumo WHERE id = $1 AND orden_trabajo_id = $2',
-                    [req.params.lineaId, req.params.ordenId]
-                );
-                await client.query('ROLLBACK');
-                if (actual.rows.length === 0) return res.status(404).json({ error: mensajeNoEncontrada });
-                return res.json({ ...actual.rows[0], orden_facturable: orden.facturable, ya_registrada: true });
             }
-        }
-
-        const lineaResult = await client.query(
-            `SELECT * FROM movimientos_insumo
-             WHERE id = $1 AND orden_trabajo_id = $2 AND anulada_at IS NULL FOR UPDATE`,
-            [req.params.lineaId, req.params.ordenId]
-        );
-        const linea = lineaResult.rows[0];
-        if (!linea) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: mensajeNoEncontrada });
-        }
-
-        const cambios = difLinea(linea, { facturable, precio_unitario, descripcion });
-        const campos = Object.keys(cambios);
-        if (campos.length === 0) {
-            // nada cambia: ni la linea ni el historial se tocan
-            await client.query('ROLLBACK');
-            return res.json({ ...linea, orden_facturable: orden.facturable });
-        }
-        const compuertas = evaluarCompuertas({
-            estado: orden.estado, facturaFolio: orden.factura_folio,
-            motivoCodigo: req.body.motivo_codigo, motivo: req.body.motivo,
-        });
-        if (!compuertas.ok) {
-            await client.query('ROLLBACK');
-            return res.status(compuertas.status).json({ error: compuertas.error });
-        }
-
-        const antes = orden.valorizacion === null ? [] : await lineasVigentes(client, orden.id);
-        const result = await client.query(
-            `UPDATE movimientos_insumo
-             SET facturable = COALESCE($1::estado_facturable_linea, facturable),
-                 precio_unitario = COALESCE($2, precio_unitario),
-                 descripcion = COALESCE($3, descripcion)
-             WHERE id = $4 AND orden_trabajo_id = $5 AND anulada_at IS NULL
-             RETURNING *`,
-            [
-                facturable || null,
-                precio_unitario === undefined || precio_unitario === null || precio_unitario === '' ? null : precio_unitario,
-                descripcion === undefined ? null : descripcion,
-                req.params.lineaId,
-                req.params.ordenId,
-            ]
-        );
-        const facturableOt = await recalcularFacturableOt(client, req.params.ordenId);
-        // un evento por campo que cambio; la llave de idempotencia va en el primero (el indice
-        // unico es por uuid y tipo, asi que no puede repetirse en los demas)
-        const insumo = await nombreDeLinea(client, linea);
-        // "despues" sale de la fila ya guardada, no de lo pedido: es lo que de verdad quedo
-        const guardada = result.rows[0];
-        const valorGuardado = (campo) => {
-            const v = guardada[campo];
-            return (campo === 'precio_unitario' || campo === 'cantidad') && v !== null ? Number(v) : v;
-        };
-        for (const [i, campo] of campos.entries()) {
-            const registrado = await dejarEvento(client, {
-                ordenId: orden.id, tipo: 'linea_modificada', origen: origenDelCambio(req), usuario: req.user,
-                uuidCliente: i === 0 ? llave : null,
-                detalle: detalleDeLinea({
-                    lineaId: linea.id, insumo, campo,
-                    antes: cambios[campo].antes, despues: valorGuardado(campo), compuertas,
-                }),
+            await anularValorizacionSiCorresponde(client, req, orden, antes, {
+                tipoCambio: 'linea_modificada', lineaId: linea.id, compuertas, facturableOt,
             });
-            if (!registrado) {
-                // el evento ya existia (misma llave y tipo): no se deja un cambio sin su rastro,
-                // se deshace todo y se avisa
-                await client.query('ROLLBACK');
-                return res.status(409).json({ error: 'Idempotency-Key ya fue usada en otra operación' });
-            }
-        }
-        await anularValorizacionSiCorresponde(client, req, orden, antes, {
-            tipoCambio: 'linea_modificada', lineaId: linea.id, compuertas, facturableOt,
+            await avisarSiPasoAPorValorizar(client, req, orden, facturableOt);
+            await confirmar();
+            res.json({ ...result.rows[0], orden_facturable: facturableOt });
         });
-        await avisarSiPasoAPorValorizar(client, req, orden, facturableOt);
-        await client.query('COMMIT');
-        res.json({ ...result.rows[0], orden_facturable: facturableOt });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al actualizar la línea' });
-    } finally {
-        if (client) client.release();
     }
 });
 

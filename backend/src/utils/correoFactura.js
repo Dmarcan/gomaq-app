@@ -6,6 +6,7 @@ const { encolarNotificacion } = require('./avisos');
 const {
     validarIdsFotos, leerFotosDeOrden, prepararAdjuntosFotos, descargadorDeBucket, formatearMb, MAX_BYTES_FOTOS,
 } = require('./fotosCorreo');
+const { conTransaccion } = require('./transaccion');
 
 const MAX_ASUNTO = 200;
 const MAX_CUERPO = 5000;
@@ -217,25 +218,23 @@ async function validarFotosDelEnvio(db, supabase, bucket, { facturaId, ordenId =
  * Devuelve { status, body } listo para responder.
  */
 async function encolarCorreoFactura(pool, { facturaId, ordenId = null, asunto, cuerpo, fotoIds = [] }) {
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
+    return await conTransaccion(pool, async (client, { deshacer }) => {
         const bloqueo = await client.query(
             `SELECT id FROM facturas WHERE id = $1 AND ($2::int IS NULL OR orden_trabajo_id = $2::int) FOR NO KEY UPDATE`,
             [facturaId, ordenId]
         );
         if (bloqueo.rows.length === 0) {
-            await client.query('ROLLBACK');
+            await deshacer();
             return { status: 404, body: { error: ordenId ? 'Factura no encontrada para esta orden de trabajo' : 'Factura no encontrada' } };
         }
         const factura = await leerFacturaParaCorreo(client, facturaId, ordenId);
         if (!factura.cliente_email) {
-            await client.query('ROLLBACK');
+            await deshacer();
             return { status: 400, body: { error: 'El cliente no tiene un correo registrado' } };
         }
         const texto = validarTexto({ asunto, cuerpo }, textoPorDefecto(factura));
         if (texto.error) {
-            await client.query('ROLLBACK');
+            await deshacer();
             return { status: 400, body: { error: texto.error } };
         }
         // las fotos ya se midieron antes (validarFotosDelEnvio); aqui solo se confirma, con la factura
@@ -243,12 +242,12 @@ async function encolarCorreoFactura(pool, { facturaId, ordenId = null, asunto, c
         if (fotoIds.length > 0) {
             const fotos = factura.orden_trabajo_id ? await leerFotosDeOrden(client, factura.orden_trabajo_id, fotoIds) : { error: 'Esta factura no tiene orden de trabajo: no admite fotos' };
             if (fotos.error) {
-                await client.query('ROLLBACK');
+                await deshacer();
                 return { status: 400, body: { error: fotos.error } };
             }
         }
         if (await hayEnvioPendiente(client, facturaId)) {
-            await client.query('ROLLBACK');
+            await deshacer();
             return { status: 409, body: { error: 'Esta factura ya tiene un envío pendiente' } };
         }
         // un correo en error de un intento anterior ya no corresponde: este lo reemplaza
@@ -272,14 +271,8 @@ async function encolarCorreoFactura(pool, { facturaId, ordenId = null, asunto, c
                 ...(fotoIds.length > 0 ? { foto_ids: fotoIds } : {}),
             },
         });
-        await client.query('COMMIT');
         return { status: 200, body: { ok: true, mensaje: 'Envio de correo encolado' } };
-    } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-    } finally {
-        client.release();
-    }
+    });
 }
 
 module.exports = {

@@ -8,6 +8,7 @@ const { urlFirmadaONull } = require('../utils/urlsFirmadas');
 const { borrarArchivoSubido } = require('../utils/archivosStorage');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { subidaDocumento } = require('../middleware/upload');
+const { conTransaccion } = require('../utils/transaccion');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
@@ -80,39 +81,35 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
     if (patente.trim().length > 15) {
         return res.status(400).json({ error: 'patente puede tener hasta 15 caracteres' });
     }
-    let client;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        const result = await client.query(
-            `INSERT INTO vehiculos (patente, marca, modelo, anio, tipo, kilometraje, usuario_id)
-             VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-            [
-                patente.trim().toUpperCase(),
-                marca || null, modelo || null,
-                anio || null, tipo || null,
-                kilometraje === undefined || kilometraje === '' ? null : kilometraje,
-                usuario_id || null,
-            ]
-        );
-        const vehiculo = result.rows[0];
-        if (vehiculo.usuario_id) {
-            await client.query(
-                `INSERT INTO ubicaciones_stock (nombre, tipo, vehiculo_id) VALUES ($1, 'furgon', $2)`,
-                [`Furgon ${vehiculo.patente}`, vehiculo.id]
+        await conTransaccion(pool, async (client, { confirmar }) => {
+            const result = await client.query(
+                `INSERT INTO vehiculos (patente, marca, modelo, anio, tipo, kilometraje, usuario_id)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
+                [
+                    patente.trim().toUpperCase(),
+                    marca || null, modelo || null,
+                    anio || null, tipo || null,
+                    kilometraje === undefined || kilometraje === '' ? null : kilometraje,
+                    usuario_id || null,
+                ]
             );
-        }
-        await client.query('COMMIT');
-        res.status(201).json(vehiculo);
+            const vehiculo = result.rows[0];
+            if (vehiculo.usuario_id) {
+                await client.query(
+                    `INSERT INTO ubicaciones_stock (nombre, tipo, vehiculo_id) VALUES ($1, 'furgon', $2)`,
+                    [`Furgon ${vehiculo.patente}`, vehiculo.id]
+                );
+            }
+            await confirmar();
+            res.status(201).json(vehiculo);
+        });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         if (err.code === '23505') {
             return res.status(409).json({ error: 'Ya existe un vehículo con esa patente, o ese mecánico ya tiene uno' });
         }
         console.error(err);
         res.status(500).json({ error: 'Error al crear el vehículo' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -120,56 +117,52 @@ router.patch('/:id', verifyToken, requireRole('administrativo', 'gerente'), asyn
     const { marca, modelo, anio, tipo, kilometraje, usuario_id, activo } = req.body;
     const errCuerpo = validarCuerpo(req.body, { textos: { marca: 100, modelo: 100, tipo: 50 }, ids: ['usuario_id'], numeros: { anio: [1900, 2200], kilometraje: [0, 2147483647] } });
     if (errCuerpo) return res.status(400).json({ error: errCuerpo });
-    let client;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        // `usuario_id` NO puede ir por COALESCE: el panel ofrece "Sin asignar" y mandar null con COALESCE
-        // conservaria el valor anterior, asi que desasignar un furgon no haria nada. Se distingue "no mandes
-        // el campo" (undefined) de "dejalo vacio" (null), que COALESCE no puede diferenciar.
-        const desasignar = usuario_id === null;
-        const result = await client.query(
-            `UPDATE vehiculos
-             SET marca = COALESCE($1, marca), modelo = COALESCE($2, modelo),
-                 anio = COALESCE($3, anio), tipo = COALESCE($4, tipo),
-                 kilometraje = COALESCE($5, kilometraje),
-                 usuario_id = CASE WHEN $6 THEN NULL ELSE COALESCE($7, usuario_id) END,
-                 activo = COALESCE($8, activo)
-             WHERE id = $9 RETURNING *`,
-            [
-                marca || null, modelo || null, anio || null, tipo || null,
-                kilometraje === undefined || kilometraje === '' ? null : kilometraje,
-                desasignar,
-                usuario_id || null,
-                activo === undefined ? null : Boolean(activo),
-                req.params.id,
-            ]
-        );
-        if (result.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Vehículo no encontrado' });
-        }
-        // si acaba de recibir mecanico y todavia no tenia ubicacion de stock, se le crea
-        const vehiculo = result.rows[0];
-        if (vehiculo.usuario_id) {
-            await client.query(
-                `INSERT INTO ubicaciones_stock (nombre, tipo, vehiculo_id)
-                 VALUES ($1, 'furgon', $2)
-                 ON CONFLICT (vehiculo_id) DO NOTHING`,
-                [`Furgon ${vehiculo.patente}`, vehiculo.id]
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            // `usuario_id` NO puede ir por COALESCE: el panel ofrece "Sin asignar" y mandar null con COALESCE
+            // conservaria el valor anterior, asi que desasignar un furgon no haria nada. Se distingue "no mandes
+            // el campo" (undefined) de "dejalo vacio" (null), que COALESCE no puede diferenciar.
+            const desasignar = usuario_id === null;
+            const result = await client.query(
+                `UPDATE vehiculos
+                 SET marca = COALESCE($1, marca), modelo = COALESCE($2, modelo),
+                     anio = COALESCE($3, anio), tipo = COALESCE($4, tipo),
+                     kilometraje = COALESCE($5, kilometraje),
+                     usuario_id = CASE WHEN $6 THEN NULL ELSE COALESCE($7, usuario_id) END,
+                     activo = COALESCE($8, activo)
+                 WHERE id = $9 RETURNING *`,
+                [
+                    marca || null, modelo || null, anio || null, tipo || null,
+                    kilometraje === undefined || kilometraje === '' ? null : kilometraje,
+                    desasignar,
+                    usuario_id || null,
+                    activo === undefined ? null : Boolean(activo),
+                    req.params.id,
+                ]
             );
-        }
-        await client.query('COMMIT');
-        res.json(vehiculo);
+            if (result.rows.length === 0) {
+                await deshacer();
+                return res.status(404).json({ error: 'Vehículo no encontrado' });
+            }
+            // si acaba de recibir mecanico y todavia no tenia ubicacion de stock, se le crea
+            const vehiculo = result.rows[0];
+            if (vehiculo.usuario_id) {
+                await client.query(
+                    `INSERT INTO ubicaciones_stock (nombre, tipo, vehiculo_id)
+                     VALUES ($1, 'furgon', $2)
+                     ON CONFLICT (vehiculo_id) DO NOTHING`,
+                    [`Furgon ${vehiculo.patente}`, vehiculo.id]
+                );
+            }
+            await confirmar();
+            res.json(vehiculo);
+        });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         if (err.code === '23505') {
             return res.status(409).json({ error: 'Ese mecánico ya tiene un vehículo asignado' });
         }
         console.error(err);
         res.status(500).json({ error: 'Error al actualizar el vehículo' });
-    } finally {
-        if (client) client.release();
     }
 });
 

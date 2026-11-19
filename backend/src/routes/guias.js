@@ -19,6 +19,7 @@ const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/id
 const { validarCoordenadasFormulario } = require('../utils/geo');
 
 const { sqlGuiasSinDocumento } = require('../utils/pendientes');
+const { conTransaccion } = require('../utils/transaccion');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id', 'guiaId']);
@@ -153,7 +154,6 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
         }
     }
 
-    let client;
     let rutaStorage = null;
     const descartarPdfSubido = async () => {
         if (rutaStorage) {
@@ -186,83 +186,82 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
             if (errorSubida) throw errorSubida;
         }
 
-        client = await pool.connect();
-        await client.query('BEGIN');
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
 
-        // Se bloquea la fila del equipo ANTES de leer su estado o escribir la guia: dos guias del
-        // mismo equipo se ejecutan una tras otra y la segunda ve lo que dejo la primera. Es
-        // FOR NO KEY UPDATE y no FOR UPDATE porque el INSERT de la guia (y el de la lectura de
-        // horometro) toma KEY SHARE sobre el equipo por la clave foranea. La guia no toca la OT,
-        // asi que respeta el orden de bloqueo OT -> equipo.
-        const equipo = await client.query('SELECT cliente_id FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE', [id]);
-        if (equipo.rows.length === 0) {
-            await client.query('ROLLBACK');
-            await descartarPdfSubido();
-            return res.status(404).json({ error: 'Maquinaria no encontrada' });
-        }
+            // Se bloquea la fila del equipo ANTES de leer su estado o escribir la guia: dos guias del
+            // mismo equipo se ejecutan una tras otra y la segunda ve lo que dejo la primera. Es
+            // FOR NO KEY UPDATE y no FOR UPDATE porque el INSERT de la guia (y el de la lectura de
+            // horometro) toma KEY SHARE sobre el equipo por la clave foranea. La guia no toca la OT,
+            // asi que respeta el orden de bloqueo OT -> equipo.
+            const equipo = await client.query('SELECT cliente_id FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE', [id]);
+            if (equipo.rows.length === 0) {
+                await deshacer();
+                await descartarPdfSubido();
+                return res.status(404).json({ error: 'Maquinaria no encontrada' });
+            }
 
-        // la guia guarda su propio cliente (snapshot del momento del evento): en un despacho
-        // es el cliente elegido; en una recepcion, el que tenia la maquina en la fecha de la guia
-        // (el del despacho vigente entonces), no el de hoy: una recepcion atrasada no debe quedar
-        // con el cliente de un despacho posterior. Nunca derivarlo despues desde
-        // maquinarias.cliente_id - la recepcion lo pone en NULL y facturacion lo necesita.
-        const clienteGuia = tipo === 'despacho'
-            ? (cliente_id || null)
-            : await clienteAlMomento(client, id, fecha_hora, equipo.rows[0].cliente_id);
+            // la guia guarda su propio cliente (snapshot del momento del evento): en un despacho
+            // es el cliente elegido; en una recepcion, el que tenia la maquina en la fecha de la guia
+            // (el del despacho vigente entonces), no el de hoy: una recepcion atrasada no debe quedar
+            // con el cliente de un despacho posterior. Nunca derivarlo despues desde
+            // maquinarias.cliente_id - la recepcion lo pone en NULL y facturacion lo necesita.
+            const clienteGuia = tipo === 'despacho'
+                ? (cliente_id || null)
+                : await clienteAlMomento(client, id, fecha_hora, equipo.rows[0].cliente_id);
 
-        const result = await client.query(
-            `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, fallido, cliente_id, registrada_por, uuid_cliente, latitud, longitud)
-             VALUES ($1, $2::tipo_guia, $3, COALESCE($4, now()), COALESCE($5, false), $6, $7, $8, $9, $10)
-             RETURNING *, archivo_url IS NULL AS falta_documento`,
-            [id, tipo, rutaStorage, fecha_hora || null, esFallido, clienteGuia, req.user.id, uuidCliente,
-             guardarCoords ? coords.latitud : null, guardarCoords ? coords.longitud : null]
-        );
-
-        // el cliente del equipo sale de la guia MAS RECIENTE por fecha, no de la ultima en llegar:
-        // un despacho o una recepcion atrasados no pisan un estado mas nuevo
-        if (!esFallido) {
-            await recalcularClienteEquipo(client, id);
-        }
-
-        // la guia de entrega trae impreso "HOROMETRO: 1156": si el administrativo lo confirmo
-        // en el formulario se guarda como una lectura mas del equipo, con origen 'guia'.
-        // Misma transaccion que la guia, y mismo patron Outbox para el aviso de mantencion.
-        const horometroLectura = horometro === undefined || horometro === null || horometro === ''
-            ? null
-            : Number(horometro);
-        if (horometroLectura !== null && !isNaN(horometroLectura) && horometroLectura >= 0 && horometroLectura <= 9999999 && !esFallido) {
-            const maq = await client.query(
-                `SELECT id, codigo, intervalo_mantencion_horas, horometro_ultima_mantencion,
-                        alerta_mantencion_enviada
-                 FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE`,
-                [id]
+            const result = await client.query(
+                `INSERT INTO guias (maquinaria_id, tipo, archivo_url, fecha, fallido, cliente_id, registrada_por, uuid_cliente, latitud, longitud)
+                 VALUES ($1, $2::tipo_guia, $3, COALESCE($4, now()), COALESCE($5, false), $6, $7, $8, $9, $10)
+                 RETURNING *, archivo_url IS NULL AS falta_documento`,
+                [id, tipo, rutaStorage, fecha_hora || null, esFallido, clienteGuia, req.user.id, uuidCliente,
+                 guardarCoords ? coords.latitud : null, guardarCoords ? coords.longitud : null]
             );
-            if (maq.rows[0]) {
-                await client.query(
-                    `INSERT INTO lecturas_horometro
-                        (maquinaria_id, valor, origen, cliente_id, guia_id, usuario_id, observacion)
-                     VALUES ($1, $2, 'guia', $3, $4, $5, $6)`,
-                    [id, horometroLectura, clienteGuia, result.rows[0].id, req.user.id,
-                     `Detectado en la guia de ${tipo}`]
-                );
 
-                const estado = calcularEstadoMantencion({
-                    ultimaLectura: horometroLectura,
-                    horometroUltimaMantencion: maq.rows[0].horometro_ultima_mantencion === null
-                        ? null
-                        : Number(maq.rows[0].horometro_ultima_mantencion),
-                    intervaloHoras: Number(maq.rows[0].intervalo_mantencion_horas),
-                });
-                if (requiereAviso(estado) && !maq.rows[0].alerta_mantencion_enviada) {
-                    await encolarAvisoMantencion(client, maq.rows[0], estado);
+            // el cliente del equipo sale de la guia MAS RECIENTE por fecha, no de la ultima en llegar:
+            // un despacho o una recepcion atrasados no pisan un estado mas nuevo
+            if (!esFallido) {
+                await recalcularClienteEquipo(client, id);
+            }
+
+            // la guia de entrega trae impreso "HOROMETRO: 1156": si el administrativo lo confirmo
+            // en el formulario se guarda como una lectura mas del equipo, con origen 'guia'.
+            // Misma transaccion que la guia, y mismo patron Outbox para el aviso de mantencion.
+            const horometroLectura = horometro === undefined || horometro === null || horometro === ''
+                ? null
+                : Number(horometro);
+            if (horometroLectura !== null && !isNaN(horometroLectura) && horometroLectura >= 0 && horometroLectura <= 9999999 && !esFallido) {
+                const maq = await client.query(
+                    `SELECT id, codigo, intervalo_mantencion_horas, horometro_ultima_mantencion,
+                            alerta_mantencion_enviada
+                     FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE`,
+                    [id]
+                );
+                if (maq.rows[0]) {
+                    await client.query(
+                        `INSERT INTO lecturas_horometro
+                            (maquinaria_id, valor, origen, cliente_id, guia_id, usuario_id, observacion)
+                         VALUES ($1, $2, 'guia', $3, $4, $5, $6)`,
+                        [id, horometroLectura, clienteGuia, result.rows[0].id, req.user.id,
+                         `Detectado en la guia de ${tipo}`]
+                    );
+
+                    const estado = calcularEstadoMantencion({
+                        ultimaLectura: horometroLectura,
+                        horometroUltimaMantencion: maq.rows[0].horometro_ultima_mantencion === null
+                            ? null
+                            : Number(maq.rows[0].horometro_ultima_mantencion),
+                        intervaloHoras: Number(maq.rows[0].intervalo_mantencion_horas),
+                    });
+                    if (requiereAviso(estado) && !maq.rows[0].alerta_mantencion_enviada) {
+                        await encolarAvisoMantencion(client, maq.rows[0], estado);
+                    }
                 }
             }
-        }
 
-        await client.query('COMMIT');
-        res.status(201).json(result.rows[0]);
+            await confirmar();
+            res.status(201).json(result.rows[0]);
+        });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         // compensacion best-effort: si el PDF ya subio pero la BD fallo, no dejar el archivo huerfano
         if (rutaStorage) {
             await borrarArchivoSubido(BUCKET_DOCUMENTOS, rutaStorage);
@@ -280,8 +279,6 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
         }
         console.error(err);
         res.status(500).json({ error: 'Error al subir guía' });
-    } finally {
-        if (client) client.release();
     }
 });
 

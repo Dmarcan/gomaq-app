@@ -8,6 +8,7 @@ const { rutValido, MENSAJE_RUT_INVALIDO } = require('../utils/rut');
 const { validarFichaCliente, validarFichaPropia, fichaDeFila, diferenciasFicha, CAMPOS_FICHA_PROPIA } = require('../utils/fichaCliente');
 const { leerConfiguracion } = require('../utils/configuracion');
 const { cargarHistorialCliente } = require('../utils/historialCliente');
+const { conTransaccion } = require('../utils/transaccion');
 
 const router = express.Router();
 
@@ -43,12 +44,10 @@ router.patch('/mia', verifyToken, requireRole('cliente'), async (req, res) => {
     if (req.query && Object.keys(req.query).length > 0) return res.status(400).json({ error: 'Solicitud no válida' });
     const { cambios, error } = validarFichaPropia(req.body);
     if (error) return res.status(400).json({ error });
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
+    return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
         const actual = await client.query(`SELECT ${COLUMNAS_FICHA_PROPIA} FROM clientes WHERE id = $1 FOR UPDATE`, [clienteId]);
         if (actual.rows.length === 0) {
-            await client.query('ROLLBACK');
+            await deshacer();
             return res.status(404).json({ error: SIN_EMPRESA });
         }
         const dif = diferenciasFicha(actual.rows[0], cambios);
@@ -68,15 +67,10 @@ router.patch('/mia', verifyToken, requireRole('cliente'), async (req, res) => {
                 [clienteId, req.user.id, req.user.rol, JSON.stringify(dif)]
             );
         }
-        await client.query('COMMIT');
+        await confirmar();
         res.set('Cache-Control', 'no-store');
         res.json(fichaDeFila(fila));
-    } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-    } finally {
-        client.release();
-    }
+    });
 });
 
 router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {

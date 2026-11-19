@@ -17,6 +17,7 @@ const { SQL_CUENTAS_POR_APROBAR } = require('../utils/pendientes');
 const { rutValido, MENSAJE_RUT_INVALIDO } = require('../utils/rut');
 const { encolarNotificacion } = require('../utils/avisos');
 const { armarAvisos, validarCambioAvisos, aplicarCambioAvisos } = require('../utils/avisosPerfil');
+const { conTransaccion } = require('../utils/transaccion');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
@@ -173,66 +174,62 @@ router.post('/invitaciones', verifyToken, requireRole('administrativo', 'gerente
     const errCanal = errorCanalCorreo(canal);
     if (errCanal) return res.status(400).json({ error: errCanal });
 
-    let client;
     let usuario;
     let codigo;
     let reinvitada = false;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        const existe = await client.query(
-            'SELECT id, rol, estado_cuenta FROM usuarios WHERE lower(email) = $1 FOR UPDATE',
-            [email]
-        );
-        if (existe.rows.length > 0) {
-            const e = existe.rows[0];
-            if (e.rol === 'gerente' && req.user.rol !== 'gerente') {
-                await client.query('ROLLBACK');
-                return res.status(403).json({ error: 'Solo un gerente puede reinvitar a una cuenta de gerente' });
-            }
-            if (e.rol === 'cliente') {
-                await client.query('ROLLBACK');
-                return res.status(409).json({ error: 'Ese correo es de una cuenta de cliente' });
-            }
-            if (e.estado_cuenta !== 'pendiente') {
-                await client.query('ROLLBACK');
-                return res.status(409).json({ error: MENSAJE_CORREO_OCUPADO[e.estado_cuenta] || 'Ya existe una cuenta con ese correo' });
-            }
-            const r = await client.query(
-                'UPDATE usuarios SET nombre = $1, rol = $2 WHERE id = $3 RETURNING id, nombre, email, rol, estado_cuenta',
-                [nombre, rol, e.id]
-            );
-            usuario = r.rows[0];
-            reinvitada = true;
-        } else {
-            const solicitud = await client.query(
-                `SELECT 1 FROM solicitudes_cliente WHERE lower(email) = $1 AND estado = 'pendiente'`,
+        const respondida = await conTransaccion(pool, async (client, { deshacer }) => {
+            const existe = await client.query(
+                'SELECT id, rol, estado_cuenta FROM usuarios WHERE lower(email) = $1 FOR UPDATE',
                 [email]
             );
-            if (solicitud.rows.length > 0) {
-                await client.query('ROLLBACK');
-                return res.status(409).json({ error: 'Ese correo tiene una solicitud de cuenta de cliente en revisión' });
+            if (existe.rows.length > 0) {
+                const e = existe.rows[0];
+                if (e.rol === 'gerente' && req.user.rol !== 'gerente') {
+                    await deshacer();
+                    return res.status(403).json({ error: 'Solo un gerente puede reinvitar a una cuenta de gerente' });
+                }
+                if (e.rol === 'cliente') {
+                    await deshacer();
+                    return res.status(409).json({ error: 'Ese correo es de una cuenta de cliente' });
+                }
+                if (e.estado_cuenta !== 'pendiente') {
+                    await deshacer();
+                    return res.status(409).json({ error: MENSAJE_CORREO_OCUPADO[e.estado_cuenta] || 'Ya existe una cuenta con ese correo' });
+                }
+                const r = await client.query(
+                    'UPDATE usuarios SET nombre = $1, rol = $2 WHERE id = $3 RETURNING id, nombre, email, rol, estado_cuenta',
+                    [nombre, rol, e.id]
+                );
+                usuario = r.rows[0];
+                reinvitada = true;
+            } else {
+                const solicitud = await client.query(
+                    `SELECT 1 FROM solicitudes_cliente WHERE lower(email) = $1 AND estado = 'pendiente'`,
+                    [email]
+                );
+                if (solicitud.rows.length > 0) {
+                    await deshacer();
+                    return res.status(409).json({ error: 'Ese correo tiene una solicitud de cuenta de cliente en revisión' });
+                }
+                // clave aleatoria que se descarta: la cuenta existe (reserva el correo y aparece en la lista)
+                // pero nadie puede iniciar sesion con ella hasta canjear el codigo
+                const hash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
+                const r = await client.query(
+                    `INSERT INTO usuarios (nombre, email, password_hash, rol, estado_cuenta)
+                     VALUES ($1, $2, $3, $4, 'pendiente')
+                     RETURNING id, nombre, email, rol, estado_cuenta`,
+                    [nombre, email, hash, rol]
+                );
+                usuario = r.rows[0];
             }
-            // clave aleatoria que se descarta: la cuenta existe (reserva el correo y aparece en la lista)
-            // pero nadie puede iniciar sesion con ella hasta canjear el codigo
-            const hash = await bcrypt.hash(crypto.randomBytes(32).toString('hex'), 10);
-            const r = await client.query(
-                `INSERT INTO usuarios (nombre, email, password_hash, rol, estado_cuenta)
-                 VALUES ($1, $2, $3, $4, 'pendiente')
-                 RETURNING id, nombre, email, rol, estado_cuenta`,
-                [nombre, email, hash, rol]
-            );
-            usuario = r.rows[0];
-        }
-        codigo = await crearCodigo(client, { proposito: 'invitacion', usuarioId: usuario.id, email, canal, creadoPor: req.user.id });
-        await client.query('COMMIT');
+            codigo = await crearCodigo(client, { proposito: 'invitacion', usuarioId: usuario.id, email, canal, creadoPor: req.user.id });
+        });
+        if (respondida) return;
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         if (err.code === '23505') return res.status(409).json({ error: 'Ya existe una cuenta con ese correo' });
         console.error(err);
         return res.status(500).json({ error: 'Error al crear la invitación' });
-    } finally {
-        if (client) client.release();
     }
 
     console.log(`Cuenta ${usuario.id} (${usuario.rol}) ${reinvitada ? 'reinvitada' : 'invitada'} por el usuario ${req.user.id} (${canal})`);
@@ -280,27 +277,25 @@ async function nuevoCodigoParaCuenta(req, res, { proposito, estadoEsperado, mens
     const errCanal = errorCanalCorreo(v.canal);
     if (errCanal) return res.status(400).json({ error: errCanal });
 
-    let client;
     let cuenta;
     let codigo;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        cuenta = await cuentaInternaParaCodigo(client, req, res, estadoEsperado, mensajeOtroEstado);
-        if (!cuenta) {
-            await client.query('ROLLBACK');
-            return undefined;
-        }
-        codigo = await crearCodigo(client, {
-            proposito, usuarioId: cuenta.id, email: normalizarCorreo(cuenta.email), canal: v.canal, creadoPor: req.user.id,
+        // cuentaInternaParaCodigo ya respondio cuando la cuenta no sirve: true corta el manejador
+        const respondida = await conTransaccion(pool, async (client, { deshacer }) => {
+            cuenta = await cuentaInternaParaCodigo(client, req, res, estadoEsperado, mensajeOtroEstado);
+            if (!cuenta) {
+                await deshacer();
+                return true;
+            }
+            codigo = await crearCodigo(client, {
+                proposito, usuarioId: cuenta.id, email: normalizarCorreo(cuenta.email), canal: v.canal, creadoPor: req.user.id,
+            });
+            return false;
         });
-        await client.query('COMMIT');
+        if (respondida) return undefined;
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         return res.status(500).json({ error: 'Error al generar el código' });
-    } finally {
-        if (client) client.release();
     }
     console.log(`Código de ${proposito} para la cuenta ${cuenta.id} generado por el usuario ${req.user.id} (${v.canal})`);
     res.set('Cache-Control', 'no-store');
@@ -332,39 +327,35 @@ router.post('/:id/codigo-restablecer', verifyToken, requireRole('administrativo'
 // revoca una invitacion no aceptada. La cuenta nunca pudo entrar,
 // asi que se borra; si algo ya la referencia (por ejemplo un vehiculo asignado), queda desactivada.
 router.post('/:id/invitacion/revocar', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
-    let client;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        const cuenta = await cuentaInternaParaCodigo(client, req, res, 'pendiente', 'Esta cuenta ya aceptó su invitación: desactívala en vez de revocar');
-        if (!cuenta) {
-            await client.query('ROLLBACK');
-            return undefined;
-        }
-        let eliminada = true;
-        await client.query('SAVEPOINT antes_de_borrar');
-        try {
-            await client.query('DELETE FROM usuarios WHERE id = $1', [cuenta.id]);
-        } catch (err) {
-            if (err.code !== '23503') throw err;
-            await client.query('ROLLBACK TO SAVEPOINT antes_de_borrar');
-            await client.query(
-                `UPDATE codigos_cuenta SET revocado_at = now()
-                 WHERE usuario_id = $1 AND usado_at IS NULL AND revocado_at IS NULL`,
-                [cuenta.id]
-            );
-            await client.query(`UPDATE usuarios SET estado_cuenta = 'rechazado' WHERE id = $1`, [cuenta.id]);
-            eliminada = false;
-        }
-        await client.query('COMMIT');
-        console.log(`Invitación de la cuenta ${cuenta.id} revocada por el usuario ${req.user.id}`);
-        return res.json({ ok: true, eliminada });
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            const cuenta = await cuentaInternaParaCodigo(client, req, res, 'pendiente', 'Esta cuenta ya aceptó su invitación: desactívala en vez de revocar');
+            if (!cuenta) {
+                await deshacer();
+                return undefined;
+            }
+            let eliminada = true;
+            await client.query('SAVEPOINT antes_de_borrar');
+            try {
+                await client.query('DELETE FROM usuarios WHERE id = $1', [cuenta.id]);
+            } catch (err) {
+                if (err.code !== '23503') throw err;
+                await client.query('ROLLBACK TO SAVEPOINT antes_de_borrar');
+                await client.query(
+                    `UPDATE codigos_cuenta SET revocado_at = now()
+                     WHERE usuario_id = $1 AND usado_at IS NULL AND revocado_at IS NULL`,
+                    [cuenta.id]
+                );
+                await client.query(`UPDATE usuarios SET estado_cuenta = 'rechazado' WHERE id = $1`, [cuenta.id]);
+                eliminada = false;
+            }
+            await confirmar();
+            console.log(`Invitación de la cuenta ${cuenta.id} revocada por el usuario ${req.user.id}`);
+            return res.json({ ok: true, eliminada });
+        });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         return res.status(500).json({ error: 'Error al revocar la invitación' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -451,89 +442,85 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
     const { cliente_id } = req.body;
     const errCuerpo = validarCuerpo(req.body, { ids: ['cliente_id'] });
     if (errCuerpo) return res.status(400).json({ error: errCuerpo });
-    let client;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
 
-        // FOR UPDATE dentro de la transaccion: dos aprobaciones concurrentes de la misma
-        // solicitud serializan aqui - la segunda ve estado != 'pendiente' y recibe 404
-        // en vez de un 500 por email duplicado (mismo patron que /convertir en solicitudes.js)
-        const solicitudResult = await client.query(
-            `SELECT * FROM solicitudes_cliente WHERE id = $1 AND estado = 'pendiente' FOR UPDATE`,
-            [req.params.id]
-        );
-        if (solicitudResult.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Solicitud de cuenta no encontrada o ya procesada' });
-        }
-        const s = solicitudResult.rows[0];
-
-        // si el envio de correos esta configurado, aprobar sin que el cliente haya confirmado su correo
-        // pide una confirmacion explicita (puede ser un correo ajeno o mal escrito)
-        if (!s.correo_verificado_at && correoDisponible().disponible && req.body.confirmar_sin_verificar !== true) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({
-                codigo: 'correo_sin_verificar',
-                error: 'El cliente aún no confirmó su correo. Confirma que quieres aprobar la cuenta sin verificarlo.',
-            });
-        }
-
-        // el UNIQUE de usuarios.email es exacto: una cuenta con el mismo correo en otra capitalizacion
-        // no lo dispara, y el login (que no distingue mayusculas) dejaria dos cuentas ambiguas
-        const duplicada = await client.query('SELECT id FROM usuarios WHERE lower(email) = lower($1)', [s.email]);
-        if (duplicada.rows.length > 0) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ error: 'Ya existe una cuenta con ese correo. Rechaza la solicitud o pide al cliente que use otro correo' });
-        }
-
-        let clienteIdFinal = cliente_id || null;
-        if (!clienteIdFinal) {
-            // el cliente es la empresa; las solicitudes antiguas no traen su nombre y usan el de la persona de contacto
-            const nuevoCliente = await client.query(
-                `INSERT INTO clientes (nombre, rut, email, telefono, horario_trabajo, horario_colacion, direccion, latitud, longitud)
-                 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
-                [s.nombre_empresa || s.nombre_contacto, s.rut_empresa, s.email, s.telefono_whatsapp, s.horario_trabajo, s.horario_colacion, s.direccion, s.latitud, s.longitud]
+            // FOR UPDATE dentro de la transaccion: dos aprobaciones concurrentes de la misma
+            // solicitud serializan aqui - la segunda ve estado != 'pendiente' y recibe 404
+            // en vez de un 500 por email duplicado (mismo patron que /convertir en solicitudes.js)
+            const solicitudResult = await client.query(
+                `SELECT * FROM solicitudes_cliente WHERE id = $1 AND estado = 'pendiente' FOR UPDATE`,
+                [req.params.id]
             );
-            clienteIdFinal = nuevoCliente.rows[0].id;
-        } else if (s.latitud !== null && s.longitud !== null) {
-            // se vincula a un cliente que ya existe: recibe la ubicacion marcada al registrarse
-            // solo si aun no tiene una, para no pisar la que el administrativo haya cargado
+            if (solicitudResult.rows.length === 0) {
+                await deshacer();
+                return res.status(404).json({ error: 'Solicitud de cuenta no encontrada o ya procesada' });
+            }
+            const s = solicitudResult.rows[0];
+
+            // si el envio de correos esta configurado, aprobar sin que el cliente haya confirmado su correo
+            // pide una confirmacion explicita (puede ser un correo ajeno o mal escrito)
+            if (!s.correo_verificado_at && correoDisponible().disponible && req.body.confirmar_sin_verificar !== true) {
+                await deshacer();
+                return res.status(409).json({
+                    codigo: 'correo_sin_verificar',
+                    error: 'El cliente aún no confirmó su correo. Confirma que quieres aprobar la cuenta sin verificarlo.',
+                });
+            }
+
+            // el UNIQUE de usuarios.email es exacto: una cuenta con el mismo correo en otra capitalizacion
+            // no lo dispara, y el login (que no distingue mayusculas) dejaria dos cuentas ambiguas
+            const duplicada = await client.query('SELECT id FROM usuarios WHERE lower(email) = lower($1)', [s.email]);
+            if (duplicada.rows.length > 0) {
+                await deshacer();
+                return res.status(409).json({ error: 'Ya existe una cuenta con ese correo. Rechaza la solicitud o pide al cliente que use otro correo' });
+            }
+
+            let clienteIdFinal = cliente_id || null;
+            if (!clienteIdFinal) {
+                // el cliente es la empresa; las solicitudes antiguas no traen su nombre y usan el de la persona de contacto
+                const nuevoCliente = await client.query(
+                    `INSERT INTO clientes (nombre, rut, email, telefono, horario_trabajo, horario_colacion, direccion, latitud, longitud)
+                     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING id`,
+                    [s.nombre_empresa || s.nombre_contacto, s.rut_empresa, s.email, s.telefono_whatsapp, s.horario_trabajo, s.horario_colacion, s.direccion, s.latitud, s.longitud]
+                );
+                clienteIdFinal = nuevoCliente.rows[0].id;
+            } else if (s.latitud !== null && s.longitud !== null) {
+                // se vincula a un cliente que ya existe: recibe la ubicacion marcada al registrarse
+                // solo si aun no tiene una, para no pisar la que el administrativo haya cargado
+                await client.query(
+                    'UPDATE clientes SET latitud = $1, longitud = $2 WHERE id = $3 AND latitud IS NULL',
+                    [s.latitud, s.longitud, clienteIdFinal]
+                );
+            }
+
+            const nuevoUsuario = await client.query(
+                `INSERT INTO usuarios (nombre, email, password_hash, rol, cliente_id, estado_cuenta)
+                 VALUES ($1, $2, $3, 'cliente', $4, 'activo') RETURNING id, nombre, email, rol, cliente_id`,
+                [s.nombre_contacto, s.email, s.password_hash, clienteIdFinal]
+            );
+
             await client.query(
-                'UPDATE clientes SET latitud = $1, longitud = $2 WHERE id = $3 AND latitud IS NULL',
-                [s.latitud, s.longitud, clienteIdFinal]
+                `UPDATE solicitudes_cliente SET estado = 'aprobada', cliente_id = $1, usuario_id = $2, password_hash = NULL WHERE id = $3`,
+                [clienteIdFinal, nuevoUsuario.rows[0].id, req.params.id]
             );
-        }
 
-        const nuevoUsuario = await client.query(
-            `INSERT INTO usuarios (nombre, email, password_hash, rol, cliente_id, estado_cuenta)
-             VALUES ($1, $2, $3, 'cliente', $4, 'activo') RETURNING id, nombre, email, rol, cliente_id`,
-            [s.nombre_contacto, s.email, s.password_hash, clienteIdFinal]
-        );
+            // Aviso de cuenta aprobada por el Outbox, en la misma transaccion (si se revierte, no sale). El worker no
+            // conoce la URL del panel, asi que va en el aviso. Solo la configurada en el servidor (PANEL_URL o el dominio
+            // publico de Railway): nunca el host de la peticion, que quien aprueba (o un proxy) podria alterar para que
+            // el correo apunte a otro sitio. Sin URL, el correo sale sin boton.
+            const url = urlPanel();
+            await encolarNotificacion(client, {
+                canal: 'email', destinatario: s.email,
+                payload: { tipo: 'cuenta_aprobada', nombre_contacto: s.nombre_contacto, ...(url ? { url } : {}) },
+            });
 
-        await client.query(
-            `UPDATE solicitudes_cliente SET estado = 'aprobada', cliente_id = $1, usuario_id = $2, password_hash = NULL WHERE id = $3`,
-            [clienteIdFinal, nuevoUsuario.rows[0].id, req.params.id]
-        );
-
-        // Aviso de cuenta aprobada por el Outbox, en la misma transaccion (si se revierte, no sale). El worker no
-        // conoce la URL del panel, asi que va en el aviso. Solo la configurada en el servidor (PANEL_URL o el dominio
-        // publico de Railway): nunca el host de la peticion, que quien aprueba (o un proxy) podria alterar para que
-        // el correo apunte a otro sitio. Sin URL, el correo sale sin boton.
-        const url = urlPanel();
-        await encolarNotificacion(client, {
-            canal: 'email', destinatario: s.email,
-            payload: { tipo: 'cuenta_aprobada', nombre_contacto: s.nombre_contacto, ...(url ? { url } : {}) },
+            await confirmar();
+            res.json({ ok: true, usuario: nuevoUsuario.rows[0] });
         });
-
-        await client.query('COMMIT');
-        res.json({ ok: true, usuario: nuevoUsuario.rows[0] });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al aprobar la solicitud' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -590,13 +577,11 @@ router.patch('/mi-perfil', verifyToken, async (req, res) => {
         if (valido.error) return res.status(400).json({ error: valido.error });
         cambioAvisos = valido.cambios;
     }
-    const client = await pool.connect();
-    try {
-        await client.query('BEGIN');
+    return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
         // se bloquea la fila: dos cambios de avisos a la vez no deben pisarse
         const actual = await client.query('SELECT avisos_silenciados FROM usuarios WHERE id = $1 FOR UPDATE', [req.user.id]);
         if (actual.rows.length === 0) {
-            await client.query('ROLLBACK');
+            await deshacer();
             return res.status(404).json({ error: 'Usuario no encontrado' });
         }
         const nuevos = cambioAvisos ? aplicarCambioAvisos(actual.rows[0].avisos_silenciados, cambioAvisos) : null;
@@ -618,14 +603,9 @@ router.patch('/mi-perfil', verifyToken, async (req, res) => {
                 req.user.id,
             ]
         );
-        await client.query('COMMIT');
+        await confirmar();
         res.json(perfilParaRespuesta(result.rows[0]));
-    } catch (err) {
-        await client.query('ROLLBACK').catch(() => {});
-        throw err;
-    } finally {
-        client.release();
-    }
+    });
 });
 
 // quien recibe el aviso de mantencion proxima y por donde.

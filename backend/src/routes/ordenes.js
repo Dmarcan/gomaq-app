@@ -28,6 +28,7 @@ const { fijarDestinoOt } = require('../utils/fijarDestinoOt');
 const { guardarPosicion, limpiarViaje } = require('../utils/posicionMecanico');
 const { SQL_ETA_LLEGADA_AT, conLlegadaEstimada } = require('../utils/etaLlegada');
 const { mejorarEtaConRutas } = require('../services/rutasEta');
+const { conTransaccion } = require('../utils/transaccion');
 
 // Estado interno de la ETA (origen de la ultima consulta, cupo gastado, ajuste): no sale en el listado
 // ni en el detalle de la OT, que se arman con `ot.*`. Una columna nueva de ETA no llega por accidente.
@@ -439,39 +440,35 @@ router.get('/:id/foto-solicitud', verifyToken, requireRole('gerente', 'administr
 });
 
 router.patch('/:id/tomar', verifyToken, requireRole('mecanico'), async (req, res) => {
-    let client = null;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        const tomada = await client.query(
-            `UPDATE ordenes_trabajo SET mecanico_id = $1, estado = 'asignada'
-             WHERE id = $2 AND mecanico_id IS NULL AND estado = 'pendiente'
-             RETURNING *, (SELECT codigo FROM maquinarias WHERE id = ordenes_trabajo.maquinaria_id) AS maquinaria_codigo`,
-            [req.user.id, req.params.id]
-        );
-        if (tomada.rows.length === 0) {
-            await client.query('ROLLBACK');
-            const actual = await client.query('SELECT * FROM ordenes_trabajo WHERE id = $1', [req.params.id]);
-            if (actual.rows.length === 0) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-            if (actual.rows[0].mecanico_id === req.user.id) return res.json(actual.rows[0]);
-            return res.status(409).json({ error: 'Otro técnico ya tomó esta orden o ya no está disponible' });
-        }
-        const mecanico = await client.query('SELECT id, nombre, rut FROM usuarios WHERE id = $1', [req.user.id]);
-        await fijarDestinoOt(client, tomada.rows[0].id);
-        await encolarAvisoAsignacion(client, tomada.rows[0]);
-        await dejarEvento(client, {
-            ordenId: tomada.rows[0].id, tipo: 'toma', origen: 'terreno',
-            estadoAnterior: 'pendiente', estadoNuevo: 'asignada', usuario: req.user,
-            detalle: { mecanico_anterior_id: null, mecanico_nuevo_id: req.user.id },
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            const tomada = await client.query(
+                `UPDATE ordenes_trabajo SET mecanico_id = $1, estado = 'asignada'
+                 WHERE id = $2 AND mecanico_id IS NULL AND estado = 'pendiente'
+                 RETURNING *, (SELECT codigo FROM maquinarias WHERE id = ordenes_trabajo.maquinaria_id) AS maquinaria_codigo`,
+                [req.user.id, req.params.id]
+            );
+            if (tomada.rows.length === 0) {
+                await deshacer();
+                const actual = await client.query('SELECT * FROM ordenes_trabajo WHERE id = $1', [req.params.id]);
+                if (actual.rows.length === 0) return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+                if (actual.rows[0].mecanico_id === req.user.id) return res.json(actual.rows[0]);
+                return res.status(409).json({ error: 'Otro técnico ya tomó esta orden o ya no está disponible' });
+            }
+            const mecanico = await client.query('SELECT id, nombre, rut FROM usuarios WHERE id = $1', [req.user.id]);
+            await fijarDestinoOt(client, tomada.rows[0].id);
+            await encolarAvisoAsignacion(client, tomada.rows[0]);
+            await dejarEvento(client, {
+                ordenId: tomada.rows[0].id, tipo: 'toma', origen: 'terreno',
+                estadoAnterior: 'pendiente', estadoNuevo: 'asignada', usuario: req.user,
+                detalle: { mecanico_anterior_id: null, mecanico_nuevo_id: req.user.id },
+            });
+            await confirmar();
+            res.json(tomada.rows[0]);
         });
-        await client.query('COMMIT');
-        res.json(tomada.rows[0]);
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al tomar la orden' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -581,106 +578,102 @@ router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (re
     const momento = ocurrio_en && !Number.isNaN(Date.parse(ocurrio_en)) ? new Date(ocurrio_en).toISOString() : null;
     // uuid de la tarea de la cola de terreno: el APK lo manda como `uuid`; se acepta tambien `uuid_cliente`
     const uuidTarea = leerUuidTarea(req.body.uuid_cliente) || leerUuidTarea(req.body.uuid);
-    let client = null;
     try {
-        client = await pool.connect();
-        // el estado se lee bloqueando la fila: el evento del historial tiene que decir de que
-        // estado se partio, y eso no puede cambiar entre la lectura y el UPDATE
-        await client.query('BEGIN');
-        const check = await verificarDuenoOrden(req.params.id, req.user.id, { db: client, bloquear: true });
-        if (!check.existe) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        }
-        if (!check.esDueno) {
-            await client.query('ROLLBACK');
-            return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
-        }
-        if (!check.editable) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ error: MENSAJE_OT_CERRADA });
-        }
-        const cambio = estado ? evaluarCambioEstado(check.estado, estado) : 'sin_cambio';
-        if (cambio === 'rechazar') {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ error: `La orden no puede pasar de ${check.estado} a ${estado}` });
-        }
-        // un cambio que ya estaba aplicado (reintento) o llego atrasado no toca el estado ni sus horas
-        const nuevoEstado = cambio === 'cambiar' ? estado : null;
-
-        // la condicion sobre el estado cubre que la OT se cierre entre la verificacion y el UPDATE.
-        // Cada hora se fija una sola vez (COALESCE): la primera vez que la OT llega a ese estado.
-        const result = await client.query(
-            `UPDATE ordenes_trabajo
-             SET diagnostico = COALESCE($1, diagnostico),
-                 estado = COALESCE($2::estado_orden, estado),
-                 aceptada_at = CASE WHEN $4::text = 'aceptada'
-                                    THEN COALESCE(aceptada_at, GREATEST(LEAST(COALESCE($5::timestamptz, now()), now()), fecha_creacion)) ELSE aceptada_at END,
-                 en_camino_at = CASE WHEN $4::text = 'en_camino'
-                                     THEN COALESCE(en_camino_at, GREATEST(LEAST(COALESCE($5::timestamptz, now()), now()), fecha_creacion)) ELSE en_camino_at END,
-                 llegada_at = CASE WHEN $4::text = 'en_terreno'
-                                   THEN COALESCE(llegada_at, GREATEST(LEAST(COALESCE($5::timestamptz, now()), now()), fecha_creacion)) ELSE llegada_at END
-             WHERE id = $3 AND estado <> 'finalizada' RETURNING *`,
-            [diagnostico || null, nuevoEstado, req.params.id, nuevoEstado, momento]
-        );
-        if (result.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ error: MENSAJE_OT_CERRADA });
-        }
-        // Historial: un cambio aplicado deja su evento; uno atrasado (la OT ya estaba en ese estado
-        // o mas adelante) tambien, con aplicado = false, para saber que el mecanico lo hizo aunque
-        // no moviera nada. Un reintento con el mismo uuid no duplica (ON CONFLICT DO NOTHING).
-        // Sin uuid, repetir el estado actual es un reintento puro y no se registra (la regla esta
-        // en utils/eventosOt.js).
-        // primera llegada a trabajo (de un estado que no es de trabajo a en_terreno o en_reparacion): el
-        // equipo pasa a mantencion. Ir y volver entre terreno y reparacion no lo repite.
-        if (cambio === 'cambiar' && EN_CURSO.includes(estado) && !EN_CURSO.includes(check.estado)) {
-            await aplicarEntradaEquipo(client, result.rows[0].maquinaria_id);
-        }
-        const decision = decidirEventoDiagnostico({ cambio, estadoActual: check.estado, estadoPedido: estado, uuid: uuidTarea });
-        if (decision.registrar) {
-            await dejarEvento(client, {
-                ordenId: Number(req.params.id), tipo: 'cambio_estado', origen: 'terreno',
-                estadoAnterior: check.estado, estadoNuevo: estado, usuario: req.user,
-                ocurrioEn: momento, creadaEn: check.creadaEn, uuidCliente: uuidTarea,
-                nacioPorSincronizacion: check.nacioPorSincronizacion, aplicado: decision.aplicado,
-            });
-        }
-
-        // Posicion del mecanico (ubicacion + ETA). Solo con un cambio a 'en_camino' que SI se aplico:
-        // un en_camino atrasado que llega por la cola offline (la OT ya avanzo) no debe guardar una
-        // posicion vieja. Y nunca puede hacer fallar el cambio de estado: si la posicion es invalida
-        // se descarta (un error aqui haria que la cola reintentara el cambio para siempre).
-        let origenParaRuta = null;
-        if (cambio === 'cambiar' && estado === 'en_camino' && req.body.posicion && typeof req.body.posicion === 'object') {
-            await client.query('SAVEPOINT posicion');
-            try {
-                const guardada = await guardarPosicion(client, {
-                    ordenId: Number(req.params.id), usuarioId: req.user.id,
-                    posicion: { ...req.body.posicion, capturada_en: req.body.posicion.capturada_en ?? momento ?? new Date().toISOString() },
-                });
-                if (guardada.guardada) origenParaRuta = guardada.origen;
-                await client.query('RELEASE SAVEPOINT posicion');
-            } catch (errPos) {
-                console.error('Posicion descartada:', errPos.message);
-                await client.query('ROLLBACK TO SAVEPOINT posicion');
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            // el estado se lee bloqueando la fila: el evento del historial tiene que decir de que
+            // estado se partio, y eso no puede cambiar entre la lectura y el UPDATE
+            const check = await verificarDuenoOrden(req.params.id, req.user.id, { db: client, bloquear: true });
+            if (!check.existe) {
+                await deshacer();
+                return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
             }
-        } else if (cambio === 'cambiar' && (estado === 'en_terreno' || estado === 'en_reparacion')) {
-            // llego: la posicion y la ETA del viaje dejan de existir (privacidad del mecanico)
-            await limpiarViaje(client, Number(req.params.id));
-        }
-        await client.query('COMMIT');
-        res.json(result.rows[0]);
-        // primera posicion del viaje: se pide una ruta real fuera de la respuesta (ver /posicion)
-        if (origenParaRuta) {
-            mejorarEtaConRutas(pool, { ordenId: Number(req.params.id), usuarioId: req.user.id, origen: origenParaRuta });
-        }
+            if (!check.esDueno) {
+                await deshacer();
+                return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
+            }
+            if (!check.editable) {
+                await deshacer();
+                return res.status(409).json({ error: MENSAJE_OT_CERRADA });
+            }
+            const cambio = estado ? evaluarCambioEstado(check.estado, estado) : 'sin_cambio';
+            if (cambio === 'rechazar') {
+                await deshacer();
+                return res.status(409).json({ error: `La orden no puede pasar de ${check.estado} a ${estado}` });
+            }
+            // un cambio que ya estaba aplicado (reintento) o llego atrasado no toca el estado ni sus horas
+            const nuevoEstado = cambio === 'cambiar' ? estado : null;
+
+            // la condicion sobre el estado cubre que la OT se cierre entre la verificacion y el UPDATE.
+            // Cada hora se fija una sola vez (COALESCE): la primera vez que la OT llega a ese estado.
+            const result = await client.query(
+                `UPDATE ordenes_trabajo
+                 SET diagnostico = COALESCE($1, diagnostico),
+                     estado = COALESCE($2::estado_orden, estado),
+                     aceptada_at = CASE WHEN $4::text = 'aceptada'
+                                        THEN COALESCE(aceptada_at, GREATEST(LEAST(COALESCE($5::timestamptz, now()), now()), fecha_creacion)) ELSE aceptada_at END,
+                     en_camino_at = CASE WHEN $4::text = 'en_camino'
+                                         THEN COALESCE(en_camino_at, GREATEST(LEAST(COALESCE($5::timestamptz, now()), now()), fecha_creacion)) ELSE en_camino_at END,
+                     llegada_at = CASE WHEN $4::text = 'en_terreno'
+                                       THEN COALESCE(llegada_at, GREATEST(LEAST(COALESCE($5::timestamptz, now()), now()), fecha_creacion)) ELSE llegada_at END
+                 WHERE id = $3 AND estado <> 'finalizada' RETURNING *`,
+                [diagnostico || null, nuevoEstado, req.params.id, nuevoEstado, momento]
+            );
+            if (result.rows.length === 0) {
+                await deshacer();
+                return res.status(409).json({ error: MENSAJE_OT_CERRADA });
+            }
+            // Historial: un cambio aplicado deja su evento; uno atrasado (la OT ya estaba en ese estado
+            // o mas adelante) tambien, con aplicado = false, para saber que el mecanico lo hizo aunque
+            // no moviera nada. Un reintento con el mismo uuid no duplica (ON CONFLICT DO NOTHING).
+            // Sin uuid, repetir el estado actual es un reintento puro y no se registra (la regla esta
+            // en utils/eventosOt.js).
+            // primera llegada a trabajo (de un estado que no es de trabajo a en_terreno o en_reparacion): el
+            // equipo pasa a mantencion. Ir y volver entre terreno y reparacion no lo repite.
+            if (cambio === 'cambiar' && EN_CURSO.includes(estado) && !EN_CURSO.includes(check.estado)) {
+                await aplicarEntradaEquipo(client, result.rows[0].maquinaria_id);
+            }
+            const decision = decidirEventoDiagnostico({ cambio, estadoActual: check.estado, estadoPedido: estado, uuid: uuidTarea });
+            if (decision.registrar) {
+                await dejarEvento(client, {
+                    ordenId: Number(req.params.id), tipo: 'cambio_estado', origen: 'terreno',
+                    estadoAnterior: check.estado, estadoNuevo: estado, usuario: req.user,
+                    ocurrioEn: momento, creadaEn: check.creadaEn, uuidCliente: uuidTarea,
+                    nacioPorSincronizacion: check.nacioPorSincronizacion, aplicado: decision.aplicado,
+                });
+            }
+
+            // Posicion del mecanico (ubicacion + ETA). Solo con un cambio a 'en_camino' que SI se aplico:
+            // un en_camino atrasado que llega por la cola offline (la OT ya avanzo) no debe guardar una
+            // posicion vieja. Y nunca puede hacer fallar el cambio de estado: si la posicion es invalida
+            // se descarta (un error aqui haria que la cola reintentara el cambio para siempre).
+            let origenParaRuta = null;
+            if (cambio === 'cambiar' && estado === 'en_camino' && req.body.posicion && typeof req.body.posicion === 'object') {
+                await client.query('SAVEPOINT posicion');
+                try {
+                    const guardada = await guardarPosicion(client, {
+                        ordenId: Number(req.params.id), usuarioId: req.user.id,
+                        posicion: { ...req.body.posicion, capturada_en: req.body.posicion.capturada_en ?? momento ?? new Date().toISOString() },
+                    });
+                    if (guardada.guardada) origenParaRuta = guardada.origen;
+                    await client.query('RELEASE SAVEPOINT posicion');
+                } catch (errPos) {
+                    console.error('Posicion descartada:', errPos.message);
+                    await client.query('ROLLBACK TO SAVEPOINT posicion');
+                }
+            } else if (cambio === 'cambiar' && (estado === 'en_terreno' || estado === 'en_reparacion')) {
+                // llego: la posicion y la ETA del viaje dejan de existir (privacidad del mecanico)
+                await limpiarViaje(client, Number(req.params.id));
+            }
+            await confirmar();
+            res.json(result.rows[0]);
+            // primera posicion del viaje: se pide una ruta real fuera de la respuesta (ver /posicion)
+            if (origenParaRuta) {
+                mejorarEtaConRutas(pool, { ordenId: Number(req.params.id), usuarioId: req.user.id, origen: origenParaRuta });
+            }
+        });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al actualizar diagnóstico' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -693,47 +686,43 @@ router.patch('/:id/diagnostico', verifyToken, requireRole('mecanico'), async (re
 // bloquea con FOR UPDATE: asi una reasignacion o un cambio a en_terreno concurrente no deja una
 // posicion colgada.
 router.post('/:id/posicion', verifyToken, requireRole('mecanico'), async (req, res) => {
-    let client = null;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        const check = await verificarDuenoOrden(req.params.id, req.user.id, { db: client, bloquear: true });
-        if (!check.existe) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        }
-        if (!check.esDueno) {
-            await client.query('ROLLBACK');
-            return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
-        }
-        if (check.estado !== 'en_camino') {
-            await client.query('ROLLBACK');
-            return res.json({ guardada: false, motivo: 'fuera_de_camino' });
-        }
-        const resultado = await guardarPosicion(client, {
-            ordenId: Number(req.params.id), usuarioId: req.user.id, posicion: req.body,
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            const check = await verificarDuenoOrden(req.params.id, req.user.id, { db: client, bloquear: true });
+            if (!check.existe) {
+                await deshacer();
+                return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+            }
+            if (!check.esDueno) {
+                await deshacer();
+                return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
+            }
+            if (check.estado !== 'en_camino') {
+                await deshacer();
+                return res.json({ guardada: false, motivo: 'fuera_de_camino' });
+            }
+            const resultado = await guardarPosicion(client, {
+                ordenId: Number(req.params.id), usuarioId: req.user.id, posicion: req.body,
+            });
+            if (!resultado.guardada && ['coordenadas_invalidas', 'hora_invalida', 'hora_futura'].includes(resultado.motivo)) {
+                await deshacer();
+                const mensajes = {
+                    hora_invalida: 'capturada_en debe ser una fecha valida',
+                    hora_futura: 'capturada_en esta en el futuro: revise la hora del telefono',
+                };
+                return res.status(400).json({ error: resultado.error || mensajes[resultado.motivo] });
+            }
+            await confirmar();
+            res.json({ guardada: resultado.guardada, motivo: resultado.motivo || null, eta: resultado.eta || null });
+            // ya respondido: una ruta real mejora la ETA aproximada. Sin await y sin lanzar nunca; si no hay
+            // llave, cupo o servicio, la OT conserva la aproximada
+            if (resultado.guardada) {
+                mejorarEtaConRutas(pool, { ordenId: Number(req.params.id), usuarioId: req.user.id, origen: resultado.origen });
+            }
         });
-        if (!resultado.guardada && ['coordenadas_invalidas', 'hora_invalida', 'hora_futura'].includes(resultado.motivo)) {
-            await client.query('ROLLBACK');
-            const mensajes = {
-                hora_invalida: 'capturada_en debe ser una fecha valida',
-                hora_futura: 'capturada_en esta en el futuro: revise la hora del telefono',
-            };
-            return res.status(400).json({ error: resultado.error || mensajes[resultado.motivo] });
-        }
-        await client.query('COMMIT');
-        res.json({ guardada: resultado.guardada, motivo: resultado.motivo || null, eta: resultado.eta || null });
-        // ya respondido: una ruta real mejora la ETA aproximada. Sin await y sin lanzar nunca; si no hay
-        // llave, cupo o servicio, la OT conserva la aproximada
-        if (resultado.guardada) {
-            mejorarEtaConRutas(pool, { ordenId: Number(req.params.id), usuarioId: req.user.id, origen: resultado.origen });
-        }
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al guardar la posición' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -986,69 +975,65 @@ router.patch('/:id/valorizacion', verifyToken, requireRole('gerente'), async (re
     if (montoEnteroONulo(valorizacion) === null) {
         return res.status(400).json({ error: 'El monto debe ser un número entero de pesos, mayor o igual a 0' });
     }
-    let client = null;
     try {
-        client = await pool.connect();
-        // la valorizacion y su evento van en la misma transaccion; la fila se bloquea para que el
-        // monto anterior que queda en el historial sea el que de verdad se reemplazo
-        await client.query('BEGIN');
-        const actual = await client.query(
-            'SELECT estado, valorizacion FROM ordenes_trabajo WHERE id = $1 FOR NO KEY UPDATE',
-            [req.params.id]
-        );
-        if (actual.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        }
-        // se valoriza el trabajo terminado: una OT en curso todavia puede sumar repuestos
-        if (actual.rows[0].estado !== 'finalizada') {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ error: 'Solo se valoriza una orden ya finalizada' });
-        }
-        // el monto se aprueba con todos los repuestos decididos: uno en "?" (facturable 'pendiente') puede cambiar
-        // lo que se cobra. Una OT finalizada ya no recibe repuestos nuevos desde la app.
-        const sinDecidir = await client.query(
-            `SELECT COUNT(*)::int AS n FROM movimientos_insumo
-             WHERE orden_trabajo_id = $1 AND anulada_at IS NULL AND facturable = 'pendiente'`,
-            [req.params.id]
-        );
-        if (sinDecidir.rows[0].n > 0) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({
-                codigo: 'repuestos_sin_decidir',
-                repuestos_sin_decidir: sinDecidir.rows[0].n,
-                error: 'Hay repuestos sin decidir si se cobran: decide cada uno antes de aprobar la valorización',
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            // la valorizacion y su evento van en la misma transaccion; la fila se bloquea para que el
+            // monto anterior que queda en el historial sea el que de verdad se reemplazo
+            const actual = await client.query(
+                'SELECT estado, valorizacion FROM ordenes_trabajo WHERE id = $1 FOR NO KEY UPDATE',
+                [req.params.id]
+            );
+            if (actual.rows.length === 0) {
+                await deshacer();
+                return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+            }
+            // se valoriza el trabajo terminado: una OT en curso todavia puede sumar repuestos
+            if (actual.rows[0].estado !== 'finalizada') {
+                await deshacer();
+                return res.status(409).json({ error: 'Solo se valoriza una orden ya finalizada' });
+            }
+            // el monto se aprueba con todos los repuestos decididos: uno en "?" (facturable 'pendiente') puede cambiar
+            // lo que se cobra. Una OT finalizada ya no recibe repuestos nuevos desde la app.
+            const sinDecidir = await client.query(
+                `SELECT COUNT(*)::int AS n FROM movimientos_insumo
+                 WHERE orden_trabajo_id = $1 AND anulada_at IS NULL AND facturable = 'pendiente'`,
+                [req.params.id]
+            );
+            if (sinDecidir.rows[0].n > 0) {
+                await deshacer();
+                return res.status(409).json({
+                    codigo: 'repuestos_sin_decidir',
+                    repuestos_sin_decidir: sinDecidir.rows[0].n,
+                    error: 'Hay repuestos sin decidir si se cobran: decide cada uno antes de aprobar la valorización',
+                });
+            }
+            // una orden ya facturada no cambia de monto: el valor facturado esta en el SII (facturas.js
+            // bloquea esta misma fila al subir la factura, asi que no hay carrera entre las dos)
+            const facturada = await client.query('SELECT 1 FROM facturas WHERE orden_trabajo_id = $1', [req.params.id]);
+            if (facturada.rows.length > 0) {
+                await deshacer();
+                return res.status(409).json({ error: 'La orden ya está facturada: para cambiar el monto hay que emitir una nota de crédito' });
+            }
+            // facturable NO se toca aca: se deriva de las lineas de repuesto (utils/facturableOt.js)
+            const result = await client.query(
+                `UPDATE ordenes_trabajo
+                 SET valorizacion = $1, valorizacion_aprobada_por = $2
+                 WHERE id = $3 RETURNING *`,
+                [valorizacion, req.user.id, req.params.id]
+            );
+            await dejarEvento(client, {
+                ordenId: result.rows[0].id, tipo: 'valorizacion', origen: 'panel', usuario: req.user,
+                detalle: {
+                    valorizacion_anterior: actual.rows[0].valorizacion === null ? null : Number(actual.rows[0].valorizacion),
+                    valorizacion_nueva: Number(result.rows[0].valorizacion),
+                },
             });
-        }
-        // una orden ya facturada no cambia de monto: el valor facturado esta en el SII (facturas.js
-        // bloquea esta misma fila al subir la factura, asi que no hay carrera entre las dos)
-        const facturada = await client.query('SELECT 1 FROM facturas WHERE orden_trabajo_id = $1', [req.params.id]);
-        if (facturada.rows.length > 0) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ error: 'La orden ya está facturada: para cambiar el monto hay que emitir una nota de crédito' });
-        }
-        // facturable NO se toca aca: se deriva de las lineas de repuesto (utils/facturableOt.js)
-        const result = await client.query(
-            `UPDATE ordenes_trabajo
-             SET valorizacion = $1, valorizacion_aprobada_por = $2
-             WHERE id = $3 RETURNING *`,
-            [valorizacion, req.user.id, req.params.id]
-        );
-        await dejarEvento(client, {
-            ordenId: result.rows[0].id, tipo: 'valorizacion', origen: 'panel', usuario: req.user,
-            detalle: {
-                valorizacion_anterior: actual.rows[0].valorizacion === null ? null : Number(actual.rows[0].valorizacion),
-                valorizacion_nueva: Number(result.rows[0].valorizacion),
-            },
+            await confirmar();
+            res.json(result.rows[0]);
         });
-        await client.query('COMMIT');
-        res.json(result.rows[0]);
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al aprobar valorización' });
-    } finally {
-        if (client) client.release();
     }
 });
 

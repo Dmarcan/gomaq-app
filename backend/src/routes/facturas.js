@@ -15,6 +15,7 @@ const { cancelarCorreosFactura, encolarCorreoFactura, validarFolio, validarFotos
 const { avisarFacturaAnulada } = require('../utils/avisos');
 const { validarNeto } = require('../utils/trasladoFactura');
 const { validarFechasFactura } = require('../utils/cobranza');
+const { conTransaccion } = require('../utils/transaccion');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id', 'facturaId']);
@@ -56,7 +57,6 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPd
         return res.status(400).json({ error: 'La fecha de vencimiento no puede ser anterior a la emisión' });
     }
     let rutaStorage = null;
-    let client = null;
     const borrarArchivo = async () => {
         if (rutaStorage) {
             await borrarArchivoSubido(BUCKET_DOCUMENTOS, rutaStorage);
@@ -69,53 +69,50 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPd
             .upload(rutaStorage, req.file.buffer, { contentType: req.file.mimetype });
         if (errorSubida) throw errorSubida;
 
-        client = await pool.connect();
-        await client.query('BEGIN');
-        const orden = await client.query('SELECT id, estado FROM ordenes_trabajo WHERE id = $1 FOR NO KEY UPDATE', [id]);
-        if (orden.rows.length === 0) {
-            await client.query('ROLLBACK');
-            await borrarArchivo();
-            return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        }
-        // Una factura congela las lineas de la OT (desde ahi no admite cambios). Solo tiene sentido
-        // sobre trabajo terminado: con la OT abierta el mecanico todavia agrega o anula repuestos.
-        // No se exige valorizacion: basta con que la OT este finalizada.
-        const rechazo = orden.rows[0].estado !== 'finalizada'
-            ? 'Solo se factura una orden ya finalizada: la orden sigue abierta y todavía puede cambiar sus repuestos'
-            : null;
-        if (rechazo) {
-            await client.query('ROLLBACK');
-            await borrarArchivo();
-            return res.status(409).json({ error: rechazo });
-        }
-        const result = await client.query(
-            `INSERT INTO facturas (orden_trabajo_id, folio, archivo_url, monto, fecha_emision, fecha_vencimiento, monto_neto)
-             VALUES ($1, $2, $3, $4, $5, $6, $7)
-             RETURNING *`,
-            [id, folioValido.folio, rutaStorage, montoONulo(monto), montoVacio(fecha_emision) ? null : fecha_emision,
-             vencimiento.fecha_vencimiento, neto.neto]
-        );
-        const factura = result.rows[0];
-        await dejarEvento(client, {
-            ordenId: factura.orden_trabajo_id, tipo: 'factura_cargada', origen: 'panel', usuario: req.user,
-            detalle: {
-                factura_id: factura.id,
-                folio: factura.folio,
-                monto: factura.monto === null ? null : Number(factura.monto),
-            },
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            const orden = await client.query('SELECT id, estado FROM ordenes_trabajo WHERE id = $1 FOR NO KEY UPDATE', [id]);
+            if (orden.rows.length === 0) {
+                await deshacer();
+                await borrarArchivo();
+                return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
+            }
+            // Una factura congela las lineas de la OT (desde ahi no admite cambios). Solo tiene sentido
+            // sobre trabajo terminado: con la OT abierta el mecanico todavia agrega o anula repuestos.
+            // No se exige valorizacion: basta con que la OT este finalizada.
+            const rechazo = orden.rows[0].estado !== 'finalizada'
+                ? 'Solo se factura una orden ya finalizada: la orden sigue abierta y todavía puede cambiar sus repuestos'
+                : null;
+            if (rechazo) {
+                await deshacer();
+                await borrarArchivo();
+                return res.status(409).json({ error: rechazo });
+            }
+            const result = await client.query(
+                `INSERT INTO facturas (orden_trabajo_id, folio, archivo_url, monto, fecha_emision, fecha_vencimiento, monto_neto)
+                 VALUES ($1, $2, $3, $4, $5, $6, $7)
+                 RETURNING *`,
+                [id, folioValido.folio, rutaStorage, montoONulo(monto), montoVacio(fecha_emision) ? null : fecha_emision,
+                 vencimiento.fecha_vencimiento, neto.neto]
+            );
+            const factura = result.rows[0];
+            await dejarEvento(client, {
+                ordenId: factura.orden_trabajo_id, tipo: 'factura_cargada', origen: 'panel', usuario: req.user,
+                detalle: {
+                    factura_id: factura.id,
+                    folio: factura.folio,
+                    monto: factura.monto === null ? null : Number(factura.monto),
+                },
+            });
+            await confirmar();
+            res.status(201).json(factura);
         });
-        await client.query('COMMIT');
-        res.status(201).json(factura);
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         await borrarArchivo();
         if (err.code === '23505') {
             return res.status(409).json({ error: 'Esta orden de trabajo ya tiene su factura' });
         }
         console.error(err);
         res.status(500).json({ error: 'Error al subir factura' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -157,60 +154,56 @@ router.post('/:id/factura/:facturaId/anular', verifyToken, requireRole('administ
     });
     if (!motivo.valido) return res.status(400).json({ error: motivo.error });
 
-    let client = null;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        const orden = await client.query('SELECT id FROM ordenes_trabajo WHERE id = $1 FOR NO KEY UPDATE', [id]);
-        if (orden.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        }
-        if (llave) {
-            const previo = await client.query(
-                `SELECT orden_trabajo_id, detalle->>'factura_id' AS factura_id FROM ordenes_eventos
-                 WHERE uuid_cliente = $1 AND tipo = 'factura_anulada'`,
-                [llave]
-            );
-            if (previo.rows[0]) {
-                await client.query('ROLLBACK');
-                if (previo.rows[0].orden_trabajo_id !== orden.rows[0].id || previo.rows[0].factura_id !== String(facturaId)) {
-                    return res.status(409).json({ error: 'Idempotency-Key ya fue usada en otra operación' });
-                }
-                return res.json({ ok: true, ya_registrada: true });
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            const orden = await client.query('SELECT id FROM ordenes_trabajo WHERE id = $1 FOR NO KEY UPDATE', [id]);
+            if (orden.rows.length === 0) {
+                await deshacer();
+                return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
             }
-        }
-        const factura = await client.query(
-            // fecha_emision_texto: la fecha como la guarda la base, sin pasar por la zona del servidor
-            'SELECT *, fecha_emision::text AS fecha_emision_texto FROM facturas WHERE id = $1 AND orden_trabajo_id = $2 FOR UPDATE',
-            [facturaId, id]
-        );
-        if (factura.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Factura no encontrada para esta orden de trabajo' });
-        }
-        const registrado = await dejarEvento(client, {
-            ordenId: orden.rows[0].id, tipo: 'factura_anulada', origen: 'panel', usuario: req.user,
-            uuidCliente: llave,
-            detalle: detalleFacturaAnulada(factura.rows[0], { motivoCodigo: motivo.motivoCodigo, motivo: motivo.motivo }),
+            if (llave) {
+                const previo = await client.query(
+                    `SELECT orden_trabajo_id, detalle->>'factura_id' AS factura_id FROM ordenes_eventos
+                     WHERE uuid_cliente = $1 AND tipo = 'factura_anulada'`,
+                    [llave]
+                );
+                if (previo.rows[0]) {
+                    await deshacer();
+                    if (previo.rows[0].orden_trabajo_id !== orden.rows[0].id || previo.rows[0].factura_id !== String(facturaId)) {
+                        return res.status(409).json({ error: 'Idempotency-Key ya fue usada en otra operación' });
+                    }
+                    return res.json({ ok: true, ya_registrada: true });
+                }
+            }
+            const factura = await client.query(
+                // fecha_emision_texto: la fecha como la guarda la base, sin pasar por la zona del servidor
+                'SELECT *, fecha_emision::text AS fecha_emision_texto FROM facturas WHERE id = $1 AND orden_trabajo_id = $2 FOR UPDATE',
+                [facturaId, id]
+            );
+            if (factura.rows.length === 0) {
+                await deshacer();
+                return res.status(404).json({ error: 'Factura no encontrada para esta orden de trabajo' });
+            }
+            const registrado = await dejarEvento(client, {
+                ordenId: orden.rows[0].id, tipo: 'factura_anulada', origen: 'panel', usuario: req.user,
+                uuidCliente: llave,
+                detalle: detalleFacturaAnulada(factura.rows[0], { motivoCodigo: motivo.motivoCodigo, motivo: motivo.motivo }),
+            });
+            if (!registrado) {
+                await deshacer();
+                return res.status(409).json({ error: 'Idempotency-Key ya fue usada en otra operación' });
+            }
+            // el correo que ya estaba encolado y no salio se cancela en la misma transaccion
+            await cancelarCorreosFactura(client, factura.rows[0]);
+            await client.query('DELETE FROM facturas WHERE id = $1', [facturaId]);
+            // aviso al gerente en la misma transaccion; la repeticion con la misma Idempotency-Key salio arriba
+            await avisarFacturaAnulada(client, { factura: factura.rows[0], excluirUsuarioId: req.user.id });
+            await confirmar();
+            res.json({ ok: true, factura_id: factura.rows[0].id, folio: factura.rows[0].folio });
         });
-        if (!registrado) {
-            await client.query('ROLLBACK');
-            return res.status(409).json({ error: 'Idempotency-Key ya fue usada en otra operación' });
-        }
-        // el correo que ya estaba encolado y no salio se cancela en la misma transaccion
-        await cancelarCorreosFactura(client, factura.rows[0]);
-        await client.query('DELETE FROM facturas WHERE id = $1', [facturaId]);
-        // aviso al gerente en la misma transaccion; la repeticion con la misma Idempotency-Key salio arriba
-        await avisarFacturaAnulada(client, { factura: factura.rows[0], excluirUsuarioId: req.user.id });
-        await client.query('COMMIT');
-        res.json({ ok: true, factura_id: factura.rows[0].id, folio: factura.rows[0].folio });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al anular la factura' });
-    } finally {
-        if (client) client.release();
     }
 });
 

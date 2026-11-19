@@ -10,6 +10,7 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularEstadoMantencion, requiereAviso, HORAS_AVISO_MANTENCION, cargarAlertasMantencion } = require('../utils/mantencion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 const { encolarADispositivos } = require('../utils/avisos');
+const { conTransaccion } = require('../utils/transaccion');
 const { num } = require('../utils/valores');
 
 const router = express.Router();
@@ -79,89 +80,85 @@ router.post('/maquinaria/:id', verifyToken, requireRole('mecanico', 'administrat
     const errCuerpo = validarCuerpo(req.body, { textos: { observacion: 5000 }, ids: ['orden_trabajo_id'] });
     if (errCuerpo) return res.status(400).json({ error: errCuerpo });
 
-    let client;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
 
-        // Orden de bloqueo del proyecto: OT -> equipo. Si la lectura trae orden, se bloquea la fila
-        // de la OT antes de la del equipo (el INSERT de la lectura toma KEY SHARE sobre las dos), y
-        // asi no se cruza con un cierre que bloquea la OT y despues pide el equipo.
-        if (orden_trabajo_id && String(orden_trabajo_id) !== '0') {
-            const ot = await client.query('SELECT 1 FROM ordenes_trabajo WHERE id = $1 FOR NO KEY UPDATE', [orden_trabajo_id]);
-            if (ot.rows.length === 0) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({ error: 'La orden de trabajo indicada no existe' });
+            // Orden de bloqueo del proyecto: OT -> equipo. Si la lectura trae orden, se bloquea la fila
+            // de la OT antes de la del equipo (el INSERT de la lectura toma KEY SHARE sobre las dos), y
+            // asi no se cruza con un cierre que bloquea la OT y despues pide el equipo.
+            if (orden_trabajo_id && String(orden_trabajo_id) !== '0') {
+                const ot = await client.query('SELECT 1 FROM ordenes_trabajo WHERE id = $1 FOR NO KEY UPDATE', [orden_trabajo_id]);
+                if (ot.rows.length === 0) {
+                    await deshacer();
+                    return res.status(400).json({ error: 'La orden de trabajo indicada no existe' });
+                }
             }
-        }
 
-        const maquinariaResult = await client.query(
-            `SELECT id, codigo, cliente_id, intervalo_mantencion_horas, horometro_ultima_mantencion,
-                    alerta_mantencion_enviada
-             FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE`,
-            [id]
-        );
-        const maquinaria = maquinariaResult.rows[0];
-        if (!maquinaria) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Maquinaria no encontrada' });
-        }
-
-        // El mecanico puede registrar la lectura de cualquier equipo, en cualquier momento, y tambien
-        // reiniciar su contador de mantencion sin una orden: no se exige orden.
-
-        const origen = req.user.rol === 'mecanico' ? 'movil' : 'panel';
-        const insercion = await client.query(
-            `INSERT INTO lecturas_horometro
-                (maquinaria_id, valor, origen, cliente_id, orden_trabajo_id, usuario_id, observacion, uuid_cliente)
-             VALUES ($1, $2, $3::origen_lectura_horometro, $4, $5, $6, $7, $8)
-             RETURNING *`,
-            [id, lectura, origen, maquinaria.cliente_id, orden_trabajo_id || null, req.user.id, observacion || null, uuid]
-        );
-
-        // el reinicio es una confirmacion explicita de quien cierra la mantencion, no algo
-        // que el sistema deduzca: la lectura de este momento pasa a ser la base del ciclo
-        let reiniciado = false;
-        if (reiniciar_contador === true || reiniciar_contador === 'true') {
-            await client.query(
-                `UPDATE maquinarias
-                 SET horometro_ultima_mantencion = $1, alerta_mantencion_enviada = false
-                 WHERE id = $2`,
-                [lectura, id]
+            const maquinariaResult = await client.query(
+                `SELECT id, codigo, cliente_id, intervalo_mantencion_horas, horometro_ultima_mantencion,
+                        alerta_mantencion_enviada
+                 FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE`,
+                [id]
             );
-            maquinaria.horometro_ultima_mantencion = lectura;
-            maquinaria.alerta_mantencion_enviada = false;
-            reiniciado = true;
-        }
+            const maquinaria = maquinariaResult.rows[0];
+            if (!maquinaria) {
+                await deshacer();
+                return res.status(404).json({ error: 'Maquinaria no encontrada' });
+            }
 
-        const estado = calcularEstadoMantencion({
-            ultimaLectura: lectura,
-            horometroUltimaMantencion: num(maquinaria.horometro_ultima_mantencion),
-            intervaloHoras: num(maquinaria.intervalo_mantencion_horas),
-        });
+            // El mecanico puede registrar la lectura de cualquier equipo, en cualquier momento, y tambien
+            // reiniciar su contador de mantencion sin una orden: no se exige orden.
 
-        let avisosEncolados = 0;
-        if (requiereAviso(estado) && !maquinaria.alerta_mantencion_enviada) {
-            avisosEncolados = await encolarAvisoMantencion(client, maquinaria, estado);
-        }
+            const origen = req.user.rol === 'mecanico' ? 'movil' : 'panel';
+            const insercion = await client.query(
+                `INSERT INTO lecturas_horometro
+                    (maquinaria_id, valor, origen, cliente_id, orden_trabajo_id, usuario_id, observacion, uuid_cliente)
+                 VALUES ($1, $2, $3::origen_lectura_horometro, $4, $5, $6, $7, $8)
+                 RETURNING *`,
+                [id, lectura, origen, maquinaria.cliente_id, orden_trabajo_id || null, req.user.id, observacion || null, uuid]
+            );
 
-        await client.query('COMMIT');
-        res.status(201).json({
-            lectura: insercion.rows[0],
-            estado_mantencion: estado,
-            contador_reiniciado: reiniciado,
-            avisos_encolados: avisosEncolados,
+            // el reinicio es una confirmacion explicita de quien cierra la mantencion, no algo
+            // que el sistema deduzca: la lectura de este momento pasa a ser la base del ciclo
+            let reiniciado = false;
+            if (reiniciar_contador === true || reiniciar_contador === 'true') {
+                await client.query(
+                    `UPDATE maquinarias
+                     SET horometro_ultima_mantencion = $1, alerta_mantencion_enviada = false
+                     WHERE id = $2`,
+                    [lectura, id]
+                );
+                maquinaria.horometro_ultima_mantencion = lectura;
+                maquinaria.alerta_mantencion_enviada = false;
+                reiniciado = true;
+            }
+
+            const estado = calcularEstadoMantencion({
+                ultimaLectura: lectura,
+                horometroUltimaMantencion: num(maquinaria.horometro_ultima_mantencion),
+                intervaloHoras: num(maquinaria.intervalo_mantencion_horas),
+            });
+
+            let avisosEncolados = 0;
+            if (requiereAviso(estado) && !maquinaria.alerta_mantencion_enviada) {
+                avisosEncolados = await encolarAvisoMantencion(client, maquinaria, estado);
+            }
+
+            await confirmar();
+            res.status(201).json({
+                lectura: insercion.rows[0],
+                estado_mantencion: estado,
+                contador_reiniciado: reiniciado,
+                avisos_encolados: avisosEncolados,
+            });
         });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         if (esUuidDuplicado(err)) {
             const existente = await buscarPorUuid(pool, 'lecturas_horometro', uuid);
             if (existente) return responderExistente(existente);
         }
         console.error(err);
         res.status(500).json({ error: 'Error al registrar la lectura de horómetro' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -254,66 +251,62 @@ router.post('/maquinaria/:id/reiniciar', verifyToken, requireRole('administrativ
             return res.status(400).json({ error: 'El horómetro debe ser un número de horas mayor o igual a 0' });
         }
     }
-    let client;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
 
-        const maquinariaResult = await client.query(
-            'SELECT id, cliente_id FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE',
-            [id]
-        );
-        if (maquinariaResult.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Maquinaria no encontrada' });
-        }
-
-        // si no se indica horometro se usa la ultima lectura conocida del equipo
-        let base = valor === undefined || valor === null || valor === '' ? null : Number(valor);
-        if (base !== null && (isNaN(base) || base < 0)) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'El horómetro debe ser un número de horas mayor o igual a 0' });
-        }
-        if (base === null) {
-            const ultima = await client.query(
-                'SELECT valor FROM lecturas_horometro WHERE maquinaria_id = $1 ORDER BY fecha DESC LIMIT 1',
+            const maquinariaResult = await client.query(
+                'SELECT id, cliente_id FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE',
                 [id]
             );
-            if (ultima.rows.length === 0) {
-                await client.query('ROLLBACK');
-                return res.status(400).json({ error: 'El equipo no tiene lecturas: indique el horometro de la mantencion' });
+            if (maquinariaResult.rows.length === 0) {
+                await deshacer();
+                return res.status(404).json({ error: 'Maquinaria no encontrada' });
             }
-            base = num(ultima.rows[0].valor);
-        } else {
-            // un reinicio con horometro indicado tambien deja constancia como lectura, para
-            // que el historial no muestre un salto sin origen
-            await client.query(
-                `INSERT INTO lecturas_horometro (maquinaria_id, valor, origen, cliente_id, usuario_id, observacion)
-                 VALUES ($1, $2, 'panel', $3, $4, 'Mantencion preventiva registrada desde el panel')`,
-                [id, base, maquinariaResult.rows[0].cliente_id, req.user.id]
+
+            // si no se indica horometro se usa la ultima lectura conocida del equipo
+            let base = valor === undefined || valor === null || valor === '' ? null : Number(valor);
+            if (base !== null && (isNaN(base) || base < 0)) {
+                await deshacer();
+                return res.status(400).json({ error: 'El horómetro debe ser un número de horas mayor o igual a 0' });
+            }
+            if (base === null) {
+                const ultima = await client.query(
+                    'SELECT valor FROM lecturas_horometro WHERE maquinaria_id = $1 ORDER BY fecha DESC LIMIT 1',
+                    [id]
+                );
+                if (ultima.rows.length === 0) {
+                    await deshacer();
+                    return res.status(400).json({ error: 'El equipo no tiene lecturas: indique el horometro de la mantencion' });
+                }
+                base = num(ultima.rows[0].valor);
+            } else {
+                // un reinicio con horometro indicado tambien deja constancia como lectura, para
+                // que el historial no muestre un salto sin origen
+                await client.query(
+                    `INSERT INTO lecturas_horometro (maquinaria_id, valor, origen, cliente_id, usuario_id, observacion)
+                     VALUES ($1, $2, 'panel', $3, $4, 'Mantencion preventiva registrada desde el panel')`,
+                    [id, base, maquinariaResult.rows[0].cliente_id, req.user.id]
+                );
+            }
+
+            const actualizada = await client.query(
+                `UPDATE maquinarias
+                 SET horometro_ultima_mantencion = $1, alerta_mantencion_enviada = false
+                 WHERE id = $2
+                 RETURNING id, codigo, intervalo_mantencion_horas, horometro_ultima_mantencion`,
+                [base, id]
             );
-        }
 
-        const actualizada = await client.query(
-            `UPDATE maquinarias
-             SET horometro_ultima_mantencion = $1, alerta_mantencion_enviada = false
-             WHERE id = $2
-             RETURNING id, codigo, intervalo_mantencion_horas, horometro_ultima_mantencion`,
-            [base, id]
-        );
-
-        await client.query('COMMIT');
-        res.json({
-            ...actualizada.rows[0],
-            intervalo_mantencion_horas: num(actualizada.rows[0].intervalo_mantencion_horas),
-            horometro_ultima_mantencion: num(actualizada.rows[0].horometro_ultima_mantencion),
+            await confirmar();
+            res.json({
+                ...actualizada.rows[0],
+                intervalo_mantencion_horas: num(actualizada.rows[0].intervalo_mantencion_horas),
+                horometro_ultima_mantencion: num(actualizada.rows[0].horometro_ultima_mantencion),
+            });
         });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         console.error(err);
         res.status(500).json({ error: 'Error al reiniciar el contador de mantención' });
-    } finally {
-        if (client) client.release();
     }
 });
 
