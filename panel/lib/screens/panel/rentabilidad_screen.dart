@@ -1,10 +1,11 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
-import '../../services/api_client.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../utils/formato.dart';
 import '../../widgets/estado_vacio.dart';
+import '../../widgets/lista_paginada.dart';
+import '../../widgets/tabla_ordenable.dart';
 import '../../widgets/pestanas.dart';
 
 /// Costo real por equipo. Arriba, las cifras de toda la flota; abajo, los equipos con lo que hay
@@ -18,11 +19,7 @@ class RentabilidadScreen extends StatefulWidget {
   State<RentabilidadScreen> createState() => _RentabilidadScreenState();
 }
 
-/// Una columna de la tabla. `orden` es el nombre que entiende el servidor (null = no ordenable);
-/// `minAncho` la oculta cuando el panel está angosto, en vez de apretar todas.
-typedef _Columna = ({String id, String titulo, int flex, String? orden, double minAncho});
-
-const _columnas = <_Columna>[
+const _columnas = <ColumnaTabla>[
   (id: 'equipo', titulo: 'Equipo', flex: 5, orden: 'codigo', minAncho: 0),
   (id: 'gasto', titulo: 'Gasto', flex: 2, orden: 'gasto', minAncho: 0),
   (id: 'ingreso', titulo: 'Facturado', flex: 2, orden: 'ingreso', minAncho: 0),
@@ -32,16 +29,9 @@ const _columnas = <_Columna>[
   (id: 'dias', titulo: 'Días arrendado', flex: 2, orden: 'dias', minAncho: 800),
 ];
 
-class _RentabilidadScreenState extends State<RentabilidadScreen> {
-  List<dynamic> _equipos = [];
-  bool _cargando = true;
-  String? _error;
+class _RentabilidadScreenState extends State<RentabilidadScreen> with ListaPaginada<RentabilidadScreen> {
   int _meses = 12;
 
-  static const _porPagina = 50;
-  int _total = 0;
-  bool _hayMas = false;
-  bool _cargandoMas = false;
 
   String _busqueda = '';
   final _controladorBusqueda = TextEditingController();
@@ -58,7 +48,7 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _cargar());
+    WidgetsBinding.instance.addPostFrameCallback((_) => cargar());
   }
 
   @override
@@ -68,14 +58,22 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
     super.dispose();
   }
 
-  String _consulta({required int offset}) {
+  @override
+  String get textoFalloCargarMas => 'No se pudieron cargar más equipos';
+
+  @override
+  void alRecibirPrimeraPagina(Map<String, dynamic> data) {
+    _resumen = Map<String, dynamic>.from(data['resumen'] ?? {});
+  }
+
+  @override
+  String consultaPagina({required int offset}) {
     final hasta = DateTime.now();
     final desde = DateTime(hasta.year, hasta.month - _meses, hasta.day);
     final p = <String>[
       'desde=${desde.toIso8601String()}',
       'hasta=${hasta.toIso8601String()}',
-      'limit=$_porPagina',
-      'offset=$offset',
+      ListaPaginada.parametrosPagina(offset),
     ];
     if (_busqueda.trim().isNotEmpty) p.add('q=${Uri.encodeQueryComponent(_busqueda.trim())}');
     if (_resultado != 'todos') p.add('resultado=$_resultado');
@@ -83,53 +81,15 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
     return '/api/rentabilidad?${p.join('&')}';
   }
 
-  Future<void> _cargar() async {
-    setState(() {
-      _cargando = true;
-      _error = null;
-    });
-    try {
-      final data = await ApiClient.instance.get(_consulta(offset: 0));
-      if (!mounted) return;
-      setState(() {
-        _equipos = data['items'] ?? [];
-        _total = data['total'] ?? 0;
-        _hayMas = data['hay_mas'] == true;
-        _resumen = Map<String, dynamic>.from(data['resumen'] ?? {});
-      });
-    } catch (e) {
-      if (mounted) setState(() => _error = mensajeErrorCarga(e));
-    } finally {
-      if (mounted) setState(() => _cargando = false);
-    }
-  }
-
-  Future<void> _cargarMas() async {
-    if (_cargandoMas || !_hayMas) return;
-    setState(() => _cargandoMas = true);
-    try {
-      final data = await ApiClient.instance.get(_consulta(offset: _equipos.length));
-      if (!mounted) return;
-      setState(() {
-        _equipos = [..._equipos, ...data['items']];
-        _hayMas = data['hay_mas'] == true;
-      });
-    } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudieron cargar más equipos: ${e.message}')));
-    } finally {
-      if (mounted) setState(() => _cargandoMas = false);
-    }
-  }
-
   void _buscar(String texto) {
     setState(() => _busqueda = texto);
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), _cargar);
+    _debounce = Timer(const Duration(milliseconds: 350), cargar);
   }
 
   void _elegirResultado(String id) {
     setState(() => _resultado = id);
-    _cargar();
+    cargar();
   }
 
   /// Tocar un encabezado ordena de menor a mayor, otra vez de mayor a menor y una tercera vuelve
@@ -146,7 +106,7 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
         _ascendente = true;
       }
     });
-    _cargar();
+    cargar();
   }
 
   void _limpiar() {
@@ -155,19 +115,19 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
       _busqueda = '';
       _controladorBusqueda.clear();
     });
-    _cargar();
+    cargar();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_cargando && _resumen.isEmpty) return const Center(child: CircularProgressIndicator());
-    if (_error != null && _resumen.isEmpty) {
+    if (cargando && _resumen.isEmpty) return const Center(child: CircularProgressIndicator());
+    if (errorCarga != null && _resumen.isEmpty) {
       return EstadoVacio(
         icono: Icons.cloud_off,
         titulo: 'No se pudieron cargar los costos',
-        mensaje: _error!,
+        mensaje: errorCarga!,
         textoAccion: 'Reintentar',
-        onAccion: _cargar,
+        onAccion: cargar,
       );
     }
 
@@ -188,7 +148,14 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
               _aviso(),
               const SizedBox(height: 14),
               _filtros(),
-              _encabezadoTabla(columnas),
+              EncabezadoTablaOrdenable(
+                columnas: columnas,
+                ordenActual: _orden,
+                ascendente: _ascendente,
+                alOrdenar: _ordenarPor,
+                // las cifras se alinean a la derecha, y su encabezado con ellas
+                alinearDerecha: (c) => c.id != 'equipo' && c.id != 'margen',
+              ),
               Expanded(child: _cuerpo(columnas)),
             ],
           ),
@@ -216,7 +183,7 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
           selected: {_meses},
           onSelectionChanged: (s) {
             setState(() => _meses = s.first);
-            _cargar();
+            cargar();
           },
         ),
       ],
@@ -355,55 +322,12 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
     );
   }
 
-  static const _estiloEncabezado = TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.black54);
-
-  Widget _encabezadoTabla(List<_Columna> columnas) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade300))),
-      child: Row(
-        children: [
-          for (final c in columnas)
-            Expanded(
-              flex: c.flex,
-              child: c.orden == null ? Padding(padding: const EdgeInsets.symmetric(vertical: 12), child: Text(c.titulo, style: _estiloEncabezado)) : _encabezadoOrdenable(c),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _encabezadoOrdenable(_Columna c) {
-    final activo = _orden == c.orden;
-    // las cifras se alinean a la derecha, y su encabezado con ellas
-    final alinearDerecha = c.id != 'equipo' && c.id != 'margen';
-    return InkWell(
-      onTap: () => _ordenarPor(c.orden!),
-      focusColor: GomaqColors.accion.withValues(alpha: 0.12),
-      child: Semantics(
-        button: true,
-        label: 'Ordenar por ${c.titulo}${activo ? (_ascendente ? ', de menor a mayor' : ', de mayor a menor') : ''}',
-        excludeSemantics: true,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Row(
-            mainAxisAlignment: alinearDerecha ? MainAxisAlignment.end : MainAxisAlignment.start,
-            children: [
-              Flexible(child: Text(c.titulo, style: _estiloEncabezado, overflow: TextOverflow.ellipsis, textAlign: alinearDerecha ? TextAlign.right : TextAlign.left)),
-              if (activo) Icon(_ascendente ? Icons.arrow_upward : Icons.arrow_downward, size: 14, color: Colors.black87),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _cuerpo(List<_Columna> columnas) {
-    if (_cargando) return const Center(child: CircularProgressIndicator());
-    if (_error != null) {
-      return EstadoVacio(icono: Icons.cloud_off, titulo: 'No se pudieron cargar los costos', mensaje: _error!, textoAccion: 'Reintentar', onAccion: _cargar);
+  Widget _cuerpo(List<ColumnaTabla> columnas) {
+    if (cargando) return const Center(child: CircularProgressIndicator());
+    if (errorCarga != null) {
+      return EstadoVacio(icono: Icons.cloud_off, titulo: 'No se pudieron cargar los costos', mensaje: errorCarga!, textoAccion: 'Reintentar', onAccion: cargar);
     }
-    if (_equipos.isEmpty) {
+    if (items.isEmpty) {
       final filtrado = _resultado != 'todos' || _busqueda.trim().isNotEmpty;
       return EstadoVacio(
         icono: filtrado ? Icons.search_off : Icons.precision_manufacturing_outlined,
@@ -418,27 +342,27 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
 
     // la barra de margen se escala contra el mayor de los que se ven, para que sea comparable
     var maxMargen = 1.0;
-    for (final e in _equipos) {
+    for (final e in items) {
       final m = ((e['margen'] ?? 0) as num).abs().toDouble();
       if (m > maxMargen) maxMargen = m;
     }
     final diasPeriodo = (_resumen['dias_periodo'] ?? 0) as int;
 
     return RefreshIndicator(
-      onRefresh: _cargar,
+      onRefresh: cargar,
       child: ListView.builder(
         padding: const EdgeInsets.only(bottom: 24),
         // +1 por el pie: "cargar más" o el conteo de lo que se muestra
-        itemCount: _equipos.length + 1,
+        itemCount: items.length + 1,
         itemBuilder: (context, i) {
-          if (i == _equipos.length) return _pieDeLista();
-          return _fila(_equipos[i], columnas, maxMargen, diasPeriodo);
+          if (i == items.length) return _pieDeLista();
+          return _fila(items[i], columnas, maxMargen, diasPeriodo);
         },
       ),
     );
   }
 
-  Widget _fila(Map<String, dynamic> e, List<_Columna> columnas, double maxMargen, int diasPeriodo) {
+  Widget _fila(Map<String, dynamic> e, List<ColumnaTabla> columnas, double maxMargen, int diasPeriodo) {
     final aPerdida = e['resultado'] == 'a_perdida';
     final margen = ((e['margen'] ?? 0) as num).toDouble();
     final ratio = e['gasto_sobre_ingreso'] as num?;
@@ -466,7 +390,7 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
     Widget derecha(Widget hijo) => Align(alignment: Alignment.centerRight, child: hijo);
     Widget vacio() => const Text('—', style: TextStyle(color: Colors.black54));
 
-    Widget celda(_Columna c) {
+    Widget celda(ColumnaTabla c) {
       switch (c.id) {
         case 'equipo':
           return Column(
@@ -592,10 +516,10 @@ class _RentabilidadScreenState extends State<RentabilidadScreen> {
       padding: const EdgeInsets.symmetric(vertical: 16),
       child: Column(
         children: [
-          Text('Mostrando ${_equipos.length} de $_total equipos', style: const TextStyle(fontSize: 12, color: Colors.black54)),
-          if (_hayMas) ...[
+          Text('Mostrando ${items.length} de $total equipos', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+          if (hayMas) ...[
             const SizedBox(height: 8),
-            OutlinedButton(onPressed: _cargandoMas ? null : _cargarMas, child: Text(_cargandoMas ? 'Cargando equipos…' : 'Cargar más')),
+            OutlinedButton(onPressed: cargandoMas ? null : cargarMas, child: Text(cargandoMas ? 'Cargando equipos…' : 'Cargar más')),
           ],
         ],
       ),

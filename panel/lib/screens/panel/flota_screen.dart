@@ -12,7 +12,9 @@ import '../../widgets/dialogos.dart';
 import '../../widgets/estado_equipo.dart';
 import '../../widgets/estado_vacio.dart';
 import '../../widgets/ficha_tecnica_campos.dart';
+import '../../widgets/lista_paginada.dart';
 import '../../widgets/pestanas.dart';
+import '../../widgets/tabla_ordenable.dart';
 
 /// Los equipos de GOMAQ en una tabla, con una pestana por categoria. Cada pestana cambia la columna
 /// de medida (capacidad en kg para gruas y traspaletas, altura de trabajo para alzahombres) y el
@@ -27,10 +29,6 @@ class FlotaScreen extends StatefulWidget {
   State<FlotaScreen> createState() => _FlotaScreenState();
 }
 
-/// Una columna de la tabla. `orden` es el nombre que entiende el servidor (null = no ordenable);
-/// `minAncho` oculta la columna cuando el panel está angosto, en vez de apretar todas.
-typedef _Columna = ({String id, String titulo, int flex, String? orden, double minAncho});
-
 const _pluralCategoria = {
   'grua_horquilla': 'Grúas horquilla',
   'alzahombre': 'Alzahombres',
@@ -38,10 +36,7 @@ const _pluralCategoria = {
   'apilador': 'Apiladores',
 };
 
-class _FlotaScreenState extends State<FlotaScreen> {
-  List<dynamic> _maquinarias = [];
-  bool _cargando = true;
-  String? _error;
+class _FlotaScreenState extends State<FlotaScreen> with ListaPaginada<FlotaScreen> {
   String _busqueda = '';
   final _controladorBusqueda = TextEditingController();
 
@@ -53,10 +48,6 @@ class _FlotaScreenState extends State<FlotaScreen> {
   String _orden = 'codigo';
   bool _ascendente = true;
 
-  static const _porPagina = 50;
-  int _total = 0;
-  bool _hayMas = false;
-  bool _cargandoMas = false;
   Timer? _debounce;
 
   // Totales de toda la flota (no cambian con los filtros): las tarjetas de arriba y los
@@ -70,7 +61,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
     _filtroEstado = widget.filtroInicial?['estado'];
     _filtroCategoria = widget.filtroInicial?['categoria'];
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      _cargar();
+      cargar();
       _cargarResumen();
       _cargarClientes();
     });
@@ -83,52 +74,18 @@ class _FlotaScreenState extends State<FlotaScreen> {
     super.dispose();
   }
 
-  String _consulta({required int offset}) {
-    final p = <String>['limit=$_porPagina', 'offset=$offset', 'orden=$_orden', 'dir=${_ascendente ? 'asc' : 'desc'}'];
+  @override
+  String get textoFalloCargarMas => 'No se pudieron cargar más equipos';
+
+  @override
+  String consultaPagina({required int offset}) {
+    final p = <String>[ListaPaginada.parametrosPagina(offset), 'orden=$_orden', 'dir=${_ascendente ? 'asc' : 'desc'}'];
     if (_busqueda.trim().isNotEmpty) p.add('q=${Uri.encodeQueryComponent(_busqueda.trim())}');
     if (_filtroEstado != null) p.add('estado=$_filtroEstado');
     if (_filtroCategoria != null) p.add('categoria=$_filtroCategoria');
     if (_filtroDisponibilidad != null) p.add('disponibilidad=$_filtroDisponibilidad');
     if (_filtroCliente != null) p.add('cliente_id=$_filtroCliente');
     return '/api/maquinarias?${p.join('&')}';
-  }
-
-  Future<void> _cargar() async {
-    setState(() {
-      _cargando = true;
-      _error = null;
-    });
-    try {
-      final data = await ApiClient.instance.get(_consulta(offset: 0));
-      if (!mounted) return;
-      setState(() {
-        _maquinarias = data['items'];
-        _total = data['total'] ?? 0;
-        _hayMas = data['hay_mas'] == true;
-      });
-    } catch (e) {
-      if (mounted) setState(() => _error = mensajeErrorCarga(e));
-    } finally {
-      if (mounted) setState(() => _cargando = false);
-    }
-  }
-
-  Future<void> _cargarMas() async {
-    if (_cargandoMas || !_hayMas) return;
-    setState(() => _cargandoMas = true);
-    try {
-      final data = await ApiClient.instance.get(_consulta(offset: _maquinarias.length));
-      if (!mounted) return;
-      setState(() {
-        _maquinarias = [..._maquinarias, ...data['items']];
-        _total = data['total'] ?? _total;
-        _hayMas = data['hay_mas'] == true;
-      });
-    } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudieron cargar más equipos: ${e.message}')));
-    } finally {
-      if (mounted) setState(() => _cargandoMas = false);
-    }
   }
 
   Future<void> _cargarResumen() async {
@@ -145,7 +102,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
   void _buscar(String texto) {
     setState(() => _busqueda = texto);
     _debounce?.cancel();
-    _debounce = Timer(const Duration(milliseconds: 350), _cargar);
+    _debounce = Timer(const Duration(milliseconds: 350), cargar);
   }
 
   /// Clientes para el filtro. Se piden aparte y NO se derivan de los equipos cargados: como la
@@ -171,7 +128,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
       _filtroDisponibilidad = disponibilidad;
       _filtroEstado = estado;
     });
-    _cargar();
+    cargar();
   }
 
   void _elegirCategoria(String id) {
@@ -183,7 +140,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
       _orden = 'codigo';
       _ascendente = true;
     }
-    _cargar();
+    cargar();
   }
 
   void _ordenarPor(String columna) {
@@ -195,7 +152,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
         _ascendente = true;
       }
     });
-    _cargar();
+    cargar();
   }
 
   void _limpiarFiltros() {
@@ -206,7 +163,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
       _busqueda = '';
       _controladorBusqueda.clear();
     });
-    _cargar();
+    cargar();
   }
 
   Future<void> _abrirDialogoCrear() async {
@@ -360,7 +317,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
       c.dispose();
     }
     if (creada && mounted) {
-      _cargar();
+      cargar();
       _cargarResumen();
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Maquinaria creada')));
     }
@@ -368,7 +325,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
 
   /// Las columnas cambian con la pestaña: la medida que importa de una grúa (capacidad) no es
   /// la de un alzahombre (altura de trabajo).
-  List<_Columna> get _columnas {
+  List<ColumnaTabla> get _columnas {
     final String tituloMedida;
     final String? ordenMedida;
     switch (_filtroCategoria) {
@@ -426,7 +383,13 @@ class _FlotaScreenState extends State<FlotaScreen> {
             if (_resumen != null) _tarjetasResumen(),
             _barraFiltros(puedeEscribir),
             _pestanasCategoria(),
-            _encabezadoTabla(columnas),
+            EncabezadoTablaOrdenable(
+              columnas: columnas,
+              ordenActual: _orden,
+              ascendente: _ascendente,
+              alOrdenar: _ordenarPor,
+              margen: const EdgeInsets.symmetric(horizontal: 24),
+            ),
             Expanded(child: _cuerpo(columnas)),
           ],
         );
@@ -548,7 +511,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
               ],
               onChanged: (v) {
                 setState(() => _filtroEstado = v);
-                _cargar();
+                cargar();
               },
             ),
           ),
@@ -566,7 +529,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
               ],
               onChanged: (v) {
                 setState(() => _filtroCliente = v);
-                _cargar();
+                cargar();
               },
             ),
           ),
@@ -591,61 +554,18 @@ class _FlotaScreenState extends State<FlotaScreen> {
     );
   }
 
-  static const _estiloEncabezado = TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: Colors.black54);
-
-  Widget _encabezadoTabla(List<_Columna> columnas) {
-    return Container(
-      margin: const EdgeInsets.symmetric(horizontal: 24),
-      padding: const EdgeInsets.symmetric(horizontal: 12),
-      decoration: BoxDecoration(border: Border(bottom: BorderSide(color: Colors.grey.shade300))),
-      child: Row(
-        children: [
-          for (final c in columnas)
-            Expanded(
-              flex: c.flex,
-              child: c.orden == null
-                  ? Padding(padding: const EdgeInsets.symmetric(vertical: 12), child: Text(c.titulo, style: _estiloEncabezado))
-                  : _encabezadoOrdenable(c),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _encabezadoOrdenable(_Columna c) {
-    final activo = _orden == c.orden;
-    return InkWell(
-      onTap: () => _ordenarPor(c.orden!),
-      focusColor: GomaqColors.accion.withValues(alpha: 0.12),
-      child: Semantics(
-        button: true,
-        label: 'Ordenar por ${c.titulo}${activo ? (_ascendente ? ', de menor a mayor' : ', de mayor a menor') : ''}',
-        excludeSemantics: true,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 12),
-          child: Row(
-            children: [
-              Flexible(child: Text(c.titulo, style: _estiloEncabezado, overflow: TextOverflow.ellipsis)),
-              if (activo) Icon(_ascendente ? Icons.arrow_upward : Icons.arrow_downward, size: 14, color: Colors.black87),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _cuerpo(List<_Columna> columnas) {
-    if (_cargando) return const Center(child: CircularProgressIndicator());
-    if (_error != null) {
+  Widget _cuerpo(List<ColumnaTabla> columnas) {
+    if (cargando) return const Center(child: CircularProgressIndicator());
+    if (errorCarga != null) {
       return EstadoVacio(
         icono: Icons.cloud_off,
         titulo: 'No se pudo cargar la flota',
-        mensaje: _error!,
+        mensaje: errorCarga!,
         textoAccion: 'Reintentar',
-        onAccion: _cargar,
+        onAccion: cargar,
       );
     }
-    if (_maquinarias.isEmpty) {
+    if (items.isEmpty) {
       return EstadoVacio(
         icono: Icons.search_off,
         titulo: 'No hay equipos con estos filtros',
@@ -656,22 +576,22 @@ class _FlotaScreenState extends State<FlotaScreen> {
     }
     return RefreshIndicator(
       onRefresh: () async {
-        await _cargar();
+        await cargar();
         await _cargarResumen();
       },
       child: ListView.builder(
         padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
         // +1 por el pie: "cargar más" o el conteo de lo que se muestra
-        itemCount: _maquinarias.length + 1,
+        itemCount: items.length + 1,
         itemBuilder: (context, i) {
-          if (i == _maquinarias.length) return _pieDeLista(_maquinarias.length);
-          return _fila(_maquinarias[i], columnas);
+          if (i == items.length) return _pieDeLista(items.length);
+          return _fila(items[i], columnas);
         },
       ),
     );
   }
 
-  Widget _fila(Map<String, dynamic> m, List<_Columna> columnas) {
+  Widget _fila(Map<String, dynamic> m, List<ColumnaTabla> columnas) {
     final medida = _textoMedida(m);
     final cliente = _textoCliente(m);
     final combustible = m['tipo_combustible'] != null ? etiquetasCombustible[m['tipo_combustible']] : null;
@@ -690,7 +610,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
 
     Widget vacio() => const Text('—', style: TextStyle(color: Colors.black54));
 
-    Widget celda(_Columna c) {
+    Widget celda(ColumnaTabla c) {
       switch (c.id) {
         case 'codigo':
           return Text('${m['codigo']}', style: const TextStyle(fontWeight: FontWeight.w700));
@@ -743,12 +663,12 @@ class _FlotaScreenState extends State<FlotaScreen> {
       padding: const EdgeInsets.symmetric(vertical: 16),
       child: Column(
         children: [
-          Text('Mostrando $mostrados de $_total equipos', style: const TextStyle(fontSize: 12, color: Colors.black54)),
-          if (_hayMas) ...[
+          Text('Mostrando $mostrados de $total equipos', style: const TextStyle(fontSize: 12, color: Colors.black54)),
+          if (hayMas) ...[
             const SizedBox(height: 8),
             OutlinedButton(
-              onPressed: _cargandoMas ? null : _cargarMas,
-              child: Text(_cargandoMas ? 'Cargando equipos…' : 'Cargar más'),
+              onPressed: cargandoMas ? null : cargarMas,
+              child: Text(cargandoMas ? 'Cargando equipos…' : 'Cargar más'),
             ),
           ],
         ],
