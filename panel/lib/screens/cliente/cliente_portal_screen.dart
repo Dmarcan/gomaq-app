@@ -7,6 +7,7 @@ import '../../widgets/confirmar_cerrar_sesion.dart';
 import 'cliente_mis_equipos_screen.dart';
 import 'cliente_seguimiento_screen.dart';
 import 'cliente_historial_screen.dart';
+import 'cliente_mi_empresa_screen.dart';
 
 class ClientePortalScreen extends StatefulWidget {
   /// Pestaña con la que se abre (`/portal?pestana=seguimiento`): 'seguimiento' o 'historial'.
@@ -24,13 +25,16 @@ class _ClientePortalScreenState extends State<ClientePortalScreen> {
   // cambiar esta key remonta las pestanas: su initState vuelve a cargar los datos
   Key _refreshKey = UniqueKey();
 
-  static const _titulos = ['Mis equipos', 'Seguimiento', 'Historial'];
+  static const _titulos = ['Mis equipos', 'Seguimiento', 'Historial', 'Mi empresa'];
 
+  // Las tres primeras se remontan con Refrescar. Mi empresa queda fuera de esa key y sin boton
+  // Refrescar: remontarla borraria lo que el cliente esta escribiendo.
   static const _tabs = [
     ClienteMisEquiposScreen(),
     ClienteSeguimientoScreen(),
     ClienteHistorialScreen(),
   ];
+  static const _indiceMiEmpresa = 3;
 
   @override
   Widget build(BuildContext context) {
@@ -47,11 +51,12 @@ class _ClientePortalScreenState extends State<ClientePortalScreen> {
         ),
         backgroundColor: GomaqColors.fondoCalido,
         actions: [
-          IconButton(
-            icon: const Icon(Icons.refresh),
-            tooltip: 'Refrescar',
-            onPressed: () => setState(() => _refreshKey = UniqueKey()),
-          ),
+          if (_tab != _indiceMiEmpresa)
+            IconButton(
+              icon: const Icon(Icons.refresh),
+              tooltip: 'Refrescar',
+              onPressed: () => setState(() => _refreshKey = UniqueKey()),
+            ),
           IconButton(
             tooltip: 'Cambiar mi contraseña',
             icon: const Icon(Icons.password),
@@ -64,7 +69,16 @@ class _ClientePortalScreenState extends State<ClientePortalScreen> {
           ),
         ],
       ),
-      body: KeyedSubtree(key: _refreshKey, child: IndexedStack(index: _tab, children: _tabs)),
+      body: IndexedStack(
+        index: _tab == _indiceMiEmpresa ? 1 : 0,
+        children: [
+          KeyedSubtree(
+            key: _refreshKey,
+            child: IndexedStack(index: _tab == _indiceMiEmpresa ? 0 : _tab, children: _tabs),
+          ),
+          const ClienteMiEmpresaScreen(),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tab,
         onDestinationSelected: (i) => setState(() => _tab = i),
@@ -72,6 +86,7 @@ class _ClientePortalScreenState extends State<ClientePortalScreen> {
           NavigationDestination(icon: Icon(Icons.local_shipping), label: 'Mis equipos'),
           NavigationDestination(icon: Icon(Icons.timeline), label: 'Seguimiento'),
           NavigationDestination(icon: Icon(Icons.history), label: 'Historial'),
+          NavigationDestination(icon: Icon(Icons.business), label: 'Mi empresa'),
         ],
       ),
     );

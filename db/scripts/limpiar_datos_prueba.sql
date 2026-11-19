@@ -31,6 +31,12 @@ DELETE FROM ordenes_trabajo WHERE maquinaria_id IN (SELECT id FROM maquinarias W
 -- 5. Maquinaria de prueba GH-999 ("Toyota 8FG25-EDITADO", creada para verificar el perfil de equipo)
 DELETE FROM maquinarias WHERE codigo = 'GH-999';
 
+-- 5b. Cambios de ficha hechos desde el portal (clientes_cambios, migracion 047, tambien de solo
+--     insercion: aqui vale la via de purga) por el usuario de prueba o sobre los clientes de prueba
+DELETE FROM clientes_cambios
+WHERE usuario_id IN (SELECT id FROM usuarios WHERE email = 'clienteprueba@gomaq.test')
+   OR cliente_id IN (SELECT id FROM clientes WHERE nombre IN ('Cliente Prueba Ejecutivo', 'Cliente Prueba Registro'));
+
 -- 6. Usuario del registro de prueba (se creo al aprobar la solicitud de verificacion)
 DELETE FROM usuarios WHERE email = 'clienteprueba@gomaq.test';
 

@@ -4,6 +4,7 @@
 
 const { rutValido, MENSAJE_RUT_INVALIDO } = require('./rut');
 const { normalizarCorreo } = require('./correo');
+const { validarCoordenadas } = require('./geo');
 
 const CAMPOS = ['nombre', 'rut', 'email', 'telefono', 'direccion', 'giro'];
 const MAXIMOS = { nombre: 150, rut: 20, email: 150, telefono: 30, direccion: 300, giro: 150 };
@@ -67,4 +68,83 @@ function validarFichaCliente(body) {
     return { cambios };
 }
 
-module.exports = { validarFichaCliente, validarPlazoPago, CAMPOS, PLAZO_MAXIMO_DIAS };
+// ---- Ficha propia: lo que el cliente edita desde el portal (PATCH /api/clientes/mia) ----
+
+const EDITABLES_PROPIOS = ['email', 'telefono', 'direccion', 'horario_trabajo', 'horario_colacion', 'latitud', 'longitud'];
+const MAXIMO_HORARIO = 100; // VARCHAR(100), migracion 009
+const MENSAJE_SOLO_GOMAQ = 'Ese dato lo actualiza GOMAQ';
+// Lo unico que ve el cliente de su ficha: se copia campo por campo, sin ejecutivo_id ni created_at
+const CAMPOS_FICHA_PROPIA = [
+    'nombre', 'rut', 'giro', 'email', 'telefono', 'direccion',
+    'horario_trabajo', 'horario_colacion', 'plazo_pago_dias', 'latitud', 'longitud',
+];
+
+/**
+ * Valida el cuerpo de PATCH /api/clientes/mia. Lista blanca: solo correo, telefono, direccion,
+ * horarios y la pareja latitud/longitud. Cualquier otra clave (nombre, RUT, giro, plazo, ids o lo que
+ * sea) se rechaza, no se ignora. El correo no puede quedar vacio (es el de avisos y facturas).
+ * Devuelve { cambios } o { error }.
+ */
+function validarFichaPropia(body) {
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return { error: 'No hay nada que cambiar' };
+    const claves = Object.keys(body);
+    if (claves.some((k) => !EDITABLES_PROPIOS.includes(k))) return { error: MENSAJE_SOLO_GOMAQ };
+    const cambios = {};
+
+    const textuales = {};
+    for (const campo of ['email', 'telefono', 'direccion']) if (campo in body) textuales[campo] = body[campo];
+    if (Object.keys(textuales).length > 0) {
+        if ('email' in textuales && (textuales.email === null || (typeof textuales.email === 'string' && textuales.email.trim() === ''))) {
+            return { error: 'El correo de la empresa no puede quedar vacío' };
+        }
+        const r = validarFichaCliente(textuales);
+        if (r.error) return { error: r.error };
+        Object.assign(cambios, r.cambios);
+    }
+
+    for (const campo of ['horario_trabajo', 'horario_colacion']) {
+        if (!(campo in body)) continue;
+        const crudo = body[campo];
+        if (crudo !== null && typeof crudo !== 'string') return { error: `${campo} debe ser un texto` };
+        const valor = crudo === null ? '' : crudo.trim();
+        if (valor.length > MAXIMO_HORARIO) return { error: `${campo} admite hasta ${MAXIMO_HORARIO} caracteres` };
+        cambios[campo] = valor === '' ? null : valor;
+    }
+
+    if ('latitud' in body || 'longitud' in body) {
+        const c = validarCoordenadas(body.latitud, body.longitud);
+        if (!c.ok) return { error: c.error };
+        cambios.latitud = c.latitud;
+        cambios.longitud = c.longitud;
+    }
+
+    if (Object.keys(cambios).length === 0) return { error: 'No hay nada que cambiar' };
+    return { cambios };
+}
+
+/** La ficha tal como la ve el cliente, copiada campo por campo desde una fila de la base. */
+function fichaDeFila(fila) {
+    const f = fila || {};
+    const ficha = {};
+    for (const campo of CAMPOS_FICHA_PROPIA) {
+        let v = f[campo] === undefined ? null : f[campo];
+        if ((campo === 'latitud' || campo === 'longitud') && v !== null) v = Number(v); // NUMERIC llega como texto
+        ficha[campo] = v;
+    }
+    return ficha;
+}
+
+/** De los cambios pedidos, deja { campo: { antes, despues } } solo para los que de verdad cambian. */
+function diferenciasFicha(antes, cambios) {
+    const a = fichaDeFila(antes);
+    const dif = {};
+    for (const campo of Object.keys(cambios)) {
+        if (a[campo] !== cambios[campo]) dif[campo] = { antes: a[campo], despues: cambios[campo] };
+    }
+    return dif;
+}
+
+module.exports = {
+    validarFichaCliente, validarPlazoPago, CAMPOS, PLAZO_MAXIMO_DIAS,
+    validarFichaPropia, fichaDeFila, diferenciasFicha, CAMPOS_FICHA_PROPIA, EDITABLES_PROPIOS,
+};

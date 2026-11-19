@@ -138,6 +138,7 @@ void main() {
     test('pestanaDePortal lee la URL y cae en Mis equipos', () {
       expect(pestanaDePortal('seguimiento'), 1);
       expect(pestanaDePortal('historial'), 2);
+      expect(pestanaDePortal('empresa'), 3);
       expect(pestanaDePortal(null), 0);
       expect(pestanaDePortal('cualquiera'), 0);
     });

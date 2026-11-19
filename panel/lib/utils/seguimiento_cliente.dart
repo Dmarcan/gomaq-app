@@ -168,9 +168,10 @@ String? etiquetaCobro(String? cobro) => switch (cobro) {
 String? explicacionCobro(String? cobro) =>
     cobro == 'por_definir' ? 'GOMAQ aún está definiendo qué repuestos se cobran.' : null;
 
-/// Pestaña del portal que pide la URL (`?pestana=`): 0 equipos, 1 seguimiento, 2 historial.
+/// Pestaña del portal que pide la URL (`?pestana=`): 0 equipos, 1 seguimiento, 2 historial, 3 empresa.
 int pestanaDePortal(String? valor) => switch (valor) {
       'seguimiento' => 1,
       'historial' => 2,
+      'empresa' => 3,
       _ => 0,
     };

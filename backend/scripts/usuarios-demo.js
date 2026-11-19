@@ -51,6 +51,13 @@ async function borrar() {
         await client.query("SET LOCAL gomaq.purga = 'on'");
         const ids = `(SELECT id FROM usuarios WHERE email = ANY($1))`;
         await client.query(`UPDATE ordenes_eventos SET usuario_id = NULL WHERE usuario_id IN ${ids}`, [USUARIOS.map((u) => u.email)]);
+        // clientes_cambios (migracion 047, cambios que el cliente hizo en su portal) tambien es de solo
+        // insercion y apunta al usuario y a la empresa demo: se borra por la misma via de purga
+        await client.query(
+            `DELETE FROM clientes_cambios WHERE usuario_id IN ${ids}
+                OR cliente_id IN (SELECT id FROM clientes WHERE nombre = $2)`,
+            [USUARIOS.map((u) => u.email), EMPRESA_DEMO]
+        );
         await client.query('DELETE FROM usuarios WHERE email = ANY($1)', [USUARIOS.map((u) => u.email)]);
         await client.query('DELETE FROM clientes WHERE nombre = $1', [EMPRESA_DEMO]);
         await client.query('COMMIT');

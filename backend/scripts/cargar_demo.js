@@ -579,6 +579,7 @@ const BORRADOS = [
     ['guias', 'DELETE FROM guias WHERE id = ANY($5)'],
     ['maquinarias', 'DELETE FROM maquinarias WHERE id = ANY($2)'],
     ['insumos', 'DELETE FROM insumos WHERE id = ANY($3)'],
+    ['clientes_cambios', 'DELETE FROM clientes_cambios WHERE cliente_id = ANY($1)'],
     ['clientes', 'DELETE FROM clientes WHERE id = ANY($1)'],
 ];
 
@@ -630,7 +631,9 @@ async function borrarDemo(db, { simular = false } = {}) {
 
         // ordenes_eventos es de solo insercion: la via de purga solo si hay eventos de OT DEMO, y solo en esta transaccion
         const eventos = (await db.query('SELECT COUNT(*)::int AS n FROM ordenes_eventos WHERE orden_trabajo_id = ANY($1)', [ordenes])).rows[0].n;
-        if (eventos > 0) await db.query("SELECT set_config('gomaq.purga', 'on', true)");
+        // clientes_cambios (migracion 047) es de solo insercion igual: solo hay filas si un cliente DEMO edito su ficha
+        const cambiosFicha = (await db.query('SELECT COUNT(*)::int AS n FROM clientes_cambios WHERE cliente_id = ANY($1)', [ids.clientes])).rows[0].n;
+        if (eventos > 0 || cambiosFicha > 0) await db.query("SELECT set_config('gomaq.purga', 'on', true)");
 
         for (const [tabla, sql] of BORRADOS) {
             // cada DELETE usa solo los parametros que nombra (pg rechaza parametros de sobra)

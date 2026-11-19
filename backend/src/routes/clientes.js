@@ -5,7 +5,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { validarCoordenadas } = require('../utils/geo');
 const { rutValido, MENSAJE_RUT_INVALIDO } = require('../utils/rut');
-const { validarFichaCliente } = require('../utils/fichaCliente');
+const { validarFichaCliente, validarFichaPropia, fichaDeFila, diferenciasFicha, CAMPOS_FICHA_PROPIA } = require('../utils/fichaCliente');
 const { leerConfiguracion } = require('../utils/configuracion');
 const { cargarHistorialCliente } = require('../utils/historialCliente');
 
@@ -18,6 +18,65 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
              FROM clientes c ORDER BY c.nombre`
     );
     res.json(result.rows);
+});
+
+// ---- "Mi empresa": el cliente ve y edita la ficha de SU empresa ----
+// Van antes de /:id para que "mia" no se tome como un id. La empresa sale siempre de la cuenta
+// (req.user.cliente_id, que verifyToken lee de la base en cada peticion), nunca de la URL ni del cuerpo.
+const COLUMNAS_FICHA_PROPIA = CAMPOS_FICHA_PROPIA.join(', ');
+const SIN_EMPRESA = 'Tu cuenta no tiene una empresa asociada';
+
+router.get('/mia', verifyToken, requireRole('cliente'), async (req, res) => {
+    const clienteId = req.user.cliente_id;
+    if (!clienteId) return res.status(404).json({ error: SIN_EMPRESA });
+    const r = await pool.query(`SELECT ${COLUMNAS_FICHA_PROPIA} FROM clientes WHERE id = $1`, [clienteId]);
+    if (r.rows.length === 0) return res.status(404).json({ error: SIN_EMPRESA });
+    res.set('Cache-Control', 'no-store');
+    res.json(fichaDeFila(r.rows[0]));
+});
+
+// Solo correo, telefono, direccion, horarios y ubicacion (utils/fichaCliente.js). Cada cambio queda
+// registrado en clientes_cambios (migracion 047) en la misma transaccion; si nada cambia no se escribe nada.
+router.patch('/mia', verifyToken, requireRole('cliente'), async (req, res) => {
+    const clienteId = req.user.cliente_id;
+    if (!clienteId) return res.status(404).json({ error: SIN_EMPRESA });
+    if (req.query && Object.keys(req.query).length > 0) return res.status(400).json({ error: 'Solicitud no válida' });
+    const { cambios, error } = validarFichaPropia(req.body);
+    if (error) return res.status(400).json({ error });
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const actual = await client.query(`SELECT ${COLUMNAS_FICHA_PROPIA} FROM clientes WHERE id = $1 FOR UPDATE`, [clienteId]);
+        if (actual.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: SIN_EMPRESA });
+        }
+        const dif = diferenciasFicha(actual.rows[0], cambios);
+        let fila = actual.rows[0];
+        const columnas = Object.keys(dif);
+        if (columnas.length > 0) {
+            // los nombres de columna salen de la lista fija de validarFichaPropia, nunca del cuerpo
+            const sets = columnas.map((c, i) => `${c} = $${i + 1}`).join(', ');
+            const upd = await client.query(
+                `UPDATE clientes SET ${sets} WHERE id = $${columnas.length + 1} RETURNING ${COLUMNAS_FICHA_PROPIA}`,
+                [...columnas.map((c) => dif[c].despues), clienteId]
+            );
+            fila = upd.rows[0];
+            await client.query(
+                `INSERT INTO clientes_cambios (cliente_id, usuario_id, rol, origen, cambios)
+                 VALUES ($1, $2, $3, 'portal', $4)`,
+                [clienteId, req.user.id, req.user.rol, JSON.stringify(dif)]
+            );
+        }
+        await client.query('COMMIT');
+        res.set('Cache-Control', 'no-store');
+        res.json(fichaDeFila(fila));
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+    } finally {
+        client.release();
+    }
 });
 
 router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
