@@ -12,6 +12,7 @@ const { validarCoordenadasFormulario } = require('../utils/geo');
 const { fijarDestinoOt } = require('../utils/fijarDestinoOt');
 
 const { origenDeCliente } = require('../utils/estadoEquipo');
+const { avisarOtDisponible } = require('../utils/avisos');
 const { validarGravedad, gravedadMayor, estadoPorGravedad, textoMotivo, textoDetalle, ESTADOS_OT_CON_DETALLE, SQL_ASISTENCIA_ABIERTA } = require('../utils/asistenciaCliente');
 
 const router = express.Router();
@@ -105,6 +106,8 @@ router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archi
         );
         // despues de vincular la solicitud: si el cliente indico otra obra, ese es el destino
         await fijarDestinoOt(client, orden.id);
+        // la orden nace sin tecnico: se avisa a los mecanicos libres (con el flag de push apagado no hace nada)
+        await avisarOtDisponible(client, orden.id);
         const cambio = estadoPorGravedad({ gravedad: g.gravedad, estadoEquipo: maquinaria.rows[0].estado });
         if (cambio) {
             await client.query('UPDATE maquinarias SET estado = $1, estado_origen = $2 WHERE id = $3', [cambio.estado, cambio.origen, maquinaria_id]);
@@ -260,6 +263,8 @@ router.patch('/:id/convertir', verifyToken, requireRole('administrativo', 'geren
         );
         // despues de vincular la solicitud: si el cliente indico otra obra, ese es el destino
         await fijarDestinoOt(client, orden.id);
+        // la orden nace sin tecnico: se avisa a los mecanicos libres (con el flag de push apagado no hace nada)
+        await avisarOtDisponible(client, orden.id);
 
         await client.query('COMMIT');
         res.json({ solicitud_id: solicitud.id, orden_trabajo: orden });

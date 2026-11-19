@@ -229,6 +229,8 @@ router.post('/codigo/confirmar', limiteCodigo, async (req, res) => {
 router.post('/logout', verifyToken, async (req, res) => {
     if (req.user.sid) {
         await pool.query(`UPDATE sesiones SET revocada_at = now(), motivo = 'logout' WHERE id = $1 AND revocada_at IS NULL`, [req.user.sid]);
+        // los avisos push de esta sesion terminan con ella (queda inactivo hasta que la app lo registre de nuevo al iniciar sesion)
+        await pool.query('UPDATE dispositivos_push SET activo = false WHERE sesion_id = $1 AND activo', [req.user.sid]);
     }
     res.status(204).end();
 });

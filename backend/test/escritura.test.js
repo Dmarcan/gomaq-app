@@ -27,7 +27,7 @@ const HABILITADO = process.env.GOMAQ_TEST_ESCRITURA === '1' && Boolean(process.e
 let servidor;
 let base;
 let pool;
-const datos = { ordenes: [], insumos: [], equipos: [], ubicaciones: [], solicitudes: [], clientes: [], storage: { subidos: [], borrados: [] } };
+const datos = { usuariosPush: [], ordenes: [], insumos: [], equipos: [], ubicaciones: [], solicitudes: [], clientes: [], storage: { subidos: [], borrados: [] } };
 const tokens = {};
 
 // GET autenticado con un token ya firmado (usa la URL base que levanta el before)
@@ -72,6 +72,7 @@ before(async () => {
     app.use('/api/clientes', require('../src/routes/clientes'));
     app.use('/api/maquinarias', require('../src/routes/maquinarias'));
     app.use('/api/maquinarias', require('../src/routes/guias'));
+    app.use('/api/dispositivos', require('../src/routes/dispositivos'));
     // la subida de la factura no toca Supabase de verdad: se anotan los archivos que se suben y borran
     const { supabase } = require('../src/config/supabase');
     supabase.storage.from = () => ({
@@ -147,6 +148,11 @@ after(async () => {
         // ordenes_eventos es de solo insercion (migracion 020): borrar las OT de prueba y su
         // historial exige la via de purga, que vale solo dentro de esta transaccion
         await purgarOrdenes(ots);
+    }
+    if (datos.usuariosPush.length) {
+        await pool.query('DELETE FROM dispositivos_push WHERE usuario_id = ANY($1)', [datos.usuariosPush]);
+        await pool.query('DELETE FROM sesiones WHERE usuario_id = ANY($1)', [datos.usuariosPush]);
+        await pool.query('DELETE FROM usuarios WHERE id = ANY($1)', [datos.usuariosPush]);
     }
     if (datos.equipos.length) {
         await pool.query('DELETE FROM facturas WHERE maquinaria_id = ANY($1)', [datos.equipos]);
@@ -5337,7 +5343,7 @@ describe('bloque 5 (PR B): revision adversarial del correo de la factura', () =>
 describe('bloque 5 (parte C): avisos sin proveedor no se encolan', () => {
     // Desde la migracion 046 solo se encola lo que tiene envio real (el correo de factura, ver utils/avisos.js).
     // Estas pruebas conservan el recorrido de cada accion (estados y respuestas) y comprueban que no deja filas.
-    const TIPOS = ['ot_asignada', 'ot_reasignada', 'ot_por_valorizar', 'factura_anulada', 'ajuste_inventario'];
+    const TIPOS = ['ot_asignada', 'ot_reasignada', 'ot_disponible', 'ot_por_valorizar', 'factura_anulada', 'ajuste_inventario'];
     const SIN_PROVEEDOR = [...TIPOS, 'mecanico_asignado', 'ot_finalizada', 'cuenta_aprobada', 'mantencion_proxima'];
     const MARCA = { telefono: '+56911110000', telefonoDos: '+56922220000' };
     let inicio;
@@ -6942,5 +6948,402 @@ describe('cuentas del equipo: asignar a un desactivado y aprobar con correo repe
             await pool.query('DELETE FROM solicitudes_cliente WHERE id = $1', [s.rows[0].id]);
             await pool.query('DELETE FROM usuarios WHERE id = $1', [u.rows[0].id]);
         }
+    });
+});
+
+describe('push: dispositivos, avisos de OT y canal del worker', () => {
+    const { crearSesion } = require('../src/services/sesiones');
+    const { procesarUna, usarEnvio } = require('../src/workers/notificaciones');
+    let inicio;
+
+    /** Cuenta de prueba (se borra al terminar la corrida) y su token. */
+    async function crearUsuario(rol, estado = 'activo') {
+        const r = await pool.query(
+            `INSERT INTO usuarios (nombre, email, password_hash, rol, estado_cuenta)
+             VALUES ('Prueba push', $1, 'x', $2::rol_usuario, $3) RETURNING id`,
+            [`push-${crypto.randomUUID()}@gomaq.test`, rol, estado]
+        );
+        const id = r.rows[0].id;
+        datos.usuariosPush.push(id);
+        return { id, token: jwt.sign({ id, rol, cliente_id: null }, process.env.JWT_SECRET, { expiresIn: '1h' }) };
+    }
+
+    const tokenFcm = () => `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/g, '');
+
+    async function llamar(metodo, ruta, token, cuerpo) {
+        const headers = { 'Content-Type': 'application/json' };
+        if (token) headers.Authorization = `Bearer ${token}`;
+        const r = await fetch(`${base}${ruta}`, { method: metodo, headers, body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo) });
+        return leerRespuesta(r);
+    }
+
+    const registrar = (token, tokenDispositivo, extra = {}) =>
+        llamar('POST', '/api/dispositivos', token, { token: tokenDispositivo, plataforma: 'android', app: 'terreno', ...extra });
+
+    async function dispositivo(tokenDispositivo) {
+        return (await pool.query('SELECT * FROM dispositivos_push WHERE token = $1', [tokenDispositivo])).rows[0];
+    }
+
+    /** Registra un dispositivo activo directo en la base. */
+    async function crearDispositivo(usuarioId, app = 'terreno') {
+        const r = await pool.query(
+            `INSERT INTO dispositivos_push (usuario_id, plataforma, app, token) VALUES ($1, 'android', $2, $3) RETURNING id`,
+            [usuarioId, app, tokenFcm()]
+        );
+        return Number(r.rows[0].id);
+    }
+
+    async function filasPush(ordenId, tipo) {
+        return (await pool.query(
+            `SELECT destinatario, payload FROM notificaciones_pendientes
+             WHERE canal = 'push' AND payload->>'tipo' = $1 AND (payload->>'orden_trabajo_id')::int = $2 ORDER BY id`,
+            [tipo, ordenId])).rows;
+    }
+
+    async function conPush(fn) {
+        process.env.PUSH_HABILITADO = '1';
+        try { return await fn(); } finally { delete process.env.PUSH_HABILITADO; }
+    }
+
+    before(() => { inicio = new Date(Date.now() - 2000); });
+
+    after(async () => {
+        if (!HABILITADO) return;
+        usarEnvio(null);
+        // las filas push de OT que no registraron las pruebas (se borran las del periodo)
+        await pool.query(`DELETE FROM notificaciones_pendientes WHERE canal = 'push' AND created_at >= $1`, [inicio]);
+    });
+
+    test('sin token de sesion el registro y la baja responden 401', async (t) => {
+        if (!requiereBase(t)) return;
+        assert.equal((await llamar('POST', '/api/dispositivos', null, { token: tokenFcm(), plataforma: 'android', app: 'terreno' })).status, 401);
+        assert.equal((await llamar('DELETE', '/api/dispositivos', null, { token: tokenFcm() })).status, 401);
+    });
+
+    test('un mecanico registra su dispositivo; registrar el mismo token otra vez no duplica', async (t) => {
+        if (!requiereBase(t)) return;
+        const mec = await crearUsuario('mecanico');
+        const tok = tokenFcm();
+        const r = await registrar(mec.token, tok);
+        assert.equal(r.status, 201, JSON.stringify(r.body));
+        assert.deepEqual(Object.keys(r.body), ['id'], 'la respuesta no devuelve el token');
+        const fila = await dispositivo(tok);
+        assert.equal(fila.usuario_id, mec.id);
+        assert.equal(fila.app, 'terreno');
+        assert.equal(fila.plataforma, 'android');
+        assert.equal(fila.activo, true);
+        assert.equal(fila.sesion_id, null, 'un JWT antiguo no tiene sesion en la base');
+        const otra = await registrar(mec.token, tok);
+        assert.equal(otra.status, 201);
+        assert.equal(otra.body.id, r.body.id);
+        assert.equal((await pool.query('SELECT count(*)::int AS n FROM dispositivos_push WHERE token = $1', [tok])).rows[0].n, 1);
+    });
+
+    test('el registro valida el token, la plataforma y la app', async (t) => {
+        if (!requiereBase(t)) return;
+        const mec = await crearUsuario('mecanico');
+        for (const malo of [undefined, null, 123, '', 'corto', 'x'.repeat(5000), `${tokenFcm()} con espacios`, `${tokenFcm()}\n`, { $ne: 1 }, [tokenFcm()]]) {
+            assert.equal((await registrar(mec.token, malo)).status, 400, JSON.stringify(malo));
+        }
+        assert.equal((await registrar(mec.token, tokenFcm(), { plataforma: 'ios' })).status, 400);
+        assert.equal((await registrar(mec.token, tokenFcm(), { plataforma: undefined })).status, 400);
+        assert.equal((await registrar(mec.token, tokenFcm(), { app: 'otra' })).status, 400);
+        assert.equal((await llamar('POST', '/api/dispositivos', mec.token, undefined)).status, 400);
+    });
+
+    test('la app terreno es solo del rol mecanico; el panel lo usan los demas', async (t) => {
+        if (!requiereBase(t)) return;
+        for (const rol of ['administrativo', 'gerente', 'cliente']) {
+            const u = await crearUsuario(rol);
+            const bloqueado = tokenFcm();
+            assert.equal((await registrar(u.token, bloqueado, { app: 'terreno' })).status, 403, rol);
+            assert.equal(await dispositivo(bloqueado), undefined, 'no deja fila');
+            assert.equal((await registrar(u.token, tokenFcm(), { app: 'panel', plataforma: 'web' })).status, 201, rol);
+        }
+    });
+
+    test('cada usuario solo toca sus dispositivos: borrar un token ajeno responde 204 y no hace nada', async (t) => {
+        if (!requiereBase(t)) return;
+        const a = await crearUsuario('mecanico');
+        const b = await crearUsuario('mecanico');
+        const tokA = tokenFcm();
+        assert.equal((await registrar(a.token, tokA)).status, 201);
+        const ajeno = await llamar('DELETE', '/api/dispositivos', b.token, { token: tokA });
+        assert.equal(ajeno.status, 204);
+        assert.equal((await dispositivo(tokA)).activo, true, 'el token de A sigue activo');
+        assert.equal((await llamar('DELETE', '/api/dispositivos', b.token, { token: tokenFcm() })).status, 204, 'token que no existe');
+        assert.equal((await llamar('DELETE', '/api/dispositivos', b.token, { token: 'basura' })).status, 204, 'token invalido');
+        assert.equal((await llamar('DELETE', '/api/dispositivos', b.token, undefined)).status, 204, 'sin cuerpo');
+        assert.equal((await llamar('DELETE', '/api/dispositivos', a.token, { token: tokA })).status, 204);
+        assert.equal((await dispositivo(tokA)).activo, false, 'A si puede apagar el suyo');
+    });
+
+    test('si el telefono pasa a otro mecanico, el token se reasigna y el anterior deja de recibir en el', async (t) => {
+        if (!requiereBase(t)) return;
+        const a = await crearUsuario('mecanico');
+        const b = await crearUsuario('mecanico');
+        const tok = tokenFcm();
+        await registrar(a.token, tok);
+        await llamar('DELETE', '/api/dispositivos', a.token, { token: tok });
+        assert.equal((await registrar(b.token, tok)).status, 201);
+        const fila = await dispositivo(tok);
+        assert.equal(fila.usuario_id, b.id);
+        assert.equal(fila.activo, true);
+    });
+
+    test('tope de 10 dispositivos activos por usuario: quedan los mas recientes', async (t) => {
+        if (!requiereBase(t)) return;
+        const mec = await crearUsuario('mecanico');
+        const tokens = [];
+        for (let i = 0; i < 12; i++) {
+            const tok = tokenFcm();
+            tokens.push(tok);
+            assert.equal((await registrar(mec.token, tok)).status, 201);
+        }
+        const activos = await pool.query('SELECT token FROM dispositivos_push WHERE usuario_id = $1 AND activo', [mec.id]);
+        assert.equal(activos.rows.length, 10);
+        assert.equal((await dispositivo(tokens[0])).activo, false, 'el mas viejo se apago');
+        assert.equal((await dispositivo(tokens[1])).activo, false);
+        assert.equal((await dispositivo(tokens[11])).activo, true, 'el nuevo queda');
+    });
+
+    test('con sesion de la base el dispositivo queda ligado a ella y el logout lo desactiva', async (t) => {
+        if (!requiereBase(t)) return;
+        const mec = await crearUsuario('mecanico');
+        const sesion = await crearSesion(pool, mec.id, { app: 'terreno' });
+        const tokSesion = tokenFcm();
+        const tokJwt = tokenFcm();
+        assert.equal((await registrar(sesion.token, tokSesion)).status, 201);
+        assert.equal((await registrar(mec.token, tokJwt)).status, 201, 'otro telefono con un JWT antiguo');
+        assert.equal(String((await dispositivo(tokSesion)).sesion_id), String(sesion.sid));
+        const salida = await llamar('POST', '/api/auth/logout', sesion.token);
+        assert.equal(salida.status, 204);
+        assert.equal((await dispositivo(tokSesion)).activo, false, 'el de la sesion cerrada se apaga');
+        assert.equal((await dispositivo(tokJwt)).activo, true, 'los de otras sesiones siguen');
+        // con la sesion revocada ya no se puede registrar
+        assert.equal((await registrar(sesion.token, tokenFcm())).status, 401);
+    });
+
+    test('ot_disponible: con el flag apagado la OT sin tecnico no encola nada', async (t) => {
+        if (!requiereBase(t)) return;
+        const libre = await crearUsuario('mecanico');
+        await crearDispositivo(libre.id);
+        const equipo = await crearEquipo(null);
+        const r = await pedir('POST', '/api/ordenes-trabajo', 'administrativo', { maquinaria_id: equipo.id, motivo: 'prueba push' });
+        assert.equal(r.status, 201);
+        datos.ordenes.push(r.body.id);
+        assert.deepEqual(await filasPush(r.body.id, 'ot_disponible'), []);
+    });
+
+    test('ot_disponible: llega a los mecanicos libres con dispositivo y no a ocupados, inactivos ni a la oficina', async (t) => {
+        if (!requiereBase(t)) return;
+        const libre = await crearUsuario('mecanico');
+        const libreDos = await crearUsuario('mecanico');
+        const ocupado = await crearUsuario('mecanico');
+        const inactivo = await crearUsuario('mecanico', 'rechazado');
+        const sinDispositivo = await crearUsuario('mecanico');
+        const oficina = await crearUsuario('administrativo');
+        const dLibre = await crearDispositivo(libre.id);
+        const dLibreDos = await crearDispositivo(libreDos.id);
+        const dLibreDosb = await crearDispositivo(libreDos.id);
+        await crearDispositivo(ocupado.id);
+        await crearDispositivo(inactivo.id);
+        await crearDispositivo(oficina.id, 'panel');
+        const apagado = await crearDispositivo(libre.id);
+        await pool.query('UPDATE dispositivos_push SET activo = false WHERE id = $1', [apagado]);
+        // el ocupado tiene una OT en camino; uno con la OT solo asignada (aun no la acepta) sigue libre
+        await crearOt('en_camino', ocupado.id);
+        const conAsignada = await crearUsuario('mecanico');
+        const dConAsignada = await crearDispositivo(conAsignada.id);
+        await crearOt('asignada', conAsignada.id);
+        const terminado = await crearUsuario('mecanico');
+        const dTerminado = await crearDispositivo(terminado.id);
+        await crearOt('finalizada', terminado.id);
+
+        const equipo = await crearEquipo(null);
+        const r = await conPush(() => pedir('POST', '/api/ordenes-trabajo', 'administrativo', { maquinaria_id: equipo.id, motivo: 'prueba push' }));
+        assert.equal(r.status, 201);
+        datos.ordenes.push(r.body.id);
+        const filas = await filasPush(r.body.id, 'ot_disponible');
+        const destinos = filas.map((f) => Number(f.destinatario)).sort((x, y) => x - y);
+        // los dispositivos de mecanicos libres de esta prueba (puede haber otros de otras corridas: se filtra por los propios)
+        const propios = new Set([dLibre, dLibreDos, dLibreDosb, dConAsignada, dTerminado]);
+        assert.deepEqual(destinos.filter((d) => propios.has(d)), [...propios].sort((x, y) => x - y));
+        assert.ok(!destinos.includes(apagado), 'un dispositivo apagado no recibe');
+        const ajenos = destinos.filter((d) => !propios.has(d));
+        const dispositivosAjenos = (await pool.query(
+            `SELECT d.id FROM dispositivos_push d JOIN usuarios u ON u.id = d.usuario_id
+             WHERE d.id = ANY($1) AND (u.id = ANY($2))`, [ajenos, [ocupado.id, inactivo.id, oficina.id, sinDispositivo.id]])).rows;
+        assert.deepEqual(dispositivosAjenos, [], 'ni ocupados, ni inactivos, ni la oficina');
+        const payload = filas[0].payload;
+        assert.equal(payload.tipo, 'ot_disponible');
+        assert.equal(payload.orden_trabajo_id, r.body.id);
+        assert.ok(payload.usuario_id);
+    });
+
+    test('ot_disponible: tambien sale al convertir la solicitud del cliente en OT', async (t) => {
+        if (!requiereBase(t)) return;
+        const clienteId = await algunCliente();
+        if (!clienteId) return t.skip('la base no tiene clientes');
+        const libre = await crearUsuario('mecanico');
+        const d = await crearDispositivo(libre.id);
+        const equipo = await crearEquipo(clienteId);
+        const sol = await pool.query(
+            `INSERT INTO solicitudes (cliente_id, maquinaria_id, descripcion) VALUES ($1, $2, 'solicitud push') RETURNING id`,
+            [clienteId, equipo.id]
+        );
+        datos.solicitudes.push(sol.rows[0].id);
+        const r = await conPush(() => pedir('PATCH', `/api/solicitudes/${sol.rows[0].id}/convertir`, 'administrativo'));
+        assert.equal(r.status, 200);
+        const ot = r.body.orden_trabajo.id;
+        datos.ordenes.push(ot);
+        assert.ok((await filasPush(ot, 'ot_disponible')).some((f) => Number(f.destinatario) === d));
+    });
+
+    test('ot_disponible: la OT que abre el propio mecanico en terreno no avisa a nadie', async (t) => {
+        if (!requiereBase(t)) return;
+        const mec = await crearUsuario('mecanico');
+        const otro = await crearUsuario('mecanico');
+        await crearDispositivo(otro.id);
+        const equipo = await crearEquipo(null);
+        const r = await conPush(() => llamar('POST', '/api/ordenes-trabajo/en-terreno', mec.token,
+            { maquinaria_id: equipo.id, motivo: 'segundo equipo', uuid_cliente: crypto.randomUUID() }));
+        assert.equal(r.status, 201, JSON.stringify(r.body));
+        datos.ordenes.push(r.body.id);
+        assert.deepEqual(await filasPush(r.body.id, 'ot_disponible'), []);
+    });
+
+    test('asignar y reasignar: una fila push por dispositivo con el flag; sin el flag, ninguna', async (t) => {
+        if (!requiereBase(t)) return;
+        const a = await crearUsuario('mecanico');
+        const b = await crearUsuario('mecanico');
+        const dA1 = await crearDispositivo(a.id);
+        const dA2 = await crearDispositivo(a.id);
+        const dB = await crearDispositivo(b.id);
+        const sinFlag = await crearOt('pendiente', null);
+        assert.equal((await pedir('PATCH', `/api/ordenes-trabajo/${sinFlag}/asignar`, 'administrativo', { mecanico_id: a.id })).status, 200);
+        assert.deepEqual(await filasPush(sinFlag, 'ot_asignada'), []);
+
+        const ot = await crearOt('pendiente', null);
+        const asignar = (mecanicoId) => pedir('PATCH', `/api/ordenes-trabajo/${ot}/asignar`, 'administrativo', { mecanico_id: mecanicoId });
+        await conPush(async () => {
+            assert.equal((await asignar(a.id)).status, 200);
+            assert.equal((await asignar(a.id)).status, 200, 'doble clic');
+            assert.equal((await asignar(b.id)).status, 200, 'reasignacion');
+        });
+        const asignadas = await filasPush(ot, 'ot_asignada');
+        assert.deepEqual(asignadas.map((f) => Number(f.destinatario)).sort((x, y) => x - y), [dA1, dA2, dB].sort((x, y) => x - y));
+        const reasignadas = await filasPush(ot, 'ot_reasignada');
+        assert.deepEqual(reasignadas.map((f) => Number(f.destinatario)).sort((x, y) => x - y), [dA1, dA2].sort((x, y) => x - y));
+        assert.ok(asignadas.every((f) => f.payload.usuario_id), 'cada fila lleva su usuario');
+    });
+
+    test('canal push del worker: sin credenciales de FCM queda pendiente, en espera, sin gastar intentos', async (t) => {
+        if (!requiereBase(t)) return;
+        const mec = await crearUsuario('mecanico');
+        const d = await crearDispositivo(mec.id);
+        const ot = await crearOt('asignada', mec.id);
+        const n = (await pool.query(
+            `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ('push', $1, $2) RETURNING *`,
+            [String(d), JSON.stringify({ tipo: 'ot_asignada', orden_trabajo_id: ot, usuario_id: mec.id })])).rows[0];
+        const previo = process.env.FCM_CUENTA_SERVICIO;
+        delete process.env.FCM_CUENTA_SERVICIO;
+        usarEnvio(null);
+        try {
+            await procesarUna(n);
+        } finally {
+            if (previo !== undefined) process.env.FCM_CUENTA_SERVICIO = previo;
+        }
+        const fila = (await pool.query('SELECT estado, intentos, proximo_intento > now() + interval \'50 minutes\' AS espera FROM notificaciones_pendientes WHERE id = $1', [n.id])).rows[0];
+        assert.equal(fila.estado, 'pendiente');
+        assert.equal(fila.intentos, 0);
+        assert.equal(fila.espera, true);
+    });
+
+    test('canal push del worker: se cancela si el dispositivo se desactivo, la sesion se cerro o la OT ya fue tomada', async (t) => {
+        if (!requiereBase(t)) return;
+        let enviados = 0;
+        usarEnvio(async () => { enviados += 1; });
+        const encolar = async (payload, dispositivoId) => (await pool.query(
+            `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ('push', $1, $2) RETURNING *`,
+            [String(dispositivoId), JSON.stringify(payload)])).rows[0];
+        const estadoDe = async (n) => (await pool.query('SELECT estado, ultimo_error FROM notificaciones_pendientes WHERE id = $1', [n.id])).rows[0];
+        try {
+            const mec = await crearUsuario('mecanico');
+            const ot = await crearOt('asignada', mec.id);
+
+            // sano: se envia
+            const d1 = await crearDispositivo(mec.id);
+            const sano = await encolar({ tipo: 'ot_asignada', orden_trabajo_id: ot, usuario_id: mec.id }, d1);
+            await procesarUna(sano);
+            assert.equal((await estadoDe(sano)).estado, 'enviado');
+            assert.equal(enviados, 1);
+
+            // dispositivo desactivado
+            const d2 = await crearDispositivo(mec.id);
+            await pool.query('UPDATE dispositivos_push SET activo = false WHERE id = $1', [d2]);
+            const inactivo = await encolar({ tipo: 'ot_asignada', orden_trabajo_id: ot, usuario_id: mec.id }, d2);
+            await procesarUna(inactivo);
+            assert.equal((await estadoDe(inactivo)).estado, 'cancelado');
+
+            // el dispositivo ahora es de otro usuario
+            const otro = await crearUsuario('mecanico');
+            const d3 = await crearDispositivo(otro.id);
+            const deOtro = await encolar({ tipo: 'ot_asignada', orden_trabajo_id: ot, usuario_id: mec.id }, d3);
+            await procesarUna(deOtro);
+            assert.equal((await estadoDe(deOtro)).estado, 'cancelado');
+
+            // sesion revocada
+            const sesion = await crearSesion(pool, mec.id, { app: 'terreno' });
+            const d4 = Number((await pool.query(
+                `INSERT INTO dispositivos_push (usuario_id, sesion_id, plataforma, app, token) VALUES ($1, $2, 'android', 'terreno', $3) RETURNING id`,
+                [mec.id, sesion.sid, tokenFcm()])).rows[0].id);
+            await pool.query(`UPDATE sesiones SET revocada_at = now() WHERE id = $1`, [sesion.sid]);
+            const revocada = await encolar({ tipo: 'ot_asignada', orden_trabajo_id: ot, usuario_id: mec.id }, d4);
+            await procesarUna(revocada);
+            assert.equal((await estadoDe(revocada)).estado, 'cancelado');
+
+            // aviso viejo (mas de 6 h)
+            const d5 = await crearDispositivo(mec.id);
+            const viejo = await encolar({ tipo: 'ot_asignada', orden_trabajo_id: ot, usuario_id: mec.id }, d5);
+            await pool.query(`UPDATE notificaciones_pendientes SET created_at = now() - interval '7 hours' WHERE id = $1`, [viejo.id]);
+            await procesarUna(viejo);
+            assert.equal((await estadoDe(viejo)).estado, 'cancelado');
+
+            // ot_disponible: sigue sin asignar se envia; ya tomada se cancela
+            const libre = await crearOt('pendiente', null);
+            const d6 = await crearDispositivo(mec.id);
+            const disponible = await encolar({ tipo: 'ot_disponible', orden_trabajo_id: libre, usuario_id: mec.id }, d6);
+            await procesarUna(disponible);
+            assert.equal((await estadoDe(disponible)).estado, 'enviado');
+            const tomada = await encolar({ tipo: 'ot_disponible', orden_trabajo_id: ot, usuario_id: mec.id }, d6);
+            await procesarUna(tomada);
+            const t2 = await estadoDe(tomada);
+            assert.equal(t2.estado, 'cancelado');
+            assert.match(t2.ultimo_error, /tomada/);
+            assert.equal(enviados, 2, 'solo los dos vigentes salieron');
+        } finally {
+            usarEnvio(null);
+        }
+    });
+
+    test('canal push del worker: un token descartado por FCM apaga el dispositivo y cancela el aviso', async (t) => {
+        if (!requiereBase(t)) return;
+        const mec = await crearUsuario('mecanico');
+        const d = await crearDispositivo(mec.id);
+        const ot = await crearOt('asignada', mec.id);
+        const n = (await pool.query(
+            `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ('push', $1, $2) RETURNING *`,
+            [String(d), JSON.stringify({ tipo: 'ot_asignada', orden_trabajo_id: ot, usuario_id: mec.id })])).rows[0];
+        usarEnvio(async () => { throw Object.assign(new Error('FCM respondio 404 (UNREGISTERED)'), { descartar: true }); });
+        try {
+            await procesarUna(n);
+        } finally {
+            usarEnvio(null);
+        }
+        const fila = (await pool.query('SELECT estado, intentos FROM notificaciones_pendientes WHERE id = $1', [n.id])).rows[0];
+        assert.equal(fila.estado, 'cancelado');
+        assert.equal(fila.intentos, 0);
+        assert.equal((await pool.query('SELECT activo FROM dispositivos_push WHERE id = $1', [d])).rows[0].activo, false);
     });
 });

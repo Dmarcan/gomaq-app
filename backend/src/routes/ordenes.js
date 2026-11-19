@@ -18,7 +18,7 @@ const { montoEnteroONulo } = require('../utils/auditoriaLinea');
 const {
     dejarEvento, leerUuidTarea, sincronizadoTarde, decidirEventoDiagnostico, decidirEventoAsignacion, esMismoTecnico,
 } = require('../utils/eventosOt');
-const { avisarAsignacion, avisarPorValorizar, encolarNotificacion } = require('../utils/avisos');
+const { avisarAsignacion, avisarOtDisponible, avisarPorValorizar, encolarNotificacion } = require('../utils/avisos');
 
 const {
     validarEstadoEquipoCierre, aplicarEntradaEquipo, aplicarCierreEquipo, origenDeCliente,
@@ -89,6 +89,8 @@ router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (r
             usuario: req.user,
             detalle: { maquinaria_id: orden.maquinaria_id, cliente_id: orden.cliente_id },
         });
+        // nace sin tecnico: se avisa a los mecanicos libres (con el flag de push apagado no hace nada)
+        await avisarOtDisponible(client, orden.id);
         await client.query('COMMIT');
         res.status(201).json(orden);
     } catch (err) {

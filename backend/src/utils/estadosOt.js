@@ -15,6 +15,8 @@ const FINALIZADA = 'finalizada';
 const EN_CURSO = ['en_terreno', 'en_reparacion'];
 // estados del viaje, que el mecanico fija en orden y no puede retroceder
 const VIAJE = ['aceptada', 'en_camino'];
+// el mecanico esta "ocupado" (no se le ofrecen OT nuevas por push) mientras tenga una propia en alguno de estos
+const OCUPADO = ['aceptada', 'en_camino', 'en_terreno', 'en_reparacion'];
 
 // posicion en el ciclo, para saber si un cambio de estado es un avance o un reintento atrasado
 const POSICION = { pendiente: 0, asignada: 1, aceptada: 2, en_camino: 3, en_terreno: 4, en_reparacion: 4, finalizada: 5 };
@@ -92,5 +94,5 @@ function evaluarCierre(estado) {
 }
 
 module.exports = {
-    ESTADOS, EN_CURSO_PANEL, parsearEstados, FINALIZADA, VIAJE, EN_CURSO, estadoTrasAsignar, mecanicoPuedeEditar, puedeCambiarEstadoA, evaluarCambioEstado, evaluarCierre,
+    ESTADOS, EN_CURSO_PANEL, parsearEstados, FINALIZADA, VIAJE, EN_CURSO, OCUPADO, estadoTrasAsignar, mecanicoPuedeEditar, puedeCambiarEstadoA, evaluarCambioEstado, evaluarCierre,
 };

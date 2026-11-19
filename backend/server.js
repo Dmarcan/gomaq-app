@@ -54,6 +54,7 @@ const { router: horometroRouter } = require('./src/routes/horometro');
 const checklistRouter = require('./src/routes/checklist');
 const rentabilidadRouter = require('./src/routes/rentabilidad');
 const vehiculosRouter = require('./src/routes/vehiculos');
+const dispositivosRouter = require('./src/routes/dispositivos');
 const { iniciarWorker } = require('./src/workers/notificaciones');
 const { manejarErroresDeSubida } = require('./src/middleware/upload');
 const { manejarErrores, rutaApiNoEncontrada, registrarRedDeSeguridad } = require('./src/middleware/errores');
@@ -162,6 +163,7 @@ app.use('/api/horometro', horometroRouter);
 app.use('/api/checklist', checklistRouter);
 app.use('/api/rentabilidad', rentabilidadRouter);
 app.use('/api/vehiculos', vehiculosRouter);
+app.use('/api/dispositivos', dispositivosRouter);
 
 // una ruta /api inexistente responde 404 JSON (antes de servir el panel y su fallback)
 app.use('/api', rutaApiNoEncontrada);

@@ -2,6 +2,9 @@ const pool = require('../config/db');
 const { planificarReintento, plazoTomaSegundos, conTimeout } = require('../utils/reintentosNotificacion');
 const { armarCorreoFactura } = require('../utils/plantillaCorreoFactura');
 const { enviarCorreoResend } = require('../services/correoResend');
+const { enviarPushFcm, leerCuentaServicio } = require('../services/fcm');
+const { armarMensajePush, motivoDescarte } = require('../utils/push');
+const { SQL_OT_SIN_ASIGNAR } = require('../utils/ordenes');
 
 const INTERVALO_MS = 15000;
 const MAX_INTENTOS = 5;
@@ -13,10 +16,11 @@ const TIMEOUT_ENVIO_MS = Math.max(1000, Number(process.env.NOTIF_TIMEOUT_MS) || 
 // cada cuanto deja una linea de "sigo vivo" en el log cuando no hay nada que enviar
 const LATIDO_MS = 10 * 60 * 1000;
 
-// Envio real. Hoy solo hay proveedor para el correo de factura (Resend, por API HTTP). WhatsApp y los
-// avisos internos (ot_asignada, ot_reasignada, ot_por_valorizar, factura_anulada, ajuste_inventario,
-// mantencion_proxima, etc.; ver utils/avisos.js) aun no tienen proveedor ni plantilla: un tipo sin
-// plantilla falla como error permanente, no manda un mensaje vacio.
+// Envio real. Hay proveedor para el correo de factura (Resend, por API HTTP) y para el push de OT
+// (ot_asignada, ot_reasignada, ot_disponible) por FCM. WhatsApp y el resto de los avisos internos
+// (ot_por_valorizar, factura_anulada, ajuste_inventario, mantencion_proxima, etc.; ver utils/avisos.js) aun
+// no tienen proveedor ni plantilla: un tipo sin plantilla falla como error permanente, no manda un mensaje vacio.
+// Push: FCM_CUENTA_SERVICIO (JSON de la cuenta de servicio en base64) solo en este servicio.
 // Configuracion: RESEND_API_KEY, CORREO_REMITENTE (en pruebas 'onboarding@resend.dev', que solo entrega
 // a la cuenta dueña de la clave) y CORREO_CONTACTO (correo al que escriben los clientes; el correo pide
 // no responder al remitente).
@@ -44,8 +48,31 @@ async function adjuntarPdfFactura(facturaId, signal) {
     return [{ filename: `factura-${nombre}.pdf`, content: bytes.toString('base64') }];
 }
 
+/**
+ * Push a un dispositivo (`destinatario` = id del dispositivo). El mensaje sale de la lista blanca de
+ * utils/push.js, nunca del payload completo. Los errores de FCM traen `descartar`, `reintentarEnSegundos` o
+ * `permanente` (ver services/fcm.js). `deps` solo se reemplaza en pruebas.
+ */
+async function enviarPush(notificacion, signal, deps = {}) {
+    const mensaje = armarMensajePush(notificacion.payload);
+    if (!mensaje) {
+        throw Object.assign(new Error(`Sin plantilla push para ${(notificacion.payload || {}).tipo}`), { permanente: true });
+    }
+    const dispositivoId = Number(notificacion.destinatario);
+    if (!Number.isInteger(dispositivoId)) {
+        throw Object.assign(new Error('El aviso no indica un dispositivo valido'), { permanente: true });
+    }
+    const fila = await pool.query('SELECT token FROM dispositivos_push WHERE id = $1 AND activo', [dispositivoId]);
+    if (fila.rows.length === 0) {
+        throw Object.assign(new Error('El dispositivo ya no esta activo'), { permanente: true });
+    }
+    const cuenta = (deps.leerCuenta || leerCuentaServicio)();
+    await (deps.enviarFcm || enviarPushFcm)({ cuenta, token: fila.rows[0].token, mensaje, signal });
+}
+
 async function enviarNotificacion(notificacion, signal) {
     const payload = notificacion.payload || {};
+    if (notificacion.canal === 'push') return enviarPush(notificacion, signal);
     if (notificacion.canal !== 'email') {
         // sin proveedor: reintentar no lo arregla, queda en 'error' (el panel permite reenviarlo despues)
         throw Object.assign(new Error(`Proveedor de ${notificacion.canal} no configurado todavia`), { permanente: true });
@@ -85,15 +112,56 @@ function usarEnvio(fn) {
 // de camino, pasado este plazo otra instancia (o el mismo proceso al reiniciar) la retoma.
 const PLAZO_TOMA_SEGUNDOS = plazoTomaSegundos({ lote: LOTE, timeoutMs: TIMEOUT_ENVIO_MS });
 
+// Mira el dispositivo, su dueno, su sesion y (ot_disponible) la OT, y deja la decision a utils/push.js.
+// Devuelve el motivo para cancelar el aviso o null si sigue vigente.
+async function motivoDescartePush(fila, payload) {
+    const id = Number(fila.destinatario);
+    let dispositivo = null;
+    if (Number.isInteger(id)) {
+        const r = await pool.query(
+            `SELECT d.activo, d.usuario_id, d.sesion_id, u.estado_cuenta, s.revocada_at AS sesion_revocada_at, s.expira_at AS sesion_expira_at
+             FROM dispositivos_push d
+             JOIN usuarios u ON u.id = d.usuario_id
+             LEFT JOIN sesiones s ON s.id = d.sesion_id
+             WHERE d.id = $1`,
+            [id]
+        );
+        dispositivo = r.rows[0] || null;
+    }
+    let otSinAsignar = true;
+    if (payload.tipo === 'ot_disponible') {
+        const ot = await pool.query(`SELECT 1 FROM ordenes_trabajo ot WHERE ot.id = $1 AND ${SQL_OT_SIN_ASIGNAR}`, [Number(payload.orden_trabajo_id) || 0]);
+        otSinAsignar = ot.rows.length > 0;
+    }
+    return motivoDescarte({
+        aviso: { tipo: payload.tipo, usuario_id: payload.usuario_id, created_at: fila.created_at },
+        dispositivo,
+        otSinAsignar,
+    });
+}
+
 // true si la notificacion sigue pendiente y, siendo el correo de una factura, la factura existe.
 // Una factura anulada deja la fila 'cancelado' y no se envia.
 async function sigueVigente(notificacion) {
-    const actual = await pool.query('SELECT estado, payload FROM notificaciones_pendientes WHERE id = $1', [notificacion.id]);
+    const actual = await pool.query('SELECT estado, payload, canal, destinatario, created_at FROM notificaciones_pendientes WHERE id = $1', [notificacion.id]);
     if (actual.rows.length === 0 || actual.rows[0].estado !== 'pendiente') {
         console.log(`[notificaciones] omitido id=${notificacion.id}: ya no esta pendiente`);
         return false;
     }
     const payload = actual.rows[0].payload || {};
+    if (actual.rows[0].canal === 'push') {
+        const motivo = await motivoDescartePush(actual.rows[0], payload);
+        if (motivo) {
+            await pool.query(
+                `UPDATE notificaciones_pendientes SET estado = 'cancelado', ultimo_error = $2
+                 WHERE id = $1 AND estado = 'pendiente'`,
+                [notificacion.id, motivo]
+            );
+            console.log(`[notificaciones] cancelado id=${notificacion.id}: ${motivo}`);
+            return false;
+        }
+        return true;
+    }
     if (payload.tipo === 'factura_emitida' && payload.factura_id) {
         const factura = await pool.query('SELECT 1 FROM facturas WHERE id = $1', [payload.factura_id]);
         if (factura.rows.length === 0) {
@@ -137,6 +205,17 @@ async function procesarUna(notificacion) {
             console.log(`[notificaciones] enviado id=${notificacion.id} canal=${notificacion.canal}`);
         }
     } catch (err) {
+        if (err && err.descartar === true) {
+            // el token ya no sirve (app desinstalada, token rotado): se apaga el dispositivo y el aviso queda cancelado
+            await pool.query('UPDATE dispositivos_push SET activo = false WHERE id = $1', [Number(notificacion.destinatario) || 0]);
+            await pool.query(
+                `UPDATE notificaciones_pendientes SET estado = 'cancelado', ultimo_error = $2
+                 WHERE id = $1 AND estado = 'pendiente'`,
+                [notificacion.id, err.message]
+            );
+            console.log(`[notificaciones] descartado id=${notificacion.id}: dispositivo apagado (${err.message})`);
+            return;
+        }
         const plan = planificarReintento({ intentos: notificacion.intentos, maxIntentos: MAX_INTENTOS, error: err });
         await pool.query(
             `UPDATE notificaciones_pendientes
@@ -217,4 +296,4 @@ function iniciarWorker() {
     };
 }
 
-module.exports = { iniciarWorker, sigueVigente, procesarUna, usarEnvio };
+module.exports = { iniciarWorker, sigueVigente, procesarUna, usarEnvio, enviarPush };

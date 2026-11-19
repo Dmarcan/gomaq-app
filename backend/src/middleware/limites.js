@@ -77,4 +77,17 @@ const limiteCodigo = rateLimit({
     message: { error: 'Demasiados intentos fallidos. Espera unos minutos y vuelve a intentarlo.' },
 });
 
-module.exports = { limiteLogin, limiteRegistro, limiteRecuperar, limiteCodigo, ipDelCliente };
+/**
+ * Registro y baja de dispositivos push: una app lo hace al iniciar sesion y al renovarse el token, no en
+ * bucle. Va DESPUES de verifyToken y cuenta por usuario (no por IP: varios mecanicos pueden compartir red).
+ */
+const limiteDispositivos = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 60,
+    standardHeaders: 'draft-7',
+    legacyHeaders: false,
+    keyGenerator: (req) => (req.user ? `u${req.user.id}` : clavePorCliente(req)),
+    message: { error: 'Demasiados registros de dispositivo. Espera unos minutos.' },
+});
+
+module.exports = { limiteDispositivos, limiteLogin, limiteRegistro, limiteRecuperar, limiteCodigo, ipDelCliente };
