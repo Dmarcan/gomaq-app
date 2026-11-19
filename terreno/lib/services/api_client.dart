@@ -52,6 +52,8 @@ class ApiClient implements ApiCola {
   @override
   Future<dynamic> put(String path, Map<String, dynamic> body) => _api.put(path, body);
 
+  Future<dynamic> delete(String path, Map<String, dynamic> body) => _api.delete(path, body);
+
   /// Subida multipart de un archivo. La evidencia de las OT usa URL firmada de Supabase, pero
   /// los documentos del vehiculo van por multipart al backend, que es quien decide el bucket.
   Future<dynamic> postMultipart(

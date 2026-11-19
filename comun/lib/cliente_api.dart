@@ -94,6 +94,10 @@ class ClienteApi {
   Future<dynamic> put(String path, Map<String, dynamic> body, {Map<String, String>? cabeceras}) =>
       _conCuerpo('PUT', path, body, cabeceras);
 
+  /// DELETE con cuerpo JSON (ej. desregistrar un dispositivo por su token).
+  Future<dynamic> delete(String path, Map<String, dynamic> body, {Map<String, String>? cabeceras}) =>
+      _conCuerpo('DELETE', path, body, cabeceras);
+
   Future<dynamic> _conCuerpo(String metodo, String path, Map<String, dynamic> body, Map<String, String>? cabeceras) async {
     final headers = {...?cabeceras, ...await _headers()};
     final cuerpo = jsonEncode(body);
@@ -109,6 +113,10 @@ class ClienteApi {
         envio = c == null
             ? http.patch(uri, headers: headers, body: cuerpo)
             : c.patch(uri, headers: headers, body: cuerpo);
+      case 'DELETE':
+        envio = c == null
+            ? http.delete(uri, headers: headers, body: cuerpo)
+            : c.delete(uri, headers: headers, body: cuerpo);
       default:
         envio = c == null
             ? http.put(uri, headers: headers, body: cuerpo)

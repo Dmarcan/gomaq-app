@@ -8,6 +8,7 @@ import 'services/sync_service.dart';
 import 'screens/login_screen.dart';
 import 'screens/ordenes_list_screen.dart';
 import 'theme/gomaq_theme.dart';
+import 'widgets/push_host.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -29,6 +30,8 @@ class GomaqMecanicoApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => SyncService()),
       ],
       child: MaterialApp(
+        navigatorKey: navegadorKey,
+        scaffoldMessengerKey: mensajesKey,
         title: 'GOMAQ Mecánico',
         theme: construirTemaGomaq(),
         // textos del sistema (menú, volver, cerrar) en español para el lector de pantalla
@@ -54,6 +57,6 @@ class _Raiz extends StatelessWidget {
     if (auth.verificandoSesion) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
-    return auth.autenticado ? const OrdenesListScreen() : const LoginScreen();
+    return auth.autenticado ? const PushHost(child: OrdenesListScreen()) : const LoginScreen();
   }
 }

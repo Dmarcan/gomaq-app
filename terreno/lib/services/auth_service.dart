@@ -6,6 +6,7 @@ import '../utils/archivos_locales.dart';
 import '../utils/cambios.dart';
 import 'api_client.dart';
 import 'posicion_service.dart';
+import 'push_service.dart';
 
 class AuthService extends ChangeNotifier {
   bool _autenticado = false;
@@ -85,6 +86,8 @@ class AuthService extends ChangeNotifier {
   /// Cierre de sesión pedido por el mecánico: avisa al servidor (mejor esfuerzo, 3 s) y después borra lo
   /// local. Sin señal igual se cierra; el servidor vence la sesión por inactividad. No toca la cola.
   Future<void> cerrarSesion() async {
+    // primero el aviso push (necesita la sesion vigente), despues el cierre en el servidor
+    await PushService.instancia.alCerrarSesion(avisarServidor: true);
     try {
       await ApiClient.instance.post('/api/auth/logout', {}).timeout(const Duration(seconds: 3));
     } catch (_) {
@@ -109,6 +112,8 @@ class AuthService extends ChangeNotifier {
 
   Future<void> logout() async {
     await PosicionService.detenerSeguimiento();
+    // sesion vencida o cierre ya avisado: solo se suelta el token de Firebase de este telefono
+    await PushService.instancia.alCerrarSesion(avisarServidor: false);
     await ApiClient.instance.borrarToken();
     _autenticado = false;
     _rol = null;

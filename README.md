@@ -53,6 +53,12 @@ cd mobile && flutter build apk --release
 ```
 Para instalarlo en un celular, conectarlo por USB o por depuración inalámbrica (`adb pair`/`adb connect`) y usar `flutter install` o `adb install`. El celular usado en pruebas es Android con MIUI: si la instalación falla con `INSTALL_FAILED_USER_RESTRICTED`, activar "Instalar vía USB" en Opciones de Desarrollador. Para desarrollar contra un backend local: `flutter run --dart-define=GOMAQ_API_URL=http://10.0.2.2:3000`.
 
+**Avisos push en la app del mecánico (FCM):** la app registra su token en `POST /api/dispositivos` (en línea, no por la cola offline) y muestra avisos de órdenes asignadas o disponibles. La configuración de Firebase llega por `--dart-define` al compilar, sin `google-services.json` ni plugin Gradle:
+```bash
+cd terreno && flutter build apk --release   --dart-define=FIREBASE_API_KEY=... --dart-define=FIREBASE_APP_ID=...   --dart-define=FIREBASE_MESSAGING_SENDER_ID=... --dart-define=FIREBASE_PROJECT_ID=...
+```
+Si falta cualquiera de las cuatro variables, **no hay push**: no se inicializa Firebase y la app funciona igual (es el caso de todo APK compilado sin ellas). Son datos públicos (la clave se protege restringiéndola al paquete `cl.gomaq.gomaq_mecanico` en Google Cloud); van por `--dart-define` y no en el repositorio solo porque todavía no existe el proyecto de Firebase. Si el servidor aún no tiene la ruta de dispositivos, la app ignora el 404. El permiso de notificaciones se explica y se pide una sola vez después de iniciar sesión; si se niega, la app sigue igual. Canal de Android: "Avisos de órdenes" (distinto de "Viaje en curso", el del servicio de posición). Con la app cerrada o en segundo plano muestra la notificación el sistema; con la app abierta, un aviso en pantalla y una sincronización. Al cerrar sesión se borra el dispositivo en el servidor y el token de Firebase.
+
 **Orden en un cambio que toca la cola offline:** desplegar primero el backend y después el APK. La app manda un `uuid_cliente` por tarea para que los reintentos no dupliquen; contra un backend anterior sigue funcionando, pero sin esa protección.
 
 ## Estructura del repo
