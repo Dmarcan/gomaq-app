@@ -7,6 +7,7 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { urlFirmadaONull } = require('../utils/urlsFirmadas');
+const { borrarArchivoSubido } = require('../utils/archivosStorage');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
 const { detectarCliente } = require('../utils/detectarCliente');
@@ -155,9 +156,9 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
 
     let client;
     let rutaStorage = null;
-    const borrarArchivoSubido = async () => {
+    const descartarPdfSubido = async () => {
         if (rutaStorage) {
-            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+            await borrarArchivoSubido(BUCKET_DOCUMENTOS, rutaStorage);
             rutaStorage = null;
         }
     };
@@ -197,7 +198,7 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
         const equipo = await client.query('SELECT cliente_id FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE', [id]);
         if (equipo.rows.length === 0) {
             await client.query('ROLLBACK');
-            await borrarArchivoSubido();
+            await descartarPdfSubido();
             return res.status(404).json({ error: 'Maquinaria no encontrada' });
         }
 
@@ -265,7 +266,7 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
         if (client) await client.query('ROLLBACK').catch(() => {});
         // compensacion best-effort: si el PDF ya subio pero la BD fallo, no dejar el archivo huerfano
         if (rutaStorage) {
-            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+            await borrarArchivoSubido(BUCKET_DOCUMENTOS, rutaStorage);
         }
         // dos envios simultaneos con el mismo uuid: el segundo choca con el UNIQUE, que tambien
         // significa "ya estaba hecho"; se relee la fila del primero
@@ -311,13 +312,13 @@ router.post('/guias/:guiaId/archivo', verifyToken, requireRole('administrativo')
             [rutaStorage, req.params.guiaId]
         );
         if (result.rows.length === 0) {
-            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+            await borrarArchivoSubido(BUCKET_DOCUMENTOS, rutaStorage);
             return res.status(409).json({ error: 'La guía ya tiene un documento adjunto' });
         }
         res.json(result.rows[0]);
     } catch (err) {
         if (rutaStorage) {
-            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+            await borrarArchivoSubido(BUCKET_DOCUMENTOS, rutaStorage);
         }
         console.error(err);
         res.status(500).json({ error: 'Error al adjuntar el documento de la guía' });

@@ -6,6 +6,7 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf } = require('../middleware/upload');
 const { supabase, BUCKET, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { urlFirmadaONull } = require('../utils/urlsFirmadas');
+const { borrarArchivoSubido } = require('../utils/archivosStorage');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { dejarEvento } = require('../utils/eventosOt');
 const { validarMotivo, detalleFacturaAnulada, esIdPositivo, montoEnteroONulo } = require('../utils/auditoriaLinea');
@@ -58,7 +59,7 @@ router.post('/:id/factura', verifyToken, requireRole('administrativo'), subidaPd
     let client = null;
     const borrarArchivo = async () => {
         if (rutaStorage) {
-            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+            await borrarArchivoSubido(BUCKET_DOCUMENTOS, rutaStorage);
         }
     };
     try {

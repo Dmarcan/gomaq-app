@@ -1,6 +1,7 @@
 const express = require('express');
 require('../utils/asyncErrores');
 const bcrypt = require('bcryptjs');
+const crypto = require('node:crypto');
 const jwt = require('jsonwebtoken');
 const pool = require('../config/db');
 
@@ -15,6 +16,10 @@ const { crearCodigo, enviarCodigoPorCorreo } = require('../services/codigosCuent
 const { crearSesion, revocarSesiones } = require('../services/sesiones');
 
 const router = express.Router();
+
+// Hash de una clave que nadie conoce: se compara cuando el correo no tiene cuenta, para que el login
+// tarde lo mismo exista o no el correo.
+const HASH_SIN_CUENTA = bcrypt.hashSync(crypto.randomBytes(16).toString('hex'), 10);
 
 /**
  * Firma la sesion. `pc`: hora del ultimo cambio de contrasena (ms; 0 si nunca), para que verifyToken
@@ -40,8 +45,9 @@ async function emitirSesion(usuario, req) {
 }
 
 router.post('/login', limiteLogin, async (req, res) => {
-    const { email, password } = req.body;
-    if (!email || !password) {
+    const { email, password } = req.body || {};
+    // un valor que no es texto (numero, objeto) haria fallar a bcrypt o a la consulta: se rechaza antes
+    if (typeof email !== 'string' || typeof password !== 'string' || !email || !password) {
         return res.status(400).json({ error: 'Escribe tu correo y tu contraseña' });
     }
 
@@ -59,7 +65,10 @@ router.post('/login', limiteLogin, async (req, res) => {
             [email]
         );
         const pendiente = solicitud.rows[0];
-        if (pendiente && pendiente.password_hash && await bcrypt.compare(password, pendiente.password_hash)) {
+        // siempre se hace una comparacion de bcrypt, haya o no solicitud: asi la demora no delata si el correo existe
+        const hashAComparar = pendiente && pendiente.password_hash ? pendiente.password_hash : HASH_SIN_CUENTA;
+        const coincide = await bcrypt.compare(password, hashAComparar);
+        if (pendiente && pendiente.password_hash && coincide) {
             return res.status(403).json({ error: 'Tu cuenta está en revisión. GOMAQ la aprueba en horario hábil; podrás entrar con este correo apenas quede lista' });
         }
         return res.status(401).json({ error: 'Correo o contraseña incorrectos' });

@@ -7,9 +7,7 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf, subidaComprobante } = require('../middleware/upload');
 const { supabase, BUCKET, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { URL_EXPIRACION_SEGUNDOS, firmarUrl } = require('../utils/urlsFirmadas');
-
-// borrar un archivo ya subido es un intento de limpieza: si falla no se cambia la respuesta, pero queda en el log
-const avisarArchivoHuerfano = (err) => console.error('No se pudo borrar el archivo subido de una factura que no se guardo:', err && err.message);
+const { borrarArchivoSubido } = require('../utils/archivosStorage');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { diasEntre } = require('../utils/diasArriendo');
 const { validarPeriodo } = require('../utils/periodosArriendo');
@@ -185,8 +183,6 @@ function respuestaPropuesta(a, config) {
     };
 }
 
-const esDia = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`));
-
 // sube la factura de un periodo de un arriendo.
 // Campos: guia_despacho_id, periodo_desde, periodo_hasta, folio, monto y archivo (PDF). El servidor
 // vuelve a calcular la propuesta con el despacho bloqueado y rechaza lo que no calce (huecos y
@@ -204,7 +200,7 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
     }
     const folioValido = validarFolio(folio);
     if (folioValido.error) return res.status(400).json({ error: folioValido.error });
-    if (conPeriodo && (!esDia(periodo_desde) || !esDia(periodo_hasta))) {
+    if (conPeriodo && (!esDiaValido(periodo_desde) || !esDiaValido(periodo_hasta))) {
         return res.status(400).json({ error: 'periodo_desde y periodo_hasta son requeridos (AAAA-MM-DD)' });
     }
     // pesos chilenos enteros: sin puntos, decimales ni signo (el panel ya manda un entero)
@@ -225,7 +221,7 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
     let client = null;
     const rechazar = async (estado, cuerpo) => {
         await client.query('ROLLBACK');
-        if (rutaStorage) await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(avisarArchivoHuerfano);
+        if (rutaStorage) await borrarArchivoSubido(BUCKET_DOCUMENTOS, rutaStorage);
         rutaStorage = null;
         return res.status(estado).json(cuerpo);
     };
@@ -292,7 +288,7 @@ router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.s
     } catch (err) {
         if (client) await client.query('ROLLBACK').catch(() => {});
         if (rutaStorage) {
-            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(avisarArchivoHuerfano);
+            await borrarArchivoSubido(BUCKET_DOCUMENTOS, rutaStorage);
         }
         if (err.code === '23505') {
             return res.status(409).json({
@@ -486,7 +482,7 @@ router.patch('/:facturaId/pago', verifyToken, requireRole('administrativo'), sub
     let client;
     let rutaNueva = null;
     const borrarArchivo = async (ruta) => {
-        if (ruta) await supabase.storage.from(BUCKET_DOCUMENTOS).remove([ruta]).catch(avisarArchivoHuerfano);
+        if (ruta) await borrarArchivoSubido(BUCKET_DOCUMENTOS, ruta);
     };
     try {
         // el archivo se sube ANTES de tomar la conexion de la base: una subida lenta no la deja retenida

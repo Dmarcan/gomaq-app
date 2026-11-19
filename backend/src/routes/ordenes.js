@@ -1005,6 +1005,21 @@ router.patch('/:id/valorizacion', verifyToken, requireRole('gerente'), async (re
             await client.query('ROLLBACK');
             return res.status(409).json({ error: 'Solo se valoriza una orden ya finalizada' });
         }
+        // el monto se aprueba con todos los repuestos decididos: uno en "?" (facturable 'pendiente') puede cambiar
+        // lo que se cobra. Una OT finalizada ya no recibe repuestos nuevos desde la app.
+        const sinDecidir = await client.query(
+            `SELECT COUNT(*)::int AS n FROM movimientos_insumo
+             WHERE orden_trabajo_id = $1 AND anulada_at IS NULL AND facturable = 'pendiente'`,
+            [req.params.id]
+        );
+        if (sinDecidir.rows[0].n > 0) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({
+                codigo: 'repuestos_sin_decidir',
+                repuestos_sin_decidir: sinDecidir.rows[0].n,
+                error: 'Hay repuestos sin decidir si se cobran: decide cada uno antes de aprobar la valorización',
+            });
+        }
         // una orden ya facturada no cambia de monto: el valor facturado esta en el SII (facturas.js
         // bloquea esta misma fila al subir la factura, asi que no hay carrera entre las dos)
         const facturada = await client.query('SELECT 1 FROM facturas WHERE orden_trabajo_id = $1', [req.params.id]);

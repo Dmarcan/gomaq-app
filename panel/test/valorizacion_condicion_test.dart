@@ -27,9 +27,9 @@ void main() {
     expect(repuestosSinDecidir([]), 0);
   });
 
-  test('el texto de la confirmación concuerda en número', () {
-    expect(textoConfirmarValorizacion(1), 'Hay 1 repuesto sin decidir si se cobra. ¿Aprobar la valorización igual?');
-    expect(textoConfirmarValorizacion(3), 'Hay 3 repuestos sin decidir si se cobran. ¿Aprobar la valorización igual?');
+  test('el aviso de repuestos sin decidir concuerda en número y pide resolverlos', () {
+    expect(textoRepuestosSinDecidir(1), 'Hay 1 repuesto sin decidir si se cobra. Decide cada uno antes de aprobar la valorización.');
+    expect(textoRepuestosSinDecidir(3), 'Hay 3 repuestos sin decidir si se cobran. Decide cada uno antes de aprobar la valorización.');
   });
 
   test('nombreRol da el nombre legible', () {

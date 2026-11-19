@@ -48,9 +48,9 @@ int repuestosSinDecidir(List<dynamic> lineas) => lineas
     .where((l) => l is Map && l['anulada_at'] == null && (l['facturable'] ?? 'pendiente') == 'pendiente')
     .length;
 
-/// Texto de la confirmación al aprobar con repuestos sin decidir; no bloquea, solo avisa.
-String textoConfirmarValorizacion(int n) =>
-    'Hay $n ${n == 1 ? 'repuesto sin decidir si se cobra' : 'repuestos sin decidir si se cobran'}. ¿Aprobar la valorización igual?';
+/// Aviso cuando quedan repuestos sin decidir: la valorización no se aprueba hasta resolverlos (el servidor también lo exige).
+String textoRepuestosSinDecidir(int n) =>
+    'Hay $n ${n == 1 ? 'repuesto sin decidir si se cobra' : 'repuestos sin decidir si se cobran'}. Decide cada uno antes de aprobar la valorización.';
 
 /// Quién creó la orden (rol del evento de creación): el cliente desde el portal, la oficina o un mecánico en terreno.
 String textoCreadaPor(Map orden) => switch (orden['creada_por_rol']) {
@@ -118,6 +118,8 @@ class DetalleOrdenState extends State<DetalleOrden> {
   List<dynamic> _lineas = [];
   // hasta que termina la primera carga no se dice "sin repuestos"
   bool _cargandoLineas = true;
+  // si la última carga de repuestos falló no se sabe cuáles hay: no se muestra "sin repuestos" ni se aprueba la valorización
+  bool _errorLineas = false;
   // línea de tiempo de la orden (solo administrativo y gerente)
   List<dynamic> _historial = [];
   bool _cargandoHistorial = true;
@@ -231,8 +233,14 @@ class DetalleOrdenState extends State<DetalleOrden> {
   Future<void> _cargarLineas() async {
     try {
       final data = await ApiClient.instance.get('/api/insumos/orden/${widget.orden['id']}');
-      if (mounted) setState(() => _lineas = data);
+      if (mounted) {
+        setState(() {
+          _lineas = data;
+          _errorLineas = false;
+        });
+      }
     } catch (_) {
+      if (mounted) setState(() => _errorLineas = true);
     } finally {
       if (mounted) setState(() => _cargandoLineas = false);
     }
@@ -424,17 +432,20 @@ class DetalleOrdenState extends State<DetalleOrden> {
       setState(() => _errorValorizacion = 'Escribe un monto válido, por ejemplo 249.900.');
       return;
     }
+    // sin saber cuáles son los repuestos no se aprueba: el servidor rechaza los que siguen sin decidir
+    if (_errorLineas || _cargandoLineas) {
+      setState(() => _errorValorizacion = 'Los repuestos no se cargaron. Reintenta cargarlos antes de aprobar.');
+      return;
+    }
     final sinDecidir = repuestosSinDecidir(_lineas);
     if (sinDecidir > 0) {
-      final seguir = await mostrarConfirmacion(
-        context,
-        titulo: '¿Aprobar con repuestos sin decidir?',
-        mensaje: textoConfirmarValorizacion(sinDecidir),
-        textoAccion: 'Aprobar igual',
-      );
-      if (!seguir || !mounted) return;
+      setState(() => _errorValorizacion = textoRepuestosSinDecidir(sinDecidir));
+      return;
     }
-    setState(() => _cargandoAccion = true);
+    setState(() {
+      _errorValorizacion = null;
+      _cargandoAccion = true;
+    });
     try {
       await ApiClient.instance.patch('/api/ordenes-trabajo/${widget.orden['id']}/valorizacion', {'valorizacion': monto});
       widget.onCambio();
@@ -551,6 +562,17 @@ class DetalleOrdenState extends State<DetalleOrden> {
       return const Padding(
         padding: EdgeInsets.only(bottom: 16),
         child: Center(child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))),
+      );
+    }
+    if (_errorLineas && _lineas.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 16),
+        child: Row(
+          children: [
+            const Expanded(child: Text('No se pudieron cargar los repuestos.', style: TextStyle(color: Colors.black54))),
+            TextButton(onPressed: _cargarLineas, child: const Text('Reintentar')),
+          ],
+        ),
       );
     }
     if (_lineas.isEmpty) {

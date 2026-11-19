@@ -6,6 +6,7 @@ const bcrypt = require('bcryptjs');
 const crypto = require('node:crypto');
 const {
     validarNuevaCuenta, validarNuevaInvitacion, validarCambioDeEstado, validarCambioDePassword, ROLES_INTERNOS,
+    MENSAJE_SOLO_GERENTE, rolesGestionablesPor,
 } = require('../utils/cuentasInternas');
 const { correoDisponible, estadoInvitacion, textoCodigo, urlPanel, validarCanal } = require('../utils/codigosCuenta');
 const { normalizarCorreo } = require('../utils/correo');
@@ -240,6 +241,13 @@ router.post('/invitaciones', verifyToken, requireRole('administrativo', 'gerente
     res.status(reinvitada ? 200 : 201).json({ usuario, invitacion });
 });
 
+/** true si la cuenta :id es de un gerente y quien pide no lo es: solo un gerente actua sobre otro gerente. */
+async function esGerenteVedado(req) {
+    if (req.user.rol === 'gerente') return false;
+    const r = await pool.query(`SELECT 1 FROM usuarios WHERE id = $1 AND rol = 'gerente'`, [req.params.id]);
+    return r.rows.length > 0;
+}
+
 /**
  * Bloquea la cuenta interna :id dentro de la transaccion y valida su estado. Devuelve la fila o
  * responde el error (y entonces devuelve null).
@@ -252,6 +260,10 @@ async function cuentaInternaParaCodigo(client, req, res, estadoEsperado, mensaje
     );
     if (r.rows.length === 0) {
         res.status(404).json({ error: 'Usuario interno no encontrado' });
+        return null;
+    }
+    if (r.rows[0].rol === 'gerente' && req.user.rol !== 'gerente') {
+        res.status(403).json({ error: MENSAJE_SOLO_GERENTE });
         return null;
     }
     if (r.rows[0].estado_cuenta !== estadoEsperado) {
@@ -363,6 +375,7 @@ router.post('/:id/invitacion/revocar', verifyToken, requireRole('administrativo'
 router.patch('/:id/estado', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const v = validarCambioDeEstado(req.body, req.params.id, req.user.id);
     if (!v.ok) return res.status(v.codigo).json({ error: v.error });
+    if (await esGerenteVedado(req)) return res.status(403).json({ error: MENSAJE_SOLO_GERENTE });
     // cambiar el estado cierra sus sesiones en la misma sentencia: reactivar una cuenta no revive las que
     // tenia abiertas, ni siquiera si algo falla a medias
     const result = await pool.query(
@@ -376,7 +389,7 @@ router.patch('/:id/estado', verifyToken, requireRole('administrativo', 'gerente'
                  RETURNING id
              )
              SELECT * FROM cambio`,
-        [v.estado, req.params.id, ROLES_INTERNOS]
+        [v.estado, req.params.id, rolesGestionablesPor(req.user.rol)]
     );
     if (result.rows.length === 0) {
         const pendiente = await pool.query(
@@ -399,6 +412,7 @@ router.patch('/:id/estado', verifyToken, requireRole('administrativo', 'gerente'
 router.post('/:id/password', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const v = validarCambioDePassword(req.body);
     if (!v.ok) return res.status(400).json({ error: v.error });
+    if (await esGerenteVedado(req)) return res.status(403).json({ error: MENSAJE_SOLO_GERENTE });
     const hash = await bcrypt.hash(v.password, 10);
     // la clave nueva y el cierre de las sesiones de esa cuenta van en una sola sentencia
     const result = await pool.query(
@@ -412,7 +426,7 @@ router.post('/:id/password', verifyToken, requireRole('administrativo', 'gerente
                  RETURNING id
              )
              SELECT * FROM cambio`,
-        [hash, req.params.id, ROLES_INTERNOS]
+        [hash, req.params.id, rolesGestionablesPor(req.user.rol)]
     );
     if (result.rows.length === 0) {
         return res.status(404).json({ error: 'Usuario interno no encontrado' });
@@ -624,16 +638,18 @@ router.patch('/:id/alertas', verifyToken, requireRole('administrativo', 'gerente
     if (recibe_alertas_mantencion === undefined && telefono_whatsapp === undefined) {
         return res.status(400).json({ error: 'Indique recibe_alertas_mantencion y/o telefono_whatsapp' });
     }
+    if (await esGerenteVedado(req)) return res.status(403).json({ error: MENSAJE_SOLO_GERENTE });
     const result = await pool.query(
         `UPDATE usuarios
              SET recibe_alertas_mantencion = COALESCE($1, recibe_alertas_mantencion),
                  telefono_whatsapp = COALESCE($2, telefono_whatsapp)
-             WHERE id = $3 AND rol <> 'cliente'
+             WHERE id = $3 AND rol = ANY($4::rol_usuario[])
              RETURNING id, nombre, email, rol, recibe_alertas_mantencion, telefono_whatsapp`,
         [
             recibe_alertas_mantencion === undefined ? null : recibe_alertas_mantencion === true || recibe_alertas_mantencion === 'true',
             telefono_whatsapp === undefined ? null : (String(telefono_whatsapp).trim() || null),
             req.params.id,
+            rolesGestionablesPor(req.user.rol),
         ]
     );
     if (result.rows.length === 0) {

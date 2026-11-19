@@ -762,6 +762,31 @@ describe('ciclo de vida de la OT', () => {
         assert.ok(cerrada.body.reparaciones_pendientes_valorizar.some((o) => o.id === ot));
         assert.equal((await pedir('PATCH', `/api/ordenes-trabajo/${ot}/valorizacion`, 'gerente', { valorizacion: 0 })).status, 200);
     });
+
+    test('no se aprueba la valorizacion con repuestos sin decidir; decididos o anulados dejan de bloquear', async (t) => {
+        if (!requiereBase(t)) return;
+        const ot = await crearOt('en_reparacion');
+        await pedir('POST', `/api/insumos/orden/${ot}`, 'mecanico', { descripcion: 'Filtro', cantidad: 1, facturable: 'pendiente' });
+        await pedir('POST', `/api/insumos/orden/${ot}`, 'mecanico', { descripcion: 'Sello', cantidad: 1, facturable: 'pendiente' });
+        await pool.query("UPDATE ordenes_trabajo SET estado = 'finalizada' WHERE id = $1", [ot]);
+
+        const bloqueada = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/valorizacion`, 'gerente', { valorizacion: 5000 });
+        assert.equal(bloqueada.status, 409, JSON.stringify(bloqueada.body));
+        assert.equal(bloqueada.body.codigo, 'repuestos_sin_decidir');
+        assert.equal(bloqueada.body.repuestos_sin_decidir, 2);
+        const sinCambio = await pool.query('SELECT valorizacion FROM ordenes_trabajo WHERE id = $1', [ot]);
+        assert.equal(sinCambio.rows[0].valorizacion, null, 'no quedo ningun monto aprobado');
+        assert.equal((await eventosDe(ot)).filter((e) => e.tipo === 'valorizacion').length, 0, 'ni su evento');
+
+        // una linea anulada no cuenta; otra decidida tampoco
+        const lineas = (await pool.query('SELECT id FROM movimientos_insumo WHERE orden_trabajo_id = $1 ORDER BY id', [ot])).rows;
+        await pool.query('UPDATE movimientos_insumo SET anulada_at = now() WHERE id = $1', [lineas[0].id]);
+        const unaFalta = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/valorizacion`, 'gerente', { valorizacion: 5000 });
+        assert.equal(unaFalta.status, 409);
+        assert.equal(unaFalta.body.repuestos_sin_decidir, 1);
+        await pool.query("UPDATE movimientos_insumo SET facturable = 'no' WHERE id = $1", [lineas[1].id]);
+        assert.equal((await pedir('PATCH', `/api/ordenes-trabajo/${ot}/valorizacion`, 'gerente', { valorizacion: 5000 })).status, 200);
+    });
 });
 
 // Cliente de la orden y costos por equipo
@@ -1952,7 +1977,7 @@ describe('cambios de lo facturable: OT ya facturada', () => {
 describe('cambios de lo facturable: valorizacion', () => {
     test('agregar una linea facturable anula la valorizacion y la OT vuelve a los pendientes del gerente', async (t) => {
         if (!requiereBase(t)) return;
-        const { ot } = await otValorizada();
+        const { ot, d } = await otValorizada();
         assert.ok(!(await pendientesDeValorizar()).includes(ot), 'valorizada: no esta pendiente');
 
         const r = await pedir('POST', `/api/insumos/orden/${ot}`, 'administrativo', {
@@ -1979,7 +2004,8 @@ describe('cambios de lo facturable: valorizacion', () => {
         const linea = await eventosTipo(ot, 'linea_agregada');
         assert.ok(Number(linea[linea.length - 1].id) < Number(eventos[0].id));
 
-        // el gerente la vuelve a aprobar
+        // el gerente la vuelve a aprobar, con todos los repuestos ya decididos (la linea D del armado seguia por decidir)
+        await pool.query("UPDATE movimientos_insumo SET facturable = 'no' WHERE id = $1", [d]);
         const nueva = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/valorizacion`, 'gerente', { valorizacion: 8000 });
         assert.equal(nueva.status, 200);
         assert.equal((await eventosTipo(ot, 'valorizacion')).length, 2);
@@ -6962,6 +6988,49 @@ describe('cuentas del equipo: asignar a un desactivado y aprobar con correo repe
             assert.match(r.body.error, /desactivado/);
         } finally {
             await pool.query('DELETE FROM usuarios WHERE id = $1', [u.rows[0].id]);
+        }
+    });
+
+    test('un administrativo no puede cambiar la clave, el estado ni pedir codigos de una cuenta de gerente', async (t) => {
+        if (!requiereBase(t)) return;
+        const gerente = await pool.query(
+            `INSERT INTO usuarios (nombre, email, password_hash, rol, estado_cuenta)
+             VALUES ('Gerente de prueba', $1, 'hash-original', 'gerente', 'activo') RETURNING id`,
+            [`gerente-${crypto.randomUUID()}@gomaq.test`]
+        );
+        const id = gerente.rows[0].id;
+        const inicio = (await pool.query('SELECT now() AS t')).rows[0].t;
+        await pool.query('UPDATE usuarios SET recibe_alertas_mantencion = true WHERE id = $1', [id]);
+        try {
+            const clave = await pedir('POST', `/api/usuarios/${id}/password`, 'administrativo', { password: 'ClaveNueva-123' });
+            assert.equal(clave.status, 403, JSON.stringify(clave.body));
+            const estado = await pedir('PATCH', `/api/usuarios/${id}/estado`, 'administrativo', { activo: false });
+            assert.equal(estado.status, 403, JSON.stringify(estado.body));
+            const codigo = await pedir('POST', `/api/usuarios/${id}/codigo-restablecer`, 'administrativo', { canal: 'manual' });
+            assert.equal(codigo.status, 403, JSON.stringify(codigo.body));
+            const invitacion = await pedir('POST', `/api/usuarios/${id}/invitacion`, 'administrativo', { canal: 'manual' });
+            assert.equal(invitacion.status, 403, JSON.stringify(invitacion.body));
+            const alertas = await pedir('PATCH', `/api/usuarios/${id}/alertas`, 'administrativo', { recibe_alertas_mantencion: false });
+            assert.equal(alertas.status, 403, JSON.stringify(alertas.body));
+
+            const fila = (await pool.query('SELECT password_hash, estado_cuenta, recibe_alertas_mantencion FROM usuarios WHERE id = $1', [id])).rows[0];
+            assert.equal(fila.password_hash, 'hash-original', 'la clave no cambio');
+            assert.equal(fila.estado_cuenta, 'activo', 'sigue activa');
+            assert.equal(fila.recibe_alertas_mantencion, true, 'sus alertas no cambiaron');
+            assert.equal((await pedir('PATCH', `/api/usuarios/${id}/alertas`, 'gerente', { recibe_alertas_mantencion: false })).status, 200);
+            const codigos = await pool.query('SELECT 1 FROM codigos_cuenta WHERE usuario_id = $1', [id]);
+            assert.equal(codigos.rows.length, 0, 'no se genero ningun codigo');
+
+            // un gerente si puede gestionar a otro gerente
+            const siGerente = await pedir('POST', `/api/usuarios/${id}/password`, 'gerente', { password: 'ClaveNueva-123' });
+            assert.equal(siGerente.status, 200, JSON.stringify(siGerente.body));
+            // y el administrativo sigue gestionando a mecanicos y administrativos
+            const mecanico = await pedir('POST', `/api/usuarios/${datos.mecanicoId}/codigo-restablecer`, 'administrativo', { canal: 'manual' });
+            assert.equal(mecanico.status, 200, JSON.stringify(mecanico.body));
+        } finally {
+            await pool.query('DELETE FROM codigos_cuenta WHERE usuario_id = $1 AND created_at >= $2', [datos.mecanicoId, inicio]);
+            await pool.query('DELETE FROM sesiones WHERE usuario_id = $1', [id]);
+            await pool.query('DELETE FROM usuarios WHERE id = $1', [id]);
         }
     });
 

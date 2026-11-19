@@ -4,6 +4,17 @@
 
 const ROLES_INTERNOS = ['mecanico', 'administrativo', 'gerente'];
 
+const MENSAJE_SOLO_GERENTE = 'Solo un gerente puede gestionar una cuenta de gerente';
+
+/**
+ * Roles de cuenta sobre los que quien tiene `rolActor` puede actuar (cambiar la clave, el estado o generar
+ * codigos). Solo un gerente gestiona a otro gerente: sin esta regla un administrativo podria quedarse con la
+ * cuenta de un rol superior.
+ */
+function rolesGestionablesPor(rolActor) {
+    return rolActor === 'gerente' ? ROLES_INTERNOS : ROLES_INTERNOS.filter((rol) => rol !== 'gerente');
+}
+
 const MIN_PASSWORD = 8;
 // bcrypt solo lee los primeros 72 bytes: una clave mas larga se trunca en silencio
 const MAX_PASSWORD_BYTES = 72;
@@ -92,6 +103,6 @@ function validarCambioDeEstado(body, idObjetivo, idActor) {
 }
 
 module.exports = {
-    ROLES_INTERNOS, MIN_PASSWORD, MAX_PASSWORD_BYTES,
+    ROLES_INTERNOS, MIN_PASSWORD, MAX_PASSWORD_BYTES, MENSAJE_SOLO_GERENTE, rolesGestionablesPor,
     validarPassword, validarCambioDePassword, validarNuevaCuenta, validarNuevaInvitacion, validarCambioDeEstado,
 };

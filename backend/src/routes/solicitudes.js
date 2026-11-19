@@ -6,6 +6,7 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaImagen } = require('../middleware/upload');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { urlFirmadaONull } = require('../utils/urlsFirmadas');
+const { borrarArchivoSubido } = require('../utils/archivosStorage');
 const { rutaAdjuntoSolicitud } = require('../utils/rutaArchivo');
 const { dejarEvento } = require('../utils/eventosOt');
 const { validarCoordenadasFormulario } = require('../utils/geo');
@@ -123,7 +124,7 @@ router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archi
         if (client) await client.query('ROLLBACK').catch(() => {});
         // compensacion: si el archivo subio pero la BD fallo, no dejarlo huerfano
         if (evidenciaUrl) {
-            await supabase.storage.from(BUCKET_DOCUMENTOS).remove([evidenciaUrl]).catch(() => {});
+            await borrarArchivoSubido(BUCKET_DOCUMENTOS, evidenciaUrl);
         }
         throw err;
     } finally {

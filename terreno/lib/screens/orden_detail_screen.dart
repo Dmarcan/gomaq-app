@@ -629,28 +629,36 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
 
   Future<void> _tomarFoto(String tipo) async {
     final syncService = context.read<SyncService>();
+    final XFile? foto;
     try {
-      final picker = ImagePicker();
       // 1600 px de ancho sobra para ver el estado del equipo y evita fotos de varios MB que tardan
       // mucho en subir con mala señal
-      final foto = await picker.pickImage(source: ImageSource.camera, imageQuality: 80, maxWidth: 1600);
-      if (foto == null) return;
+      foto = await ImagePicker().pickImage(source: ImageSource.camera, imageQuality: 80, maxWidth: 1600);
+    } catch (_) {
+      // permiso de camara negado o camara ocupada: se avisa en vez de no hacer nada
+      _avisarFoto('No se pudo abrir la cámara. Revisa que la app tenga permiso para usarla.');
+      return;
+    }
+    if (foto == null) return;
 
+    try {
       final dir = await getApplicationDocumentsDirectory();
       final nombreArchivo = 'ot${_id}_${DateTime.now().millisecondsSinceEpoch}.jpg';
       final rutaLocal = '${dir.path}/$nombreArchivo';
       await File(foto.path).copy(rutaLocal);
-
       await syncService.encolarEvidencia(_id, rutaLocal, tipo: tipo);
-      await _cargar();
-      _intentarSincronizarAhora();
     } catch (_) {
-      // permiso de camara negado o camara ocupada: se avisa en vez de no hacer nada
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No se pudo abrir la cámara. Revisa que la app tenga permiso para usarla.')),
-      );
+      _avisarFoto('No se pudo guardar la foto en el teléfono. Vuelve a tomarla.');
+      return;
     }
+    // desde aqui la foto ya esta en la cola: un fallo al refrescar la pantalla no debe hacer repetirla
+    _intentarSincronizarAhora();
+    await _cargar();
+  }
+
+  void _avisarFoto(String mensaje) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(mensaje)));
   }
 
   List<Map<String, dynamic>> _fotosDeTipo(String tipo) =>

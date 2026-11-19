@@ -6,6 +6,7 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaImagen } = require('../middleware/upload');
 const { supabase, BUCKET_EQUIPOS, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { urlFirmadaONull } = require('../utils/urlsFirmadas');
+const { borrarArchivoSubido } = require('../utils/archivosStorage');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
 const { calcularEstadoMantencion } = require('../utils/mantencion');
@@ -298,7 +299,7 @@ router.post('/', verifyToken, requireRole('administrativo'), subidaImagen.single
         res.status(201).json(result.rows[0]);
     } catch (err) {
         if (fotoPath) {
-            await supabase.storage.from(BUCKET_EQUIPOS).remove([fotoPath]).catch(() => {});
+            await borrarArchivoSubido(BUCKET_EQUIPOS, fotoPath);
         }
         // codigo es unico: repetirlo es un error de quien escribe, no del servidor, y tiene que
         // poder corregirlo sin adivinar
@@ -370,7 +371,7 @@ router.patch('/:id/foto', verifyToken, requireRole('administrativo'), subidaImag
         res.json(await conFotoFirmada(result.rows[0]));
     } catch (err) {
         if (fotoPath) {
-            await supabase.storage.from(BUCKET_EQUIPOS).remove([fotoPath]).catch(() => {});
+            await borrarArchivoSubido(BUCKET_EQUIPOS, fotoPath);
         }
         console.error(err);
         res.status(500).json({ error: 'Error al actualizar la foto' });

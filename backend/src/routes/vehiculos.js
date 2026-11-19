@@ -5,6 +5,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { urlFirmadaONull } = require('../utils/urlsFirmadas');
+const { borrarArchivoSubido } = require('../utils/archivosStorage');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { subidaDocumento } = require('../middleware/upload');
 
@@ -210,7 +211,7 @@ router.post('/:id/documentos', verifyToken, requireRole('mecanico', 'administrat
         } catch (err) {
             // compensacion: si el archivo subio pero la BD fallo, no dejarlo huerfano
             if (rutaStorage) {
-                await supabase.storage.from(BUCKET_DOCUMENTOS).remove([rutaStorage]).catch(() => {});
+                await borrarArchivoSubido(BUCKET_DOCUMENTOS, rutaStorage);
             }
             console.error(err);
             res.status(500).json({ error: 'Error al subir el documento' });
