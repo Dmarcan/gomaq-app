@@ -232,4 +232,9 @@ describe('Pago y DIAS MORA (misma regla que cobranza.js)', () => {
         assert.equal(celda(f, 'Periodo Arriendo'), null);
         assert.deepEqual(celda(f, 'MES ARRIENDO'), { fecha: '2026-11-01' });
     });
+
+    test('un dia que no existe en el calendario no arma periodo', () => {
+        assert.equal(textoPeriodo('2026-02-31', '2026-03-10'), null);
+        assert.equal(textoPeriodo('2026-02-01', '2026-02-30'), null);
+    });
 });

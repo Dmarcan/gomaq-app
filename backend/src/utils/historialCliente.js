@@ -6,10 +6,10 @@
 // cliente; con un cliente a la vez es aceptable, pero no llamarlo dentro de un bucle.
 
 const { cargarArriendos } = require('./arriendos');
+const { num } = require('./valores');
 
 const TOPE_LISTA = 200;
 
-const aNumero = (v) => (v === null || v === undefined ? null : Number(v));
 
 // de la mas reciente a la mas antigua; las fechas son texto YYYY-MM-DD y los nulos van al final
 function comparaDesc(campo) {
@@ -48,8 +48,8 @@ function armarHistorial({ cliente, arriendos = [], facturas = [], ordenes = [], 
         .map((f) => ({
             id: f.id,
             folio: f.folio,
-            monto: aNumero(f.monto),
-            monto_traslado: aNumero(f.monto_traslado) || 0,
+            monto: num(f.monto),
+            monto_traslado: num(f.monto_traslado) || 0,
             fecha_emision: f.fecha_emision || null,
             periodo_desde: f.periodo_desde || null,
             periodo_hasta: f.periodo_hasta || null,

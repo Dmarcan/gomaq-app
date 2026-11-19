@@ -7,8 +7,8 @@
 // No devuelve archivo_url: el PDF se abre desde el perfil del equipo o la orden, con URL firmada.
 
 const { FILTROS_ESTADO, SQL_HOY, estadoCobranza, diasMora, diasParaVencer } = require('./cobranza');
+const { num } = require('./valores');
 
-const num = (v) => (v === null || v === undefined ? null : Number(v));
 
 /** Fila de la consulta -> fila de la respuesta. `hoy` es 'YYYY-MM-DD' en Santiago. */
 function armarFilaEmitida(f, hoy) {

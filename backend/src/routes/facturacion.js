@@ -29,6 +29,7 @@ const { crearXlsx, TIPO_XLSX } = require('../utils/xlsx');
 const {
     NOMBRE_HOJA: NOMBRE_HOJA_EXPORTACION, MAX_FILAS: MAX_FILAS_EXPORTACION, armarHoja, cargarFilasExportacion,
 } = require('../utils/exportarFacturacion');
+const { num, vacio } = require('../utils/valores');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['facturaId', 'guiaDespachoId']);
@@ -456,8 +457,6 @@ router.post('/exportar', verifyToken, requireRole('administrativo', 'gerente'), 
 });
 
 const tiene = (obj, clave) => Object.prototype.hasOwnProperty.call(obj, clave);
-const vacio = (v) => v === undefined || v === null || v === '';
-const aNumeroONulo = (v) => (v === null || v === undefined ? null : Number(v));
 
 // cobranza (038): { fecha_pago } marca la factura pagada (null la
 // deja por cobrar) y { anulada_nc } la marca anulada con nota de credito guardando el folio de la NC (null
@@ -617,17 +616,17 @@ router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (r
         // monto y traslado finales (lo nuevo o lo ya guardado) deben seguir cuadrando
         // NUMERIC llega como texto con decimales ('249900.00'): se pasa a numero entero antes de validar
         const guardada = fila.rows[0];
-        const montoGuardado = aNumeroONulo(guardada.monto);
+        const montoGuardado = num(guardada.monto);
         const montoFinal = montoONulo(monto) ?? montoGuardado;
         const rechazarCambio = async (mensaje) => {
             await client.query('ROLLBACK');
             return res.status(400).json({ error: mensaje });
         };
         // neto final: lo enviado (null lo borra) o lo guardado; no mayor que el monto final
-        const netoFinal = validarNeto(montoFinal, tiene(cuerpo, 'monto_neto') ? cuerpo.monto_neto : aNumeroONulo(guardada.monto_neto));
+        const netoFinal = validarNeto(montoFinal, tiene(cuerpo, 'monto_neto') ? cuerpo.monto_neto : num(guardada.monto_neto));
         if (netoFinal.error) return await rechazarCambio(netoFinal.error);
         const trasladoEnviado = !vacio(monto_traslado);
-        const trasladoBase = trasladoEnviado ? monto_traslado : aNumeroONulo(guardada.monto_traslado);
+        const trasladoBase = trasladoEnviado ? monto_traslado : num(guardada.monto_traslado);
         const partesEnviadas = tiene(cuerpo, 'traslado_entrega') || tiene(cuerpo, 'traslado_retiro');
         let traslado;
         if (partesEnviadas && (!vacio(cuerpo.traslado_entrega) || !vacio(cuerpo.traslado_retiro))) {
@@ -640,8 +639,8 @@ router.patch('/:facturaId', verifyToken, requireRole('administrativo'), async (r
             traslado = v.error ? v : {
                 traslado: v.traslado,
                 // partes enviadas vacias = sin division; sin partes, la guardada (el trigger la borra si ya no cuadra)
-                entrega: partesEnviadas ? null : aNumeroONulo(guardada.traslado_entrega),
-                retiro: partesEnviadas ? null : aNumeroONulo(guardada.traslado_retiro),
+                entrega: partesEnviadas ? null : num(guardada.traslado_entrega),
+                retiro: partesEnviadas ? null : num(guardada.traslado_retiro),
             };
         }
         if (traslado.error) return await rechazarCambio(traslado.error);

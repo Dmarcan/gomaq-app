@@ -6,6 +6,8 @@
 // horas transcurridas desde la ultima mantencion, no el horometro absoluto: un equipo con
 // 1.156 h que recibio mantencion a las 1.100 lleva 56 h de uso, no 1.156.
 
+const { num } = require('./valores');
+
 /** Horas de margen con las que se avisa antes de cumplir el intervalo. */
 const HORAS_AVISO_MANTENCION = 50;
 
@@ -50,7 +52,6 @@ function requiereAviso(estado) {
     return estado.por_vencer || estado.vencida;
 }
 
-const num = (v) => (v === null || v === undefined ? null : Number(v));
 
 /**
  * Equipos que ya cumplieron el intervalo de mantencion o estan por cumplirlo, del mas urgente al

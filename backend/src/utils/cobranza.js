@@ -45,6 +45,7 @@ const FILTROS_ESTADO = {
 };
 
 const { MS_DIA } = require('./tiempo');
+const { vacio } = require('./valores');
 const aUtc = (dia) => Date.parse(`${dia}T00:00:00Z`);
 /** Dias de b menos a (dos fechas YYYY-MM-DD). */
 const diasEntreFechas = (a, b) => Math.round((aUtc(b) - aUtc(a)) / MS_DIA);
@@ -131,7 +132,6 @@ function vencimientoPropuesto({ emision, vencimientoPdf, plazoCliente } = {}) {
     return { propuesta: null, origen: null, alternativa: null, coincide: null, dias_pdf: null, plazo_cliente_dias: plazo };
 }
 
-const vacio = (v) => v === undefined || v === null || v === '';
 const ddmmaaaa = (dia) => `${dia.slice(8, 10)}-${dia.slice(5, 7)}-${dia.slice(0, 4)}`;
 
 /** Texto del aviso cuando el vencimiento del PDF no coincide con el plazo habitual del cliente. */

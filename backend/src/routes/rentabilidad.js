@@ -14,13 +14,13 @@ const {
     diasDelPeriodo,
     compararPorRelevancia,
 } = require('../utils/rentabilidad');
-const { fechaDeQuery, validarIdsEnRuta } = require('../utils/validacion');
+const { fechaDeQuery, validarIdsEnRuta, esDiaValido } = require('../utils/validacion');
 const { parsearPaginacion, parsearBusqueda, envolver } = require('../utils/paginacion');
+const { num } = require('../utils/valores');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
 
-const num = (v) => (v === null || v === undefined ? null : Number(v));
 
 /** Por defecto los ultimos 12 meses, que es el horizonte con que se evalua un arriendo. */
 function rangoDeFechas(query) {
@@ -39,11 +39,10 @@ function rangoDeFechas(query) {
     }
     // dias de calendario del periodo para contar dias de arriendo: si llegan como 'YYYY-MM-DD' se usan tal
     // cual (un Date a medianoche UTC caeria el dia anterior en Santiago); si no, el dia de Santiago
-    const esDia = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
     return {
         desde, hasta,
-        desdeDia: esDia(query.desde) ? query.desde : diaSantiago(desde),
-        hastaDia: esDia(query.hasta) ? query.hasta : diaSantiago(hasta),
+        desdeDia: esDiaValido(query.desde) ? query.desde : diaSantiago(desde),
+        hastaDia: esDiaValido(query.hasta) ? query.hasta : diaSantiago(hasta),
     };
 }
 

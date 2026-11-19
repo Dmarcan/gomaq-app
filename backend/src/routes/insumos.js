@@ -12,11 +12,11 @@ const { diaSantiago, diasEntre } = require('../utils/diasArriendo');
 const { verificarDuenoOrden, MENSAJE_OT_CERRADA } = require('../utils/ordenes');
 const { parsearPaginacion, envolver } = require('../utils/paginacion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
+const { num } = require('../utils/valores');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id', 'ordenId', 'lineaId']);
 
-const num = (v) => (v === null || v === undefined ? null : Number(v));
 
 /** Id escrito en el cuerpo de una peticion: numero entero positivo o texto de digitos (no arreglos, ni booleanos). */
 const idDeCuerpoValido = (v) => (typeof v === 'number'

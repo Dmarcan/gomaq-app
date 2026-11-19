@@ -18,6 +18,7 @@
 // una con tope) y se la entrega.
 
 const { calcularGasto, ingresoFactura } = require('./rentabilidad');
+const { numValido } = require('./valores');
 
 /** Cantidad maxima de eventos que devuelve la linea de tiempo. */
 const TOPE_EVENTOS = 500;
@@ -27,7 +28,6 @@ const OBSERVACION_MANTENCION_PANEL = 'Mantencion preventiva registrada desde el 
 
 const SIN_CLIENTE = null;
 
-const num = (v) => (v === null || v === undefined || v === '' || isNaN(Number(v)) ? null : Number(v));
 const iso = (v) => (v === null || v === undefined ? null : (v instanceof Date ? v : new Date(v)).toISOString());
 const idOCero = (v) => (v === null || v === undefined ? null : Number(v));
 
@@ -67,14 +67,14 @@ function eventoOrden(o, lineasPorOt) {
 }
 
 function eventoFactura(f) {
-    const monto = num(f.monto);
-    const traslado = num(f.monto_traslado);
+    const monto = numValido(f.monto);
+    const traslado = numValido(f.monto_traslado);
     return {
         ...base('factura', f, f.fecha_evento),
         folio: f.folio,
         monto,
         monto_traslado: traslado,
-        monto_neto: num(f.monto_neto),
+        monto_neto: numValido(f.monto_neto),
         anulada_nc: f.anulada_nc || null,
         // misma regla que la rentabilidad: neto menos traslado si hay neto (038), 0 si se anulo con nota de credito
         ingreso: monto === null ? null : ingresoFactura(f),
@@ -91,8 +91,8 @@ function eventoFactura(f) {
 function eventosLectura(lecturas) {
     const asc = [...lecturas].sort((a, b) => new Date(a.fecha) - new Date(b.fecha) || Number(a.id) - Number(b.id));
     return asc.map((l, i) => {
-        const valor = num(l.valor);
-        const anterior = i > 0 ? num(asc[i - 1].valor) : null;
+        const valor = numValido(l.valor);
+        const anterior = i > 0 ? numValido(asc[i - 1].valor) : null;
         const horas = valor !== null && anterior !== null && valor - anterior >= 0 ? Math.round((valor - anterior) * 10) / 10 : null;
         return {
             ...base('lectura_horometro', l, l.fecha),

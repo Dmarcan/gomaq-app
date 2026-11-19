@@ -6,6 +6,8 @@
 
 const { FILTROS_ESTADO, SQL_HOY, estadoCobranza, diasMora } = require('./cobranza');
 const { SQL_CLIENTE, SQL_FECHA_REF, DESDE_JOIN } = require('./facturasEmitidas');
+const { numSinVacio } = require('./valores');
+const { esDiaValido } = require('./validacion');
 
 const NOMBRE_HOJA = 'CLIENTES';
 const TITULO = 'CLIENTES MENSUALES';
@@ -29,10 +31,8 @@ const CATEGORIAS = {
 
 const MESES = ['ENE', 'FEB', 'MAR', 'ABR', 'MAY', 'JUN', 'JUL', 'AGO', 'SEP', 'OCT', 'NOV', 'DIC'];
 
-const num = (v) => (v === null || v === undefined || v === '' ? null : Number(v));
 const texto = (v) => (v === null || v === undefined ? null : String(v));
 const fecha = (dia) => (dia ? { fecha: dia } : null);
-const esDia = (v) => typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v);
 
 /** 'AAAA-MM-DD' -> { d, m, a } */
 function partes(dia) {
@@ -44,7 +44,7 @@ function partes(dia) {
  * de año, `12 DIC 2025 AL 11 ENE 2026`. Sin periodo, vacio.
  */
 function textoPeriodo(desde, hasta) {
-    if (!esDia(desde) || !esDia(hasta)) return null;
+    if (!esDiaValido(desde) || !esDiaValido(hasta)) return null;
     const a = partes(desde);
     const b = partes(hasta);
     if (a.a !== b.a) return `${a.d} ${MESES[a.m]} ${a.a} AL ${b.d} ${MESES[b.m]} ${b.a}`;
@@ -78,17 +78,17 @@ function textoEquipo(f) {
  * columna; con total sin division, todo a Traslado Entrega.
  */
 function montosFila(f) {
-    const monto = num(f.monto);
-    const traslado = num(f.monto_traslado) ?? 0;
-    const netoGuardado = num(f.monto_neto);
+    const monto = numSinVacio(f.monto);
+    const traslado = numSinVacio(f.monto_traslado) ?? 0;
+    const netoGuardado = numSinVacio(f.monto_neto);
     let neto = netoGuardado;
     let estimado = false;
     if (neto === null && monto !== null) {
         neto = Math.round(monto / IVA);
         estimado = true;
     }
-    const entrega = num(f.traslado_entrega);
-    const retiro = num(f.traslado_retiro);
+    const entrega = numSinVacio(f.traslado_entrega);
+    const retiro = numSinVacio(f.traslado_retiro);
     let tEntrega = null;
     let tRetiro = null;
     if (entrega !== null && retiro !== null) {
@@ -114,7 +114,7 @@ function armarFila(f, hoy) {
     const m = montosFila(f);
     const cobranza = { fecha_vencimiento: f.fecha_vencimiento, fecha_pago: f.fecha_pago, anulada_nc: f.anulada_nc };
     const estado = estadoCobranza(cobranza, hoy);
-    const refMes = [f.periodo_desde, f.fecha_emision, f.fecha_ref].find(esDia);
+    const refMes = [f.periodo_desde, f.fecha_emision, f.fecha_ref].find(esDiaValido);
     const celdas = [
         texto(f.cliente_rut), // Rut
         texto(f.cliente_nombre), // Razon Social
@@ -137,8 +137,8 @@ function armarFila(f, hoy) {
         null, // Comision
         null, // Pagada comision
         refMes ? fecha(`${refMes.slice(0, 7)}-01`) : null, // MES ARRIENDO
-        esDia(f.fecha_emision) ? fecha(f.fecha_emision) : null, // Emision
-        esDia(f.fecha_vencimiento) ? fecha(f.fecha_vencimiento) : null, // Vcto
+        esDiaValido(f.fecha_emision) ? fecha(f.fecha_emision) : null, // Emision
+        esDiaValido(f.fecha_vencimiento) ? fecha(f.fecha_vencimiento) : null, // Vcto
         celdaPago(estado, f), // Pago
         estado === 'vencida' ? diasMora(cobranza, hoy) : null, // DIAS MORA
     ];

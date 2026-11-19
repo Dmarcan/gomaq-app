@@ -10,13 +10,13 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularEstadoMantencion, requiereAviso, HORAS_AVISO_MANTENCION, cargarAlertasMantencion } = require('../utils/mantencion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
 const { encolarADispositivos } = require('../utils/avisos');
+const { num } = require('../utils/valores');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
 
 // Postgres devuelve NUMERIC como string (mismo caso que el COUNT(*) del dashboard):
 // sin esto las horas se concatenarian en vez de restarse.
-const num = (v) => (v === null || v === undefined ? null : Number(v));
 
 /**
  * Encola el aviso de mantencion proxima siguiendo el patron Outbox: la

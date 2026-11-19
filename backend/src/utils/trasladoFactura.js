@@ -6,8 +6,8 @@
 // base deja las dos partes en NULL si su suma no es igual a monto_traslado.
 
 const { montoEnteroONulo } = require('./auditoriaLinea');
+const { vacio } = require('./valores');
 
-const vacio = (v) => v === undefined || v === null || v === '';
 const ERROR_ENTERO = (campo) => `${campo} debe ser un número entero de pesos, sin puntos ni decimales, de hasta 10 dígitos`;
 
 /**
