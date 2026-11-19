@@ -15,6 +15,7 @@ class _PlataformaFalsa implements PushPlataforma {
   PermisoAvisos alPedir;
   bool esSoportado = true;
   String? token = 'tok-1';
+  Object? errorAlToken;
   int inicializaciones = 0;
   int pedidos = 0;
   bool tokenBorrado = false;
@@ -39,7 +40,10 @@ class _PlataformaFalsa implements PushPlataforma {
   }
 
   @override
-  Future<String?> obtenerToken(ConfigPush config) async => token;
+  Future<String?> obtenerToken(ConfigPush config) async {
+    if (errorAlToken != null) throw errorAlToken!;
+    return token;
+  }
   @override
   Stream<String> get alRenovarToken => renovar.stream;
   @override
@@ -128,6 +132,49 @@ void main() {
     test('el cliente siempre queda en el portal', () {
       expect(rutaDeAviso({'orden_trabajo_id': '42'}, esCliente: true), '/portal');
       expect(rutaDeAviso({}, esCliente: true), '/portal');
+    });
+  });
+
+  group('motivo tecnico cuando no esta disponible', () {
+    test('navegador sin push: queda el motivo y el estado no disponible', () async {
+      final p = _PlataformaFalsa()..esSoportado = false;
+      final s = _servicio(p, _ApiFalsa());
+      await _iniciar(s);
+      expect(s.estado.value, EstadoAvisos.noDisponible);
+      expect(s.motivoNoDisponible, 'el navegador no soporta push');
+    });
+
+    test('si falla el token al iniciar (Brave sin los servicios de Google) guarda el motivo en vez de tragarlo', () async {
+      final p = _PlataformaFalsa()..errorAlToken = Exception('AbortError: Registration failed - push service error');
+      final api = _ApiFalsa();
+      final s = _servicio(p, api);
+      await _iniciar(s);
+      expect(s.estado.value, EstadoAvisos.noDisponible);
+      expect(s.motivoNoDisponible, startsWith('fallo al iniciar: '));
+      expect(s.motivoNoDisponible, contains('push service error'));
+      expect(api.llamadas, isEmpty);
+    });
+
+    test('si falla al activar con el boton tambien queda el motivo, corto y en una linea', () async {
+      final p = _PlataformaFalsa(permiso: PermisoAvisos.pendiente)
+        ..errorAlToken = Exception('linea 1\n   linea 2 ${'x' * 300}');
+      final s = _servicio(p, _ApiFalsa());
+      await _iniciar(s);
+      expect(s.estado.value, EstadoAvisos.porActivar);
+      await s.activar();
+      expect(s.estado.value, EstadoAvisos.noDisponible);
+      expect(s.motivoNoDisponible, startsWith('fallo al activar: '));
+      expect(s.motivoNoDisponible, isNot(contains('\n')));
+      expect(s.motivoNoDisponible!.length, lessThan(180));
+    });
+
+    test('un inicio que sale bien limpia el motivo', () async {
+      final p = _PlataformaFalsa();
+      final s = _servicio(p, _ApiFalsa());
+      s.motivoNoDisponible = 'viejo';
+      await _iniciar(s);
+      expect(s.estado.value, EstadoAvisos.activados);
+      expect(s.motivoNoDisponible, isNull);
     });
   });
 

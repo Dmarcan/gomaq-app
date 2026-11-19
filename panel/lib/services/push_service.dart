@@ -21,7 +21,8 @@ class MensajePush {
 enum PermisoAvisos { concedido, denegado, pendiente }
 
 /// Lo que ve la persona en el boton de avisos.
-enum EstadoAvisos { noDisponible, porActivar, activados, bloqueados }
+/// [soloPanelAbierto] no lo emite PushService: lo arma el boton cuando solo anda la capa local (ver estadoCombinado).
+enum EstadoAvisos { noDisponible, porActivar, activados, soloPanelAbierto, bloqueados }
 
 /// Lo que PushService necesita de Firebase. Existe para probar el servicio sin plugin ni navegador.
 abstract interface class PushPlataforma {
@@ -98,6 +99,11 @@ class PushService {
 
   final ValueNotifier<EstadoAvisos> estado = ValueNotifier(EstadoAvisos.noDisponible);
 
+  /// Por que el push no esta disponible, en una frase corta y tecnica ("el navegador no soporta push",
+  /// "fallo al iniciar: ..."). Null si no hay fallo o si el push no esta configurado. Sirve para decirle
+  /// a la persona (y a quien da soporte) que paso, en vez de un "no disponible" sin explicacion.
+  String? motivoNoDisponible;
+
   bool _activo = false;
   bool _iniciado = false;
   String? _token;
@@ -124,9 +130,11 @@ class PushService {
         _iniciado = true;
       }
       if (!await _plataforma.soportado()) {
+        motivoNoDisponible = 'el navegador no soporta push';
         estado.value = EstadoAvisos.noDisponible;
         return;
       }
+      motivoNoDisponible = null;
       _activo = true;
 
       await _cancelarSuscripciones();
@@ -146,8 +154,9 @@ class PushService {
         if (acepto) permiso = await _plataforma.pedirPermiso();
       }
       await _aplicarPermiso(permiso);
-    } catch (_) {
+    } catch (e) {
       // el push nunca debe romper el panel: queda como esta y se reintenta al volver a abrirlo
+      _fallo('fallo al iniciar', e);
     }
   }
 
@@ -156,14 +165,28 @@ class PushService {
     if (!_activo) return;
     try {
       await _aplicarPermiso(await _plataforma.pedirPermiso());
-    } catch (_) {}
+    } catch (e) {
+      _fallo('fallo al activar', e);
+    }
+  }
+
+  /// Guarda el motivo (una linea, sin saltos ni textos largos) y deja el push como no disponible.
+  void _fallo(String prefijo, Object error) {
+    final detalle = error.toString().replaceAll(RegExp(r'\s+'), ' ').trim();
+    motivoNoDisponible = detalle.isEmpty
+        ? prefijo
+        : '$prefijo: ${detalle.length > 140 ? '${detalle.substring(0, 140)}...' : detalle}';
+    estado.value = EstadoAvisos.noDisponible;
   }
 
   Future<void> _aplicarPermiso(PermisoAvisos permiso) async {
     switch (permiso) {
       case PermisoAvisos.concedido:
-        estado.value = EstadoAvisos.activados;
+        // si Firebase no entrega el token (en Brave sin los servicios de Google de push, por ejemplo)
+        // el error sube a iniciar()/activar(), que guardan el motivo
         final token = await _plataforma.obtenerToken(_config);
+        motivoNoDisponible = null;
+        estado.value = EstadoAvisos.activados;
         if (token != null && token.isNotEmpty) await _registrar(token);
       case PermisoAvisos.denegado:
         estado.value = EstadoAvisos.bloqueados;
