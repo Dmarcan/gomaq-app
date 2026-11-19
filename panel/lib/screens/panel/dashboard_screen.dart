@@ -147,7 +147,7 @@ class _DashboardScreenState extends State<DashboardScreen> {
     final datos = [
       ('operativa', 'Operativa', aEntero(flota['operativas']), GomaqColors.estadoPositivo),
       ('en_mantencion', 'En mantención', aEntero(flota['en_mantencion']), GomaqColors.estadoAdvertencia),
-      ('parcialmente_operativa', 'Parcialmente operativa', aEntero(flota['parcialmente_operativa']), GomaqColors.advertenciaFuerte),
+      ('parcialmente_operativa', 'Parcialmente operativa', aEntero(flota['parcialmente_operativa']), GomaqColors.estadoParcial),
       ('fuera_de_servicio', 'Fuera de servicio', aEntero(flota['fuera_de_servicio']), GomaqColors.estadoNegativo),
     ];
     final total = datos.fold<int>(0, (acc, d) => acc + d.$3);

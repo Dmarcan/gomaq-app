@@ -51,6 +51,15 @@ int repuestosSinDecidir(List<dynamic> lineas) => lineas
 String textoConfirmarValorizacion(int n) =>
     'Hay $n ${n == 1 ? 'repuesto sin decidir si se cobra' : 'repuestos sin decidir si se cobran'}. ¿Aprobar la valorización igual?';
 
+/// Quién creó la orden (rol del evento de creación): el cliente desde el portal, la oficina o un mecánico en terreno.
+String textoCreadaPor(Map orden) => switch (orden['creada_por_rol']) {
+      'cliente' => 'Cliente (portal)',
+      'administrativo' => 'Administrativo',
+      'gerente' => 'Gerente',
+      'mecanico' => 'Mecánico',
+      _ => 'No registrado',
+    };
+
 /// Quién atiende la orden, para la sección "Mecánico" del detalle.
 String textoMecanicoOrden(Map orden) {
   final nombre = '${orden['mecanico_nombre'] ?? ''}'.trim();
@@ -716,6 +725,7 @@ class DetalleOrdenState extends State<DetalleOrden> {
         children: [
           _fila('Estado', Align(alignment: Alignment.centerLeft, child: EstadoChip(estado: o['estado']))),
           _fila('Cliente', _texto(o['cliente_nombre'])),
+          _fila('Creada por', _texto(textoCreadaPor(o))),
           _fila(
             'Destino',
             Wrap(

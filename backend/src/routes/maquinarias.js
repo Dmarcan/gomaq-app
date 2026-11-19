@@ -88,12 +88,16 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
         return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
     }
     const result = await pool.query(
-        // asistencia_abierta_id: la solicitud de asistencia que sigue en curso (pendiente u orden sin terminar), para
-        // que el portal avise y deje agregar un detalle en vez de pedir otra
+        // asistencia_abierta: la solicitud de asistencia que sigue en curso (pendiente u orden sin terminar) con lo que el
+        // cliente ya envio, para que el portal lo muestre y deje agregar un detalle (solo mientras esta pendiente)
         `SELECT m.id, m.codigo, m.tipo, m.estado, m.ubicacion, m.foto_url,
-                (SELECT s.id FROM solicitudes s LEFT JOIN ordenes_trabajo ot ON ot.id = s.orden_trabajo_id
+                (SELECT json_build_object(
+                            'id', s.id, 'estado', s.estado, 'ot_estado', ot.estado, 'descripcion', s.descripcion, 'gravedad', s.gravedad,
+                            'detalles', (SELECT COALESCE(json_agg(json_build_object('texto', d.texto, 'gravedad', d.gravedad) ORDER BY d.created_at), '[]'::json)
+                                         FROM solicitudes_detalle d WHERE d.solicitud_id = s.id))
+                 FROM solicitudes s LEFT JOIN ordenes_trabajo ot ON ot.id = s.orden_trabajo_id
                  WHERE s.maquinaria_id = m.id AND s.cliente_id = m.cliente_id AND ${SQL_ASISTENCIA_ABIERTA}
-                 ORDER BY s.created_at DESC LIMIT 1) AS asistencia_abierta_id
+                 ORDER BY s.created_at DESC LIMIT 1) AS asistencia_abierta
          FROM maquinarias m WHERE m.cliente_id = $1 ORDER BY m.codigo`,
         [req.user.cliente_id]
     );

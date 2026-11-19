@@ -73,14 +73,14 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
 
   Future<void> _solicitarAsistencia(Map<String, dynamic> maquinaria) async {
     // en un formulario, un clic fuera no debe botar lo escrito
-    final abiertaId = maquinaria['asistencia_abierta_id'];
+    final abierta = maquinaria['asistencia_abierta'];
     final enviada = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _SolicitarAsistenciaDialog(maquinaria: maquinaria, asistenciaAbiertaId: abiertaId is int ? abiertaId : null),
+      builder: (_) => _SolicitarAsistenciaDialog(maquinaria: maquinaria, asistenciaAbierta: abierta is Map<String, dynamic> ? abierta : null),
     );
     if (enviada == true && mounted) {
-      if (abiertaId != null) {
+      if (abierta != null) {
         // un detalle no crea otra solicitud: se actualiza la lista y se queda aquí
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Detalle agregado a tu asistencia.')));
         _cargarActuales();
@@ -90,6 +90,13 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
       // al Seguimiento, ya con la solicitud nueva (el parámetro r cambia la URL aunque ya estuviera ahí)
       context.go('/portal?pestana=seguimiento&r=${DateTime.now().millisecondsSinceEpoch}');
     }
+  }
+
+  /// Se puede agregar un detalle mientras el técnico no haya aceptado la orden (o si la solicitud aún no tiene orden).
+  static bool _admiteDetalle(dynamic asistencia) {
+    if (asistencia is! Map) return false;
+    final ot = asistencia['ot_estado'];
+    return ot == null ? asistencia['estado'] == 'pendiente' : (ot == 'pendiente' || ot == 'asignada');
   }
 
   /// Guías, órdenes y facturas de ESTE equipo que corresponden a tu empresa.
@@ -168,7 +175,7 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
             for (final m in _maquinarias)
               Card(
                 // asistencia pedida: borde azul (el estado no va solo en color, también lleva etiqueta e icono)
-                shape: m['asistencia_abierta_id'] != null
+                shape: m['asistencia_abierta'] != null
                     ? RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(12),
                         side: const BorderSide(color: GomaqColors.estadoAsistencia, width: 2),
@@ -184,12 +191,16 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
                         subtitle: Text(m['ubicacion'] ?? 'Sin ubicación registrada'),
                         trailing: EstadoChip(estado: m['estado']),
                       ),
-                      if (m['asistencia_abierta_id'] != null)
-                        const Padding(
-                          padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                      if (m['asistencia_abierta'] != null)
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
                           child: Align(
                             alignment: Alignment.centerLeft,
-                            child: EstadoChip(estado: 'asistencia_pedida', icono: Icons.support_agent),
+                            child: EstadoChip(
+                              estado: 'asistencia_pedida',
+                              etiqueta: _admiteDetalle(m['asistencia_abierta']) ? 'Asistencia pedida' : 'Asistencia en atención',
+                              icono: Icons.support_agent,
+                            ),
                           ),
                         ),
                       // boton explicito: tocar la tarjeta no indica que se puede pedir asistencia
@@ -200,9 +211,14 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
                           runSpacing: 8,
                           children: [
                             OutlinedButton.icon(
-                              onPressed: () => _solicitarAsistencia(m),
+                              // con la orden creada el técnico ya la tiene: no se pide otra ni se agregan detalles
+                              onPressed: m['asistencia_abierta'] != null && !_admiteDetalle(m['asistencia_abierta'])
+                                  ? null
+                                  : () => _solicitarAsistencia(m),
                               icon: const Icon(Icons.support_agent, size: 18),
-                              label: Text(m['asistencia_abierta_id'] != null ? 'Agregar detalle' : 'Solicitar asistencia'),
+                              label: Text(m['asistencia_abierta'] == null
+                                  ? 'Solicitar asistencia'
+                                  : (_admiteDetalle(m['asistencia_abierta']) ? 'Agregar detalle' : 'Asistencia en curso')),
                             ),
                             OutlinedButton.icon(
                               onPressed: () => _verDocumentos(m),
@@ -273,9 +289,10 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
 class _SolicitarAsistenciaDialog extends StatefulWidget {
   final Map<String, dynamic> maquinaria;
 
-  /// Si el equipo ya tiene una asistencia en curso no se abre otra: el diálogo agrega un detalle a esa.
-  final int? asistenciaAbiertaId;
-  const _SolicitarAsistenciaDialog({required this.maquinaria, this.asistenciaAbiertaId});
+  /// Si el equipo ya tiene una asistencia pendiente no se abre otra: el diálogo agrega un detalle a esa
+  /// y muestra lo que ya se envió (descripción, gravedad y detalles anteriores).
+  final Map<String, dynamic>? asistenciaAbierta;
+  const _SolicitarAsistenciaDialog({required this.maquinaria, this.asistenciaAbierta});
 
   @override
   State<_SolicitarAsistenciaDialog> createState() => _SolicitarAsistenciaDialogState();
@@ -285,7 +302,7 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
   final _descripcionCtrl = TextEditingController();
   String _tipo = 'falla';
   // cómo está el equipo según el cliente; el servidor cambia el estado del equipo con esto
-  String _gravedad = 'sigue_operando';
+  late String _gravedad = widget.asistenciaAbierta?['gravedad'] as String? ?? 'sigue_operando';
   PlatformFile? _evidencia;
 
   @override
@@ -303,8 +320,9 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
 
   Future<void> _enviar() async {
     final descripcion = _descripcionCtrl.text.trim();
-    if (widget.asistenciaAbiertaId != null) {
-      await ApiClient.instance.post('/api/solicitudes/${widget.asistenciaAbiertaId}/detalle', {'texto': descripcion, 'gravedad': _gravedad});
+    final abierta = widget.asistenciaAbierta;
+    if (abierta != null) {
+      await ApiClient.instance.post('/api/solicitudes/${abierta['id']}/detalle', {'texto': descripcion, 'gravedad': _gravedad});
       return;
     }
     final gravedad = _tipo == 'falla' ? _gravedad : 'sigue_operando';
@@ -327,7 +345,7 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
 
   @override
   Widget build(BuildContext context) {
-    final detalle = widget.asistenciaAbiertaId != null;
+    final detalle = widget.asistenciaAbierta != null;
     final falla = _tipo == 'falla' || detalle;
     return DialogoFormulario(
       icono: Icons.support_agent,
@@ -340,9 +358,11 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
         children: [
           if (detalle) ...[
             const Text(
-              'Este equipo ya tiene una asistencia en curso. En vez de pedir otra, agrega lo que quieras contarnos.',
+              'Este equipo ya tiene una asistencia pedida. En vez de pedir otra, agrega lo que quieras contarnos.',
               style: TextStyle(fontSize: 13),
             ),
+            const SizedBox(height: 8),
+            _LoYaEnviado(asistencia: widget.asistenciaAbierta!),
             separadorCampos,
           ] else ...[
           const Text('¿Qué necesitas?', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
@@ -429,6 +449,48 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
         ],
       ),
       alGuardar: _enviar,
+    );
+  }
+}
+
+/// Lo que el cliente ya envió de una asistencia pendiente: así sabe qué hay antes de agregar algo.
+class _LoYaEnviado extends StatelessWidget {
+  final Map<String, dynamic> asistencia;
+  const _LoYaEnviado({required this.asistencia});
+
+  static String _gravedad(Object? g) => switch (g) {
+        'parcial' => 'Opera parcialmente',
+        'fuera_de_servicio' => 'No funciona (fuera de servicio)',
+        _ => 'Sigue operando',
+      };
+
+  @override
+  Widget build(BuildContext context) {
+    final detalles = (asistencia['detalles'] as List?) ?? const [];
+    final estilo = Theme.of(context).textTheme.bodySmall;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: GomaqColors.estadoAsistencia.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: GomaqColors.estadoAsistencia.withValues(alpha: 0.4)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text('Lo que ya enviaste', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w700)),
+          const SizedBox(height: 4),
+          Text('Estado del equipo: ${_gravedad(asistencia['gravedad'])}', style: estilo),
+          const SizedBox(height: 4),
+          Text('${asistencia['descripcion'] ?? ''}', style: estilo),
+          for (final d in detalles)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text('+ ${d['texto']}', style: estilo),
+            ),
+        ],
+      ),
     );
   }
 }

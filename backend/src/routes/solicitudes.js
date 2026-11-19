@@ -12,7 +12,7 @@ const { validarCoordenadasFormulario } = require('../utils/geo');
 const { fijarDestinoOt } = require('../utils/fijarDestinoOt');
 
 const { origenDeCliente } = require('../utils/estadoEquipo');
-const { validarGravedad, gravedadMayor, estadoPorGravedad, SQL_ASISTENCIA_ABIERTA } = require('../utils/asistenciaCliente');
+const { validarGravedad, gravedadMayor, estadoPorGravedad, textoMotivo, textoDetalle, ESTADOS_OT_CON_DETALLE, SQL_ASISTENCIA_ABIERTA } = require('../utils/asistenciaCliente');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
@@ -67,7 +67,7 @@ router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archi
         if (abierta.rows.length > 0) {
             await client.query('ROLLBACK');
             return res.status(409).json({
-                error: 'Este equipo ya tiene una asistencia en curso. Puedes agregarle un detalle',
+                error: 'Este equipo ya tiene una asistencia en curso',
                 solicitud_id: abierta.rows[0].id,
             });
         }
@@ -84,12 +84,36 @@ router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archi
              VALUES ($1, $2, $3, $4::tipo_solicitud, $5, $6, $7, $8) RETURNING *`,
             [req.user.cliente_id, maquinaria_id, descripcion, tipoFinal, evidenciaUrl, coords.latitud, coords.longitud, g.gravedad]
         );
+        // la orden nace sola, sin pasar por el administrativo: queda pendiente y sin tecnico, asi los mecanicos
+        // la ven para tomarla (PATCH /:id/tomar) o el administrativo se la asigna. La solicitud queda como registro
+        // del origen, ya vinculada a su OT.
+        const otResult = await client.query(
+            `INSERT INTO ordenes_trabajo (maquinaria_id, cliente_id, origen, motivo)
+             VALUES ($1, $2, $4::origen_orden, $3) RETURNING *`,
+            [maquinaria_id, req.user.cliente_id, textoMotivo({ descripcion, gravedad: g.gravedad }),
+             await origenDeCliente(client, req.user.cliente_id)]
+        );
+        const orden = otResult.rows[0];
+        await dejarEvento(client, {
+            ordenId: orden.id, tipo: 'creacion', origen: 'panel', estadoNuevo: orden.estado,
+            usuario: req.user,
+            detalle: { maquinaria_id: orden.maquinaria_id, cliente_id: orden.cliente_id, solicitud_id: result.rows[0].id },
+        });
+        await client.query(
+            `UPDATE solicitudes SET estado = 'convertida', orden_trabajo_id = $1 WHERE id = $2`,
+            [orden.id, result.rows[0].id]
+        );
+        // despues de vincular la solicitud: si el cliente indico otra obra, ese es el destino
+        await fijarDestinoOt(client, orden.id);
         const cambio = estadoPorGravedad({ gravedad: g.gravedad, estadoEquipo: maquinaria.rows[0].estado });
         if (cambio) {
             await client.query('UPDATE maquinarias SET estado = $1, estado_origen = $2 WHERE id = $3', [cambio.estado, cambio.origen, maquinaria_id]);
         }
         await client.query('COMMIT');
-        res.status(201).json({ ...result.rows[0], estado_equipo: cambio ? cambio.estado : maquinaria.rows[0].estado });
+        res.status(201).json({
+            ...result.rows[0], estado: 'convertida', orden_trabajo_id: orden.id,
+            estado_equipo: cambio ? cambio.estado : maquinaria.rows[0].estado,
+        });
     } catch (err) {
         if (client) await client.query('ROLLBACK').catch(() => {});
         // compensacion: si el archivo subio pero la BD fallo, no dejarlo huerfano
@@ -102,7 +126,7 @@ router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archi
     }
 });
 
-// POST /api/solicitudes/:id/detalle - el cliente agrega un detalle a su asistencia abierta (no abre otra).
+// POST /api/solicitudes/:id/detalle - el cliente agrega un detalle a su asistencia pendiente (no abre otra).
 // Puede subir la gravedad, nunca bajarla, y con ella el estado del equipo (mismas reglas que al pedirla).
 router.post('/:id/detalle', verifyToken, requireRole('cliente'), async (req, res) => {
     const errCuerpo = validarCuerpo(req.body, { textos: { texto: 2000 } });
@@ -118,27 +142,35 @@ router.post('/:id/detalle', verifyToken, requireRole('cliente'), async (req, res
     try {
         await client.query('BEGIN');
         const sol = await client.query(
-            'SELECT id, maquinaria_id, gravedad FROM solicitudes WHERE id = $1 AND cliente_id = $2 FOR UPDATE',
+            'SELECT id, maquinaria_id, gravedad, estado, orden_trabajo_id FROM solicitudes WHERE id = $1 AND cliente_id = $2 FOR UPDATE',
             [req.params.id, req.user.cliente_id]
         );
         if (sol.rows.length === 0) {
             await client.query('ROLLBACK');
             return res.status(404).json({ error: 'Asistencia no encontrada' });
         }
-        const equipo = await client.query('SELECT estado FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE', [sol.rows[0].maquinaria_id]);
-        const abierta = await client.query(
-            `SELECT 1 FROM solicitudes s LEFT JOIN ordenes_trabajo ot ON ot.id = s.orden_trabajo_id
-             WHERE s.id = $1 AND ${SQL_ASISTENCIA_ABIERTA}`,
-            [sol.rows[0].id]
-        );
-        if (abierta.rows.length === 0) {
+        // el detalle se suma al motivo de la orden, que es lo que lee el tecnico. Solo mientras el tecnico no la
+        // acepto: despues ya va en camino y un texto nuevo no le llegaria. Primero la fila de la orden y despues la del equipo.
+        const ot = sol.rows[0].orden_trabajo_id
+            ? await client.query('SELECT id, estado FROM ordenes_trabajo WHERE id = $1 FOR NO KEY UPDATE', [sol.rows[0].orden_trabajo_id])
+            : { rows: [] };
+        // una solicitud antigua aun pendiente (sin orden) tambien admite el detalle: queda en la solicitud
+        const sinOrdenAun = ot.rows.length === 0 && sol.rows[0].estado === 'pendiente';
+        if (!sinOrdenAun && (ot.rows.length === 0 || !ESTADOS_OT_CON_DETALLE.includes(ot.rows[0].estado))) {
             await client.query('ROLLBACK');
-            return res.status(409).json({ error: 'Esa asistencia ya terminó. Solicita una nueva' });
+            return res.status(409).json({ error: 'El técnico ya tomó esta asistencia. Ya no se le pueden agregar detalles' });
         }
+        const equipo = await client.query('SELECT estado FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE', [sol.rows[0].maquinaria_id]);
         const mayor = gravedadMayor(sol.rows[0].gravedad, g.gravedad);
         await client.query('INSERT INTO solicitudes_detalle (solicitud_id, texto, gravedad) VALUES ($1, $2, $3)', [sol.rows[0].id, texto, g.gravedad]);
         if (mayor !== sol.rows[0].gravedad) {
             await client.query('UPDATE solicitudes SET gravedad = $1 WHERE id = $2', [mayor, sol.rows[0].id]);
+        }
+        if (!sinOrdenAun) {
+            await client.query(
+                'UPDATE ordenes_trabajo SET motivo = COALESCE(motivo, \'\') || $1 WHERE id = $2',
+                [textoDetalle({ texto, gravedadAnterior: sol.rows[0].gravedad, gravedadNueva: mayor }), ot.rows[0].id]
+            );
         }
         const cambio = equipo.rows[0] ? estadoPorGravedad({ gravedad: mayor, estadoEquipo: equipo.rows[0].estado }) : null;
         if (cambio) {

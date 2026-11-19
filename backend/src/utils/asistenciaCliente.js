@@ -37,5 +37,26 @@ function estadoPorGravedad({ gravedad, estadoEquipo }) {
  */
 const SQL_ASISTENCIA_ABIERTA = "(s.estado = 'pendiente' OR (s.estado = 'convertida' AND ot.estado IS DISTINCT FROM 'finalizada'))";
 
+const ETIQUETA_GRAVEDAD = {
+    sigue_operando: 'sigue operando',
+    parcial: 'opera parcialmente',
+    fuera_de_servicio: 'no funciona (fuera de servicio)',
+};
+
+/** Motivo de la OT que nace de una asistencia: lo que escribio el cliente y como dice que esta el equipo. */
+function textoMotivo({ descripcion, gravedad }) {
+    return `Estado del equipo según el cliente: ${ETIQUETA_GRAVEDAD[gravedad] || ETIQUETA_GRAVEDAD.sigue_operando}.\n\n${descripcion}`;
+}
+
+/** Lo que se agrega al motivo cuando el cliente suma un detalle (y avisa si ahora indica algo mas grave). */
+function textoDetalle({ texto, gravedadAnterior, gravedadNueva }) {
+    const sube = gravedadNueva !== gravedadAnterior;
+    return `\n\nDetalle del cliente: ${texto}${sube ? `\nAhora el cliente indica que el equipo ${ETIQUETA_GRAVEDAD[gravedadNueva]}.` : ''}`;
+}
+
+/** Estados de la OT en que todavia se puede agregar un detalle: el tecnico aun no la acepto. */
+const ESTADOS_OT_CON_DETALLE = ['pendiente', 'asignada'];
+
 module.exports = {
+    textoMotivo, textoDetalle, ESTADOS_OT_CON_DETALLE,
     SQL_ASISTENCIA_ABIERTA, GRAVEDADES, validarGravedad, gravedadMayor, estadoPorGravedad };

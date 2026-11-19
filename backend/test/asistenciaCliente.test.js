@@ -69,11 +69,51 @@ test('una asistencia abierta es pendiente o con la orden sin terminar', () => {
     assert.match(SQL_ASISTENCIA_ABIERTA, /finalizada/);
 });
 
-test('GET /api/maquinarias/mias entrega asistencia_abierta_id (el portal lo necesita para agregar un detalle)', () => {
+test('GET /api/maquinarias/mias entrega asistencia_abierta con lo ya enviado (el portal lo necesita para agregar un detalle)', () => {
     const fs = require('node:fs');
     const path = require('node:path');
     const codigo = fs.readFileSync(path.join(__dirname, '../src/routes/maquinarias.js'), 'utf8');
     const ruta = codigo.slice(codigo.indexOf("router.get('/mias'"), codigo.indexOf("router.get('/mias/historicos'"));
-    assert.match(ruta, /AS asistencia_abierta_id/);
+    assert.match(ruta, /AS asistencia_abierta\b/);
+    assert.match(ruta, /'descripcion', s\.descripcion/);
+    assert.match(ruta, /'detalles'/);
     assert.match(ruta, /SQL_ASISTENCIA_ABIERTA/);
+});
+
+const { textoMotivo, textoDetalle, ESTADOS_OT_CON_DETALLE } = require('../src/utils/asistenciaCliente');
+
+describe('texto que lee el tecnico en la orden', () => {
+    test('el motivo lleva como esta el equipo y lo que escribio el cliente', () => {
+        const t = textoMotivo({ descripcion: 'Pierde aceite', gravedad: 'parcial' });
+        assert.match(t, /^Estado del equipo según el cliente: opera parcialmente\./);
+        assert.match(t, /Pierde aceite$/);
+        assert.match(textoMotivo({ descripcion: 'x', gravedad: 'fuera_de_servicio' }), /no funciona \(fuera de servicio\)/);
+        assert.match(textoMotivo({ descripcion: 'x', gravedad: 'sigue_operando' }), /sigue operando/);
+    });
+    test('un detalle avisa solo si la gravedad subio', () => {
+        assert.equal(textoDetalle({ texto: 'ahora hace ruido', gravedadAnterior: 'parcial', gravedadNueva: 'parcial' }), '\n\nDetalle del cliente: ahora hace ruido');
+        assert.match(textoDetalle({ texto: 'ya no parte', gravedadAnterior: 'parcial', gravedadNueva: 'fuera_de_servicio' }), /Ahora el cliente indica que el equipo no funciona/);
+    });
+    test('el detalle se admite mientras el tecnico no acepto la orden', () => {
+        assert.deepEqual(ESTADOS_OT_CON_DETALLE, ['pendiente', 'asignada']);
+    });
+});
+
+test('la ruta de solicitudes crea la OT con su evento de creacion en la misma transaccion', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const codigo = fs.readFileSync(path.join(__dirname, '../src/routes/solicitudes.js'), 'utf8');
+    const post = codigo.slice(codigo.indexOf("router.post('/'"), codigo.indexOf("router.post('/:id/detalle'"));
+    assert.match(post, /INSERT INTO ordenes_trabajo/);
+    assert.match(post, /tipo: 'creacion'/);
+    assert.match(post, /fijarDestinoOt/);
+    assert.ok(post.indexOf('INSERT INTO ordenes_trabajo') < post.indexOf("COMMIT"));
+});
+
+test('la foto de la solicitud tiene su ruta para el tecnico', () => {
+    const fs = require('node:fs');
+    const path = require('node:path');
+    const codigo = fs.readFileSync(path.join(__dirname, '../src/routes/ordenes.js'), 'utf8');
+    assert.match(codigo, /router\.get\('\/:id\/foto-solicitud'/);
+    assert.match(codigo, /requireRole\('gerente', 'administrativo', 'mecanico'\)[^\n]*\n[\s\S]*?foto-solicitud|foto-solicitud'[^\n]*requireRole\('gerente', 'administrativo', 'mecanico'\)/);
 });

@@ -18,6 +18,7 @@ class GomaqColors {
   static const estadoAdvertencia = Color(0xFFC9820A); // en curso / en mantención
   static const estadoNegativo = Color(0xFFB23A2E); // fuera de servicio / error
   static const estadoNeutro = Color(0xFF6B7075); // pendiente / asignada
+  static const estadoParcial = Color(0xFF8E4A9E); // parcialmente operativa (distinto del ambar de en mantencion)
   static const estadoAsistencia = Color(0xFF2B5FA6); // asistencia pedida por el cliente (ni ambar ni rojo)
 
   /// Ámbar oscuro para TEXTO e ICONOS de advertencia sobre fondo claro (5,93:1 sobre blanco y 5,3:1
@@ -36,6 +37,7 @@ class GomaqColors {
   static const _textoNegativo = Color(0xFFB23A2E); // 4,71:1
   static const _textoNeutro = Color(0xFF4A4F54);
   static const _textoAsistencia = Color(0xFF1F4A82);
+  static const _textoParcial = Color(0xFF6D2F7C);
 
   /// Mismo criterio que la app del mecánico, para que un estado tenga el mismo color en
   /// las dos: gris lo que aún no empieza, ámbar lo que está en curso.
@@ -53,11 +55,12 @@ class GomaqColors {
       case 'aceptada':
         return estadoNeutro;
       case 'en_mantencion':
-      case 'parcialmente_operativa':
       case 'en_camino':
       case 'en_terreno':
       case 'en_reparacion':
         return estadoAdvertencia;
+      case 'parcialmente_operativa':
+        return estadoParcial;
       case 'asistencia_pedida':
         return estadoAsistencia;
       default:
@@ -71,6 +74,7 @@ class GomaqColors {
     if (base == estadoAdvertencia) return _textoAdvertencia;
     if (base == estadoNeutro) return _textoNeutro;
     if (base == estadoAsistencia) return _textoAsistencia;
+    if (base == estadoParcial) return _textoParcial;
     return _textoNegativo;
   }
 

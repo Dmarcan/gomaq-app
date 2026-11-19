@@ -222,7 +222,8 @@ router.get('/', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'
     const total = await pool.query(`SELECT COUNT(*)::int AS n ${base}`, params);
 
     // desempate por id: la paginacion no debe repetir ni saltarse filas con la misma fecha
-    let sql = `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre, um.nombre AS mecanico_nombre
+    let sql = `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre, um.nombre AS mecanico_nombre,
+                   (SELECT e.rol FROM ordenes_eventos e WHERE e.orden_trabajo_id = ot.id AND e.tipo = 'creacion' ORDER BY e.id LIMIT 1) AS creada_por_rol
                    ${base} ORDER BY ot.fecha_creacion ${ascendente ? 'ASC' : 'DESC'}, ot.id ${ascendente ? 'ASC' : 'DESC'}`;
     const paramsPagina = [...params];
     if (limit !== null) {
@@ -319,6 +320,7 @@ router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecani
         // factura_id y factura_folio: el panel avisa que una orden facturada no admite cambios de
         // lineas. Hay a lo mas una factura por OT (indice unico de la migracion 016).
         `SELECT ot.*, m.codigo AS maquinaria_codigo, c.nombre AS cliente_nombre, um.nombre AS mecanico_nombre,
+                    (SELECT e.rol FROM ordenes_eventos e WHERE e.orden_trabajo_id = ot.id AND e.tipo = 'creacion' ORDER BY e.id LIMIT 1) AS creada_por_rol,
                     f.id AS factura_id, f.folio AS factura_folio,
                     ${SQL_ETA_LLEGADA_AT} AS eta_llegada_at
              FROM ordenes_trabajo ot
@@ -382,6 +384,27 @@ async function encolarAvisoAsignacion(client, orden, mecanico) {
 // Atomico: el UPDATE solo prospera si la orden sigue pendiente y sin mecanico, asi que dos
 // mecanicos tomando la misma a la vez no pueden quedar los dos. El perdedor recibe 409. Un
 // reintento del mismo mecanico (la respuesta se perdio) responde bien con la orden ya suya.
+// GET /api/ordenes-trabajo/:id/foto-solicitud - la foto que el cliente adjunto al pedir la asistencia, como URL firmada
+// de 1 hora. El tecnico de la orden (o cualquiera, si aun nadie la tomo, para poder decidir) y la oficina; el cliente
+// no pasa por aqui. 404 si la orden no nacio de una asistencia con foto.
+router.get('/:id/foto-solicitud', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
+    const r = await pool.query(
+        `SELECT ot.mecanico_id, (${SQL_OT_SIN_ASIGNAR}) AS sin_asignar, s.evidencia_url
+         FROM ordenes_trabajo ot JOIN solicitudes s ON s.orden_trabajo_id = ot.id
+         WHERE ot.id = $1 AND s.evidencia_url IS NOT NULL`,
+        [req.params.id]
+    );
+    const fila = r.rows[0];
+    if (!fila) return res.status(404).json({ error: 'Esta orden no tiene foto del cliente' });
+    if (req.user.rol === 'mecanico' && fila.mecanico_id !== req.user.id && !fila.sin_asignar) {
+        return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
+    }
+    const url = await urlFirmadaONull(supabase, BUCKET_DOCUMENTOS, fila.evidencia_url);
+    if (!url) return res.status(404).json({ error: 'No se pudo abrir la foto' });
+    res.set('Cache-Control', 'no-store');
+    res.json({ url });
+});
+
 router.patch('/:id/tomar', verifyToken, requireRole('mecanico'), async (req, res) => {
     let client = null;
     try {

@@ -13,6 +13,7 @@ import '../services/posicion_service.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
 import '../widgets/estado_chip.dart';
+import '../widgets/foto_del_cliente.dart';
 import '../widgets/foto_thumbnail.dart';
 import '../utils/accion_unica.dart';
 import '../utils/datos_finales.dart';
@@ -880,6 +881,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
               const SizedBox(height: 4),
               Text(orden.motivo!, style: const TextStyle(color: GomaqColors.textoSecundario, fontSize: 13)),
             ],
+            FotoDelCliente(ordenId: orden.id),
             if (orden.clienteNombre != null) ...[
               const SizedBox(height: 8),
               Text.rich(

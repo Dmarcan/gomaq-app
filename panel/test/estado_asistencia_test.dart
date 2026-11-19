@@ -5,8 +5,11 @@ import 'package:gomaq_web/widgets/estado_chip.dart';
 import 'package:gomaq_web/widgets/estado_equipo.dart';
 
 void main() {
-  test('parcialmente operativa se ve como advertencia, no como error', () {
-    expect(GomaqColors.colorEstado('parcialmente_operativa'), GomaqColors.estadoAdvertencia);
+  test('parcialmente operativa tiene su propio color: ni el ámbar de en mantención ni el rojo de fuera de servicio', () {
+    final color = GomaqColors.colorEstado('parcialmente_operativa');
+    expect(color, GomaqColors.estadoParcial);
+    expect(color, isNot(GomaqColors.colorEstado('en_mantencion')));
+    expect(color, isNot(GomaqColors.colorEstado('fuera_de_servicio')));
     expect(GomaqColors.etiquetaEstado('parcialmente_operativa'), 'Parcialmente operativa');
   });
 
