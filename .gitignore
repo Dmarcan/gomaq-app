@@ -1,5 +1,8 @@
 node_modules/
 .env
+# otros archivos de entorno (.env.local, .env.produccion...): solo se versiona el ejemplo
+.env.*
+!.env.example
 *.log
 build/
 .dart_tool/
