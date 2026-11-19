@@ -8,6 +8,7 @@ import 'package:provider/provider.dart';
 import 'router.dart';
 import 'services/auth_service.dart';
 import 'theme/gomaq_theme.dart';
+import 'widgets/push_host.dart';
 
 Future<void> main() async {
   // URLs limpias, sin el "#" de la estrategia por hash. El backend devuelve index.html para toda
@@ -56,6 +57,7 @@ class _AppConRouter extends StatefulWidget {
 
 class _AppConRouterState extends State<_AppConRouter> {
   late final _router = construirRouter(widget.auth);
+  final _mensajesKey = GlobalKey<ScaffoldMessengerState>();
 
   @override
   Widget build(BuildContext context) {
@@ -63,6 +65,9 @@ class _AppConRouterState extends State<_AppConRouter> {
       title: 'GOMAQ · Panel de gestión',
       theme: construirTemaGomaq(),
       routerConfig: _router,
+      scaffoldMessengerKey: _mensajesKey,
+      builder: (context, child) =>
+          PushHost(router: _router, mensajesKey: _mensajesKey, child: child ?? const SizedBox.shrink()),
       // Sin esto los selectores de fecha y hora salían en inglés.
       locale: const Locale('es', 'CL'),
       supportedLocales: const [Locale('es', 'CL'), Locale('es')],

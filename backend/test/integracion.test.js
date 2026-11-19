@@ -285,6 +285,30 @@ describe('superficie expuesta', () => {
         assert.ok(r.headers.get('content-security-policy'), 'falta la cabecera de politica de contenido');
     });
 
+    test('la politica permite el registro de avisos push (Firebase) en la web', async (t) => {
+        if (!requiereServidor(t)) return;
+        const r = await pedir('/api/health');
+        const politica = r.headers.get('content-security-policy') || '';
+        const connect = (politica.split(';').map((d) => d.trim()).find((d) => d.startsWith('connect-src')) || '').split(/\s+/);
+        for (const host of ['https://fcmregistrations.googleapis.com', 'https://firebaseinstallations.googleapis.com']) {
+            assert.ok(connect.includes(host), `connect-src no incluye ${host}`);
+        }
+    });
+
+    test('el service worker de avisos nunca se reemplaza por el index.html del panel', async (t) => {
+        if (!requiereServidor(t)) return;
+        const r = await pedir('/firebase-messaging-sw.js');
+        const tipo = r.headers.get('content-type') || '';
+        assert.ok(!tipo.includes('text/html'), `content-type ${tipo}`);
+        if (r.status === 200) {
+            // con el panel compilado: JavaScript y sin cache largo
+            assert.match(tipo, /javascript/);
+            assert.match(r.headers.get('cache-control') || '', /no-cache/);
+        } else {
+            assert.equal(r.status, 404);
+        }
+    });
+
     test('no borra el Referer: el mapa de OpenStreetMap lo exige y bloquea sin el', async (t) => {
         if (!requiereServidor(t)) return;
         const r = await pedir('/api/health');

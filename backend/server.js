@@ -96,7 +96,9 @@ app.use(helmet({
             fontSrc: ["'self'", 'data:', 'https://fonts.gstatic.com'],
             // tile.openstreetmap.org: mapa operativo del panel (flutter_map pide cada tile como imagen o con fetch)
             imgSrc: ["'self'", 'data:', 'blob:', 'https://*.supabase.co', 'https://tile.openstreetmap.org'],
-            connectSrc: ["'self'", 'https://*.supabase.co', 'https://fonts.gstatic.com', 'https://www.gstatic.com', 'https://tile.openstreetmap.org'],
+            connectSrc: ["'self'", 'https://*.supabase.co', 'https://fonts.gstatic.com', 'https://www.gstatic.com', 'https://tile.openstreetmap.org',
+                // avisos push en la web (firebase_messaging): registro del token y de la instalacion en Firebase
+                'https://fcmregistrations.googleapis.com', 'https://firebaseinstallations.googleapis.com'],
             workerSrc: ["'self'", 'blob:'],
             objectSrc: ["'none'"],
             frameAncestors: ["'none'"],
@@ -127,7 +129,16 @@ app.use(express.json());
 
 // build de produccion del panel web (Flutter Web), servido en la raiz: misma URL que la API
 const publicDir = path.join(__dirname, 'public');
-app.use(express.static(publicDir));
+app.use(express.static(publicDir, {
+    setHeaders: (res, ruta) => {
+        // el service worker de los avisos push se revalida siempre: un cache largo dejaria a los
+        // navegadores con una version vieja (el navegador ya limita su propia cache a 24 h)
+        if (path.basename(ruta) === 'firebase-messaging-sw.js') res.set('Cache-Control', 'no-cache');
+    },
+}));
+// si el archivo no existe (panel sin compilar) no se cae al fallback de SPA: un service worker con
+// content-type text/html no se registra y el error del navegador confunde
+app.get('/firebase-messaging-sw.js', (req, res) => res.status(404).type('text/plain').send('No encontrado'));
 
 // Mientras la API se apaga (SIGTERM) o la base no responde, el chequeo da 503: es lo que Railway y
 // los balanceadores entienden como "no me mandes trafico" (un 500 se lee como un error de codigo).

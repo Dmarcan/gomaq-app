@@ -7,6 +7,7 @@ import '../../services/pendientes_service.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../utils/pendientes.dart';
 import '../../widgets/cambiar_mi_clave.dart';
+import '../../widgets/boton_avisos.dart';
 import '../../widgets/confirmar_cerrar_sesion.dart';
 
 /// Marco del panel: barra lateral fija y el contenido de la seccion activa, que determina la ruta
@@ -167,6 +168,7 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
                     ],
                   ),
                 ),
+                const BotonAvisos(color: Colors.white70, tamano: 18),
                 IconButton(
                   icon: const Icon(Icons.password, color: Colors.white70, size: 18),
                   tooltip: 'Cambiar mi contraseña',

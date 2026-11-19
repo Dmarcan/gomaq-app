@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'api_client.dart';
+import 'push_service.dart';
 
 class AuthService extends ChangeNotifier {
   AuthService() {
@@ -106,6 +107,8 @@ class AuthService extends ChangeNotifier {
   /// vence por inactividad.
   Future<void> cerrarSesion({bool todosLosDispositivos = false}) async {
     _cerrando = true;
+    // primero el aviso push (necesita la sesion vigente), despues el cierre en el servidor
+    await PushService.instancia.alCerrarSesion(avisarServidor: true);
     try {
       await ApiClient.instance
           .post(todosLosDispositivos ? '/api/auth/logout-todas' : '/api/auth/logout', {})
@@ -119,6 +122,8 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> logout() async {
+    // sesion vencida o cierre ya avisado: solo se suelta el token de Firebase de este equipo
+    await PushService.instancia.alCerrarSesion(avisarServidor: false);
     await ApiClient.instance.borrarToken();
     _autenticado = false;
     _id = null;

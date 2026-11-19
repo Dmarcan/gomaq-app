@@ -34,6 +34,9 @@ dependencies:
   geolocator: ^14.0.2
   flutter_map: ^8.3.2
   latlong2: ^0.10.1
+  # Avisos push (FCM). Mismas series que terreno. Sin config de Firebase no se inicializan.
+  firebase_core: ^5.2.0
+  firebase_messaging: ^17.1.0
 
 dev_dependencies:
   flutter_test:

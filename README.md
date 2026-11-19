@@ -201,6 +201,17 @@ Salen de la prueba de punta a punta del 5 y 6 de octubre (plan en `docs/tecnica/
 - **Despacho sin documento** (migración 019): una guía de despacho o recepción puede registrarse sin PDF con `sin_documento` explícito; el equipo se asigna o se libera igual, queda quién la registró, y el PDF se adjunta después (`POST /api/maquinarias/guias/:guiaId/archivo`). El panel lo ofrece en Guías y, desde el perfil del equipo, como "Asignar a cliente" y "Retirar del cliente". El dashboard avisa cuántas guías faltan.
 - **Base local del teléfono, versión 9**: la cabecera del talonario (tipo de servicio, observación final, folio) y el costo de cada repuesto se guardan también en el teléfono.
 
+## Avisos push del panel (web y Android)
+
+El panel (administrativo, gerente y portal del cliente) puede recibir avisos push por Firebase Cloud Messaging. **Sin configuración de Firebase no hace nada**: no se inicializa el plugin, no se llama al servidor y el botón de avisos no se dibuja. La configuración llega al compilar con `--dart-define` (no se commitea):
+
+- `FIREBASE_API_KEY`, `FIREBASE_APP_ID`, `FIREBASE_MESSAGING_SENDER_ID`, `FIREBASE_PROJECT_ID`; para la **web** además `FIREBASE_VAPID_KEY`. La web y el APK del panel son apps distintas en Firebase: cada build lleva sus propios valores.
+- En la web los avisos se activan solo con el botón de campana (nunca se pide permiso al cargar la página). En Android se pregunta una vez con un diálogo previo y después queda el mismo botón.
+- El token se registra con `POST /api/dispositivos` (`app: 'panel'`) y se borra al cerrar sesión. Depende del backend de push (PR 126); mientras la ruta no exista (404) se ignora en silencio.
+- `panel/web/firebase-messaging-sw.js` muestra la notificación con la pestaña cerrada. No carga el SDK de Firebase ni lleva configuración dentro (un service worker no puede leer los `--dart-define`): solo atiende el evento `push` y abre la OT al tocar. `server.js` lo sirve como JavaScript con `Cache-Control: no-cache`, y el CSP permite `fcmregistrations.googleapis.com` y `firebaseinstallations.googleapis.com`.
+- Limitación: Safari en iPhone y iPad solo admite avisos web con el panel instalado en la pantalla de inicio (iOS 16.4 o superior); en un navegador normal el botón indica que no están disponibles.
+- No verificado contra Firebase real: ni el envío, ni el formato del mensaje en el service worker, ni el aviso con la pestaña abierta.
+
 ## Qué falta (en orden de importancia)
 
 1. **Gestión de Usuarios completa desde el panel** — la pantalla "Usuarios" hoy solo cubre la aprobación de solicitudes de cuenta de clientes (auto-registro); crear/editar mecánicos y administrativos sigue siendo por SSH con `create-user.js`.

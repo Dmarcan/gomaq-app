@@ -70,6 +70,8 @@ class ApiClient {
       _tras(_api.patch(path, body, cabeceras: cabeceras));
   Future<dynamic> put(String path, Map<String, dynamic> body, {Map<String, String>? cabeceras}) =>
       _tras(_api.put(path, body, cabeceras: cabeceras));
+  Future<dynamic> delete(String path, Map<String, dynamic> body, {Map<String, String>? cabeceras}) =>
+      _api.delete(path, body, cabeceras: cabeceras); // sin _tras: no cambia los pendientes
 
   /// Subida de archivo (PDF de guia/factura, foto de equipo) via multipart, usando los
   /// campos de texto en [fields]. El archivo es opcional (ej. crear un equipo sin foto todavia).
