@@ -482,6 +482,10 @@ class _FlotaScreenState extends State<FlotaScreen> {
               activa: _filtroEstado == 'en_mantencion',
               colorNumero: (r['en_mantencion'] ?? 0) > 0 ? GomaqColors.textoEstado('en_mantencion') : null,
               onTap: () => _aplicarAtajo(estado: 'en_mantencion')),
+          tarjeta('Parcialmente operativa', r['parcialmente_operativa'],
+              activa: _filtroEstado == 'parcialmente_operativa',
+              colorNumero: (r['parcialmente_operativa'] ?? 0) > 0 ? GomaqColors.textoEstado('parcialmente_operativa') : null,
+              onTap: () => _aplicarAtajo(estado: 'parcialmente_operativa')),
           tarjeta('Fuera de servicio', r['fuera_de_servicio'],
               activa: _filtroEstado == 'fuera_de_servicio',
               colorNumero: (r['fuera_de_servicio'] ?? 0) > 0 ? GomaqColors.textoEstado('fuera_de_servicio') : null,
@@ -538,6 +542,7 @@ class _FlotaScreenState extends State<FlotaScreen> {
               items: const [
                 DropdownMenuItem(value: null, child: Text('Todos')),
                 DropdownMenuItem(value: 'operativa', child: Text('Operativa')),
+                DropdownMenuItem(value: 'parcialmente_operativa', child: Text('Parcialmente operativa')),
                 DropdownMenuItem(value: 'en_mantencion', child: Text('En mantención')),
                 DropdownMenuItem(value: 'fuera_de_servicio', child: Text('Fuera de servicio')),
               ],

@@ -269,7 +269,7 @@ describe('carga y borrado contra una base temporal', { skip: HABILITADO ? false 
         )).rows[0].id;
         await db.query(
             `INSERT INTO facturas (maquinaria_id, guia_despacho_id, cliente_id, folio, archivo_url, monto, fecha_emision, fecha_vencimiento)
-             VALUES ($1, $2, $3, '9001', 'facturas/real.pdf', 500000, CURRENT_DATE - 5, CURRENT_DATE - 1)`,
+             VALUES ($1, $2, $3, '9001', 'facturas/real.pdf', 500000, (now() AT TIME ZONE 'America/Santiago')::date - 5, (now() AT TIME ZONE 'America/Santiago')::date - 1)`,
             [real.equipo, real.guia, real.cliente]
         );
         real.insumo = (await db.query("INSERT INTO insumos (nombre, unidad_medida, stock_actual) VALUES ('Filtro real', 'unidad', 3) RETURNING id")).rows[0].id;

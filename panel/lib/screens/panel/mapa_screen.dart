@@ -833,6 +833,7 @@ class _MapaScreenState extends State<MapaScreen> {
   String _estadoLegible(String estado) => switch (estado) {
     'operativa' => 'Operativa',
     'en_mantencion' => 'En mantención',
+    'parcialmente_operativa' => 'Parcialmente operativa',
     'fuera_de_servicio' => 'Fuera de servicio',
     _ => estado,
   };

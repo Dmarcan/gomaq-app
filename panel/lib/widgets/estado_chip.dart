@@ -11,12 +11,16 @@ class EstadoChip extends StatelessWidget {
   /// ejemplo, habla de "Técnico en terreno").
   final String? etiqueta;
 
-  const EstadoChip({super.key, required this.estado, this.etiqueta});
+  /// Ícono opcional: así el estado no depende solo del color.
+  final IconData? icono;
+
+  const EstadoChip({super.key, required this.estado, this.etiqueta, this.icono});
 
   @override
   Widget build(BuildContext context) {
     final valor = estado ?? 'pendiente';
     return Chip(
+      avatar: icono == null ? null : Icon(icono, size: 16, color: GomaqColors.textoEstado(valor)),
       label: Text(etiqueta ?? GomaqColors.etiquetaEstado(valor)),
       backgroundColor: GomaqColors.fondoChip(valor),
       labelStyle: TextStyle(color: GomaqColors.textoEstado(valor), fontWeight: FontWeight.w600),

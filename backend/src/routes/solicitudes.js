@@ -12,6 +12,7 @@ const { validarCoordenadasFormulario } = require('../utils/geo');
 const { fijarDestinoOt } = require('../utils/fijarDestinoOt');
 
 const { origenDeCliente } = require('../utils/estadoEquipo');
+const { validarGravedad, gravedadMayor, estadoPorGravedad, SQL_ASISTENCIA_ABIERTA } = require('../utils/asistenciaCliente');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
@@ -41,36 +42,115 @@ router.post('/', verifyToken, requireRole('cliente'), subidaImagen.single('archi
     if (!req.user.cliente_id) {
         return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
     }
-    const maquinaria = await pool.query(
-        'SELECT id FROM maquinarias WHERE id = $1 AND cliente_id = $2',
-        [maquinaria_id, req.user.cliente_id]
-    );
-    if (maquinaria.rows.length === 0) {
-        return res.status(403).json({ error: 'Ese equipo no pertenece a tu empresa' });
-    }
+    const g = validarGravedad(req.body.gravedad);
+    if (!g.valida) return res.status(400).json({ error: 'gravedad debe ser sigue_operando, parcial o fuera_de_servicio' });
+    let client = null;
     let evidenciaUrl = null;
-    if (req.file) {
-        // la ruta la arma el servidor: el nombre del cliente solo aporta la extension
-        evidenciaUrl = rutaAdjuntoSolicitud(req.user.cliente_id, req.file.originalname);
-        const { error: errorSubida } = await supabase.storage
-            .from(BUCKET_DOCUMENTOS)
-            .upload(evidenciaUrl, req.file.buffer, { contentType: req.file.mimetype });
-        if (errorSubida) throw errorSubida;
-    }
-
     try {
-        const result = await pool.query(
-            `INSERT INTO solicitudes (cliente_id, maquinaria_id, descripcion, tipo, evidencia_url, latitud, longitud)
-                 VALUES ($1, $2, $3, $4::tipo_solicitud, $5, $6, $7) RETURNING *`,
-            [req.user.cliente_id, maquinaria_id, descripcion, tipoFinal, evidenciaUrl, coords.latitud, coords.longitud]
+        client = await pool.connect();
+        await client.query('BEGIN');
+        // la fila del equipo se bloquea: dos solicitudes simultaneas del mismo equipo se serializan y la segunda ve la primera
+        const maquinaria = await client.query(
+            'SELECT id, estado FROM maquinarias WHERE id = $1 AND cliente_id = $2 FOR NO KEY UPDATE',
+            [maquinaria_id, req.user.cliente_id]
         );
-        res.status(201).json(result.rows[0]);
-    } catch (errorBd) {
+        if (maquinaria.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(403).json({ error: 'Ese equipo no pertenece a tu empresa' });
+        }
+        // una sola asistencia abierta por equipo: para agregar algo se usa POST /:id/detalle
+        const abierta = await client.query(
+            `SELECT s.id FROM solicitudes s LEFT JOIN ordenes_trabajo ot ON ot.id = s.orden_trabajo_id
+             WHERE s.maquinaria_id = $1 AND s.cliente_id = $2 AND ${SQL_ASISTENCIA_ABIERTA} LIMIT 1`,
+            [maquinaria_id, req.user.cliente_id]
+        );
+        if (abierta.rows.length > 0) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({
+                error: 'Este equipo ya tiene una asistencia en curso. Puedes agregarle un detalle',
+                solicitud_id: abierta.rows[0].id,
+            });
+        }
+        if (req.file) {
+            // la ruta la arma el servidor: el nombre del cliente solo aporta la extension
+            evidenciaUrl = rutaAdjuntoSolicitud(req.user.cliente_id, req.file.originalname);
+            const { error: errorSubida } = await supabase.storage
+                .from(BUCKET_DOCUMENTOS)
+                .upload(evidenciaUrl, req.file.buffer, { contentType: req.file.mimetype });
+            if (errorSubida) throw errorSubida;
+        }
+        const result = await client.query(
+            `INSERT INTO solicitudes (cliente_id, maquinaria_id, descripcion, tipo, evidencia_url, latitud, longitud, gravedad)
+             VALUES ($1, $2, $3, $4::tipo_solicitud, $5, $6, $7, $8) RETURNING *`,
+            [req.user.cliente_id, maquinaria_id, descripcion, tipoFinal, evidenciaUrl, coords.latitud, coords.longitud, g.gravedad]
+        );
+        const cambio = estadoPorGravedad({ gravedad: g.gravedad, estadoEquipo: maquinaria.rows[0].estado });
+        if (cambio) {
+            await client.query('UPDATE maquinarias SET estado = $1, estado_origen = $2 WHERE id = $3', [cambio.estado, cambio.origen, maquinaria_id]);
+        }
+        await client.query('COMMIT');
+        res.status(201).json({ ...result.rows[0], estado_equipo: cambio ? cambio.estado : maquinaria.rows[0].estado });
+    } catch (err) {
+        if (client) await client.query('ROLLBACK').catch(() => {});
         // compensacion: si el archivo subio pero la BD fallo, no dejarlo huerfano
         if (evidenciaUrl) {
             await supabase.storage.from(BUCKET_DOCUMENTOS).remove([evidenciaUrl]).catch(() => {});
         }
-        throw errorBd;
+        throw err;
+    } finally {
+        if (client) client.release();
+    }
+});
+
+// POST /api/solicitudes/:id/detalle - el cliente agrega un detalle a su asistencia abierta (no abre otra).
+// Puede subir la gravedad, nunca bajarla, y con ella el estado del equipo (mismas reglas que al pedirla).
+router.post('/:id/detalle', verifyToken, requireRole('cliente'), async (req, res) => {
+    const errCuerpo = validarCuerpo(req.body, { textos: { texto: 2000 } });
+    if (errCuerpo) return res.status(400).json({ error: errCuerpo });
+    const texto = typeof req.body.texto === 'string' ? req.body.texto.trim() : '';
+    if (!texto) return res.status(400).json({ error: 'texto es requerido' });
+    const g = validarGravedad(req.body.gravedad);
+    if (!g.valida) return res.status(400).json({ error: 'gravedad debe ser sigue_operando, parcial o fuera_de_servicio' });
+    if (!req.user.cliente_id) {
+        return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
+    }
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        const sol = await client.query(
+            'SELECT id, maquinaria_id, gravedad FROM solicitudes WHERE id = $1 AND cliente_id = $2 FOR UPDATE',
+            [req.params.id, req.user.cliente_id]
+        );
+        if (sol.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Asistencia no encontrada' });
+        }
+        const equipo = await client.query('SELECT estado FROM maquinarias WHERE id = $1 FOR NO KEY UPDATE', [sol.rows[0].maquinaria_id]);
+        const abierta = await client.query(
+            `SELECT 1 FROM solicitudes s LEFT JOIN ordenes_trabajo ot ON ot.id = s.orden_trabajo_id
+             WHERE s.id = $1 AND ${SQL_ASISTENCIA_ABIERTA}`,
+            [sol.rows[0].id]
+        );
+        if (abierta.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(409).json({ error: 'Esa asistencia ya terminó. Solicita una nueva' });
+        }
+        const mayor = gravedadMayor(sol.rows[0].gravedad, g.gravedad);
+        await client.query('INSERT INTO solicitudes_detalle (solicitud_id, texto, gravedad) VALUES ($1, $2, $3)', [sol.rows[0].id, texto, g.gravedad]);
+        if (mayor !== sol.rows[0].gravedad) {
+            await client.query('UPDATE solicitudes SET gravedad = $1 WHERE id = $2', [mayor, sol.rows[0].id]);
+        }
+        const cambio = equipo.rows[0] ? estadoPorGravedad({ gravedad: mayor, estadoEquipo: equipo.rows[0].estado }) : null;
+        if (cambio) {
+            await client.query('UPDATE maquinarias SET estado = $1, estado_origen = $2 WHERE id = $3', [cambio.estado, cambio.origen, sol.rows[0].maquinaria_id]);
+        }
+        await client.query('COMMIT');
+        res.status(201).json({ solicitud_id: sol.rows[0].id, gravedad: mayor });
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+    } finally {
+        client.release();
     }
 });
 
@@ -80,6 +160,7 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
     }
     const result = await pool.query(
         `SELECT s.*, m.codigo AS maquinaria_codigo,
+                    (SELECT COALESCE(json_agg(json_build_object('texto', d.texto, 'gravedad', d.gravedad, 'created_at', d.created_at) ORDER BY d.created_at), '[]'::json) FROM solicitudes_detalle d WHERE d.solicitud_id = s.id) AS detalles,
                     ot.id AS ot_id, ot.estado AS ot_estado,
                     u.nombre AS mecanico_nombre
              FROM solicitudes s
@@ -100,7 +181,8 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
         return res.status(400).json({ error: 'Estado inválido. Valores posibles: pendiente, convertida, rechazada' });
     }
     const result = await pool.query(
-        `SELECT s.*, c.nombre AS cliente_nombre, m.codigo AS maquinaria_codigo
+        `SELECT s.*, c.nombre AS cliente_nombre, m.codigo AS maquinaria_codigo,
+                    (SELECT COALESCE(json_agg(json_build_object('texto', d.texto, 'gravedad', d.gravedad, 'created_at', d.created_at) ORDER BY d.created_at), '[]'::json) FROM solicitudes_detalle d WHERE d.solicitud_id = s.id) AS detalles
              FROM solicitudes s
              JOIN clientes c ON c.id = s.cliente_id
              JOIN maquinarias m ON m.id = s.maquinaria_id

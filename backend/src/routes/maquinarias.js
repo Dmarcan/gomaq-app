@@ -13,6 +13,8 @@ const { ordenSql } = require('../utils/ordenFlota');
 const { leerLineaTiempo } = require('../utils/lineaTiempoEquipo');
 const { visiblePara, construirSqlDocumentos, construirSqlEquiposDelCliente, filaPublica } = require('../utils/documentosEquipo');
 
+const { ESTADOS_EQUIPO } = require('../utils/estadoEquipo');
+const { SQL_ASISTENCIA_ABIERTA } = require('../utils/asistenciaCliente');
 const { columnaOtAbierta } = require('../utils/otAbiertaEquipo');
 
 const router = express.Router();
@@ -86,7 +88,13 @@ router.get('/mias', verifyToken, requireRole('cliente'), async (req, res) => {
         return res.status(400).json({ error: 'Tu cuenta no está vinculada a ninguna empresa. Pide a GOMAQ que la vincule' });
     }
     const result = await pool.query(
-        'SELECT id, codigo, tipo, estado, ubicacion, foto_url FROM maquinarias WHERE cliente_id = $1 ORDER BY codigo',
+        // asistencia_abierta_id: la solicitud de asistencia que sigue en curso (pendiente u orden sin terminar), para
+        // que el portal avise y deje agregar un detalle en vez de pedir otra
+        `SELECT m.id, m.codigo, m.tipo, m.estado, m.ubicacion, m.foto_url,
+                (SELECT s.id FROM solicitudes s LEFT JOIN ordenes_trabajo ot ON ot.id = s.orden_trabajo_id
+                 WHERE s.maquinaria_id = m.id AND s.cliente_id = m.cliente_id AND ${SQL_ASISTENCIA_ABIERTA}
+                 ORDER BY s.created_at DESC LIMIT 1) AS asistencia_abierta_id
+         FROM maquinarias m WHERE m.cliente_id = $1 ORDER BY m.codigo`,
         [req.user.cliente_id]
     );
     res.json(await Promise.all(result.rows.map(conFotoFirmada)));
@@ -118,6 +126,7 @@ router.get('/resumen', verifyToken, requireRole('gerente', 'administrativo', 'me
                     COUNT(*) FILTER (WHERE cliente_id IS NULL AND estado = 'operativa')::int AS disponibles,
                     COUNT(*) FILTER (WHERE cliente_id IS NOT NULL)::int AS arrendados,
                     COUNT(*) FILTER (WHERE estado = 'en_mantencion')::int AS en_mantencion,
+                    COUNT(*) FILTER (WHERE estado = 'parcialmente_operativa')::int AS parcialmente_operativa,
                     COUNT(*) FILTER (WHERE estado = 'fuera_de_servicio')::int AS fuera_de_servicio
              FROM maquinarias`
     );
@@ -368,8 +377,7 @@ router.patch('/:id/foto', verifyToken, requireRole('administrativo'), subidaImag
 router.patch('/:id/estado', verifyToken, requireRole('mecanico', 'administrativo'), async (req, res) => {
     const { id } = req.params;
     const { estado } = req.body;
-    const validos = ['operativa', 'en_mantencion', 'fuera_de_servicio'];
-    if (!validos.includes(estado)) {
+    if (!ESTADOS_EQUIPO.includes(estado)) {
         return res.status(400).json({ error: 'Estado inválido' });
     }
     const result = await pool.query(

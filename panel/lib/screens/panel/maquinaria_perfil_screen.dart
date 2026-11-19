@@ -277,7 +277,7 @@ class _MaquinariaPerfilScreenState extends State<MaquinariaPerfilScreen> {
         cuerpo: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            for (final estado in const ['operativa', 'en_mantencion', 'fuera_de_servicio'])
+            for (final estado in const ['operativa', 'parcialmente_operativa', 'en_mantencion', 'fuera_de_servicio'])
               Padding(
                 padding: const EdgeInsets.only(bottom: 8),
                 child: InkWell(

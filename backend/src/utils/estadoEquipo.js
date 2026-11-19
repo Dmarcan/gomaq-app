@@ -2,12 +2,13 @@
 //
 // El estado de la maquinaria puede cambiarlo la orden (al llegar el mecanico a terreno y al cerrar),
 // el mecanico (al cerrar dice como queda el equipo) o el panel (a mano). `estado_origen` guarda
-// quien lo fijo por ultima vez: 'ot', 'mecanico' o 'panel'. NULL es un estado fijado antes de la
+// quien lo fijo por ultima vez: 'ot', 'mecanico', 'panel' o 'cliente'. NULL es un estado fijado antes de la
 // migracion 024, cuando solo lo escribia PATCH /estado, y se trata como manual (del panel).
 //
 // Funciones puras: la regla queda testeable sin base de datos (ver test/estadoEquipo.test.js).
 // "Abierta" quiere decir en_terreno o en_reparacion (ver estadosOt.EN_CURSO).
 
+const ESTADOS_EQUIPO = ['operativa', 'parcialmente_operativa', 'en_mantencion', 'fuera_de_servicio'];
 // lo que puede pedir el mecanico al cerrar una orden
 const ESTADOS_CIERRE = ['operativa', 'fuera_de_servicio'];
 
@@ -44,12 +45,14 @@ function estadoTrasEntrada({ estadoEquipo }) {
  */
 function estadoTrasCierre({ pedido, otrasAbiertas, estadoEquipo, origenEstado }) {
     if (pedido === 'fuera_de_servicio') return { estado: 'fuera_de_servicio', origen: 'mecanico' };
-    const manual = origenEstado !== 'ot' && origenEstado !== 'mecanico';
+    // 'cliente' (una asistencia con gravedad) no es un estado fijado a mano: el cierre de la orden lo corrige
+    const manual = origenEstado !== 'ot' && origenEstado !== 'mecanico' && origenEstado !== 'cliente';
     if (pedido === 'operativa') {
         if (otrasAbiertas > 0 || manual || estadoEquipo === 'operativa') return null;
         return { estado: 'operativa', origen: 'mecanico' };
     }
-    if (otrasAbiertas === 0 && estadoEquipo === 'en_mantencion' && origenEstado === 'ot') {
+    const loPusoLaOrdenOElCliente = origenEstado === 'ot' || origenEstado === 'cliente';
+    if (otrasAbiertas === 0 && loPusoLaOrdenOElCliente && (estadoEquipo === 'en_mantencion' || estadoEquipo === 'parcialmente_operativa')) {
         return { estado: 'operativa', origen: 'ot' };
     }
     return null;
@@ -110,7 +113,7 @@ async function origenDeCliente(db, clienteId) {
 }
 
 module.exports = {
-    ESTADOS_CIERRE,
+    ESTADOS_EQUIPO, ESTADOS_CIERRE,
     validarEstadoEquipoCierre, estadoTrasEntrada, estadoTrasCierre, origenPorEjecutivo,
     aplicarEntradaEquipo, aplicarCierreEquipo, origenDeCliente,
 };

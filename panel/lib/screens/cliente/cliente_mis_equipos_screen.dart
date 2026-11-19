@@ -73,12 +73,19 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
 
   Future<void> _solicitarAsistencia(Map<String, dynamic> maquinaria) async {
     // en un formulario, un clic fuera no debe botar lo escrito
+    final abiertaId = maquinaria['asistencia_abierta_id'];
     final enviada = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
-      builder: (_) => _SolicitarAsistenciaDialog(maquinaria: maquinaria),
+      builder: (_) => _SolicitarAsistenciaDialog(maquinaria: maquinaria, asistenciaAbiertaId: abiertaId is int ? abiertaId : null),
     );
     if (enviada == true && mounted) {
+      if (abiertaId != null) {
+        // un detalle no crea otra solicitud: se actualiza la lista y se queda aquí
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Detalle agregado a tu asistencia.')));
+        _cargarActuales();
+        return;
+      }
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Asistencia solicitada. Te contactaremos pronto.')));
       // al Seguimiento, ya con la solicitud nueva (el parámetro r cambia la URL aunque ya estuviera ahí)
       context.go('/portal?pestana=seguimiento&r=${DateTime.now().millisecondsSinceEpoch}');
@@ -160,6 +167,13 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
           else
             for (final m in _maquinarias)
               Card(
+                // asistencia pedida: borde azul (el estado no va solo en color, también lleva etiqueta e icono)
+                shape: m['asistencia_abierta_id'] != null
+                    ? RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                        side: const BorderSide(color: GomaqColors.estadoAsistencia, width: 2),
+                      )
+                    : null,
                 child: Padding(
                   padding: const EdgeInsets.only(bottom: 8),
                   child: Column(
@@ -170,6 +184,14 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
                         subtitle: Text(m['ubicacion'] ?? 'Sin ubicación registrada'),
                         trailing: EstadoChip(estado: m['estado']),
                       ),
+                      if (m['asistencia_abierta_id'] != null)
+                        const Padding(
+                          padding: EdgeInsets.fromLTRB(16, 0, 16, 8),
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: EstadoChip(estado: 'asistencia_pedida', icono: Icons.support_agent),
+                          ),
+                        ),
                       // boton explicito: tocar la tarjeta no indica que se puede pedir asistencia
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 12),
@@ -180,7 +202,7 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
                             OutlinedButton.icon(
                               onPressed: () => _solicitarAsistencia(m),
                               icon: const Icon(Icons.support_agent, size: 18),
-                              label: const Text('Solicitar asistencia'),
+                              label: Text(m['asistencia_abierta_id'] != null ? 'Agregar detalle' : 'Solicitar asistencia'),
                             ),
                             OutlinedButton.icon(
                               onPressed: () => _verDocumentos(m),
@@ -250,7 +272,10 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
 
 class _SolicitarAsistenciaDialog extends StatefulWidget {
   final Map<String, dynamic> maquinaria;
-  const _SolicitarAsistenciaDialog({required this.maquinaria});
+
+  /// Si el equipo ya tiene una asistencia en curso no se abre otra: el diálogo agrega un detalle a esa.
+  final int? asistenciaAbiertaId;
+  const _SolicitarAsistenciaDialog({required this.maquinaria, this.asistenciaAbiertaId});
 
   @override
   State<_SolicitarAsistenciaDialog> createState() => _SolicitarAsistenciaDialogState();
@@ -259,6 +284,8 @@ class _SolicitarAsistenciaDialog extends StatefulWidget {
 class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> {
   final _descripcionCtrl = TextEditingController();
   String _tipo = 'falla';
+  // cómo está el equipo según el cliente; el servidor cambia el estado del equipo con esto
+  String _gravedad = 'sigue_operando';
   PlatformFile? _evidencia;
 
   @override
@@ -276,34 +303,48 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
 
   Future<void> _enviar() async {
     final descripcion = _descripcionCtrl.text.trim();
+    if (widget.asistenciaAbiertaId != null) {
+      await ApiClient.instance.post('/api/solicitudes/${widget.asistenciaAbiertaId}/detalle', {'texto': descripcion, 'gravedad': _gravedad});
+      return;
+    }
+    final gravedad = _tipo == 'falla' ? _gravedad : 'sigue_operando';
     if (_evidencia != null) {
       await ApiClient.instance.postMultipart(
         '/api/solicitudes',
         bytes: _evidencia!.bytes!,
         filename: _evidencia!.name,
-        fields: {'maquinaria_id': '${widget.maquinaria['id']}', 'descripcion': descripcion, 'tipo': _tipo},
+        fields: {'maquinaria_id': '${widget.maquinaria['id']}', 'descripcion': descripcion, 'tipo': _tipo, 'gravedad': gravedad},
       );
     } else {
       await ApiClient.instance.post('/api/solicitudes', {
         'maquinaria_id': widget.maquinaria['id'],
         'descripcion': descripcion,
         'tipo': _tipo,
+        'gravedad': gravedad,
       });
     }
   }
 
   @override
   Widget build(BuildContext context) {
-    final falla = _tipo == 'falla';
+    final detalle = widget.asistenciaAbiertaId != null;
+    final falla = _tipo == 'falla' || detalle;
     return DialogoFormulario(
       icono: Icons.support_agent,
-      titulo: 'Solicitar asistencia',
+      titulo: detalle ? 'Agregar detalle' : 'Solicitar asistencia',
       subtitulo: '${widget.maquinaria['codigo']} · ${widget.maquinaria['tipo']}',
-      textoAccion: 'Solicitar asistencia',
+      textoAccion: detalle ? 'Agregar detalle' : 'Solicitar asistencia',
       ancho: 460,
       contenido: (context, redibujar) => Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          if (detalle) ...[
+            const Text(
+              'Este equipo ya tiene una asistencia en curso. En vez de pedir otra, agrega lo que quieras contarnos.',
+              style: TextStyle(fontSize: 13),
+            ),
+            separadorCampos,
+          ] else ...[
           const Text('¿Qué necesitas?', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
           const SizedBox(height: 8),
           // En un teléfono el cuadro mide ~300 px y dos opciones con icono y texto largo no caben
@@ -334,6 +375,37 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
             },
           ),
           separadorCampos,
+          ],
+          if (falla) ...[
+            const Text('¿Cómo está el equipo?', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600)),
+            RadioGroup<String>(
+              groupValue: _gravedad,
+              onChanged: (v) => redibujar(() => _gravedad = v ?? _gravedad),
+              child: const Column(
+                children: [
+                  RadioListTile<String>(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    value: 'sigue_operando',
+                    title: Text('Sigue operando'),
+                  ),
+                  RadioListTile<String>(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    value: 'parcial',
+                    title: Text('Opera parcialmente'),
+                  ),
+                  RadioListTile<String>(
+                    contentPadding: EdgeInsets.zero,
+                    dense: true,
+                    value: 'fuera_de_servicio',
+                    title: Text('No funciona (fuera de servicio)'),
+                  ),
+                ],
+              ),
+            ),
+            separadorCampos,
+          ],
           TextFormField(
             controller: _descripcionCtrl,
             minLines: 3,
@@ -346,12 +418,14 @@ class _SolicitarAsistenciaDialogState extends State<_SolicitarAsistenciaDialog> 
             ),
             validator: obligatorio('Cuéntanos qué pasa para poder ayudarte.'),
           ),
-          separadorCampos,
-          OutlinedButton.icon(
-            onPressed: () => _elegirEvidencia(redibujar),
-            icon: const Icon(Icons.camera_alt),
-            label: Text(_evidencia?.name ?? 'Adjuntar una foto (opcional)'),
-          ),
+          if (!detalle) ...[
+            separadorCampos,
+            OutlinedButton.icon(
+              onPressed: () => _elegirEvidencia(redibujar),
+              icon: const Icon(Icons.camera_alt),
+              label: Text(_evidencia?.name ?? 'Adjuntar una foto (opcional)'),
+            ),
+          ],
         ],
       ),
       alGuardar: _enviar,

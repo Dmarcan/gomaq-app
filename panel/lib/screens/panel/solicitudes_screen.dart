@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../../services/api_client.dart';
+import '../../theme/gomaq_theme.dart';
 import '../../widgets/estado_chip.dart';
 import '../../widgets/estado_vacio.dart';
 
@@ -101,6 +102,12 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
     );
   }
 
+  String _etiquetaGravedad(String? g) => switch (g) {
+        'parcial' => 'opera parcialmente',
+        'fuera_de_servicio' => 'no funciona (fuera de servicio)',
+        _ => 'sigue operando',
+      };
+
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
@@ -130,7 +137,26 @@ class _SolicitudesScreenState extends State<SolicitudesScreen> {
                         children: [
                           ListTile(
                             title: Text('${s['cliente_nombre']} - ${s['maquinaria_codigo']}'),
-                            subtitle: Text(s['descripcion']),
+                            subtitle: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(s['descripcion']),
+                                // lo que el cliente declaró del equipo (cambia el estado del equipo al pedir la asistencia)
+                                if (s['gravedad'] != null && s['gravedad'] != 'sigue_operando')
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text(
+                                      'El cliente indica: ${_etiquetaGravedad(s['gravedad'])}',
+                                      style: TextStyle(color: GomaqColors.textoEstado(s['gravedad'] == 'parcial' ? 'parcialmente_operativa' : 'fuera_de_servicio'), fontWeight: FontWeight.w700),
+                                    ),
+                                  ),
+                                for (final d in (s['detalles'] as List? ?? const []))
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 4),
+                                    child: Text('Detalle: ${d['texto']}'),
+                                  ),
+                              ],
+                            ),
                             trailing: s['estado'] == 'pendiente'
                                 ? FilledButton(
                                     onPressed: () => _convertir(s['id']),

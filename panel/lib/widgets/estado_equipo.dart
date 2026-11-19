@@ -17,6 +17,8 @@ class EstadoEquipo extends StatelessWidget {
   static IconData icono(String? estado) => switch (estado) {
         'operativa' => Icons.check_circle_outline,
         'en_mantencion' => Icons.build_outlined,
+        'parcialmente_operativa' => Icons.warning_amber_outlined,
+        'asistencia_pedida' => Icons.support_agent,
         'fuera_de_servicio' => Icons.error_outline,
         _ => Icons.help_outline,
       };

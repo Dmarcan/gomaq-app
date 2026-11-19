@@ -22,6 +22,7 @@ router.get('/resumen', verifyToken, requireRole('administrativo', 'gerente'), as
                 COUNT(*) FILTER (WHERE cliente_id IS NULL AND estado = 'operativa') AS disponibles,
                 COUNT(*) FILTER (WHERE estado = 'operativa') AS operativas,
                 COUNT(*) FILTER (WHERE estado = 'en_mantencion') AS en_mantencion,
+                COUNT(*) FILTER (WHERE estado = 'parcialmente_operativa') AS parcialmente_operativa,
                 COUNT(*) FILTER (WHERE estado = 'fuera_de_servicio') AS fuera_de_servicio,
                 COUNT(*) AS total
             FROM maquinarias
