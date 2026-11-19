@@ -1,7 +1,6 @@
 // Avisos internos (mecanico y gerente) por el patron Outbox: la fila de notificaciones_pendientes se
 // inserta con el `client` de la MISMA transaccion del evento, asi que si el evento se revierte el
-// aviso tampoco queda. El envio real lo hace el worker (hoy un stub: los avisos terminan en error
-// tras los reintentos hasta que se configure el proveedor, igual que los demas).
+// aviso tampoco queda. El envio real lo hace el worker; ver encolarNotificacion: sin proveedor no se encola.
 //
 // Estos helpers no agregan bloqueos: solo leen `usuarios` y insertan en notificaciones_pendientes.
 // Los reintentos no duplican avisos porque cada ruta sale antes de encolar cuando el cambio ya estaba
@@ -23,11 +22,28 @@ const TIPOS_INTERNOS = Object.freeze(Object.values(TIPOS_AVISO));
 /** Motivos de un conteo que merecen avisar al gerente (una diferencia por conteo normal no). */
 const MOTIVOS_AJUSTE_CON_AVISO = Object.freeze(['perdida_robo', 'danio_merma']);
 
-function insertar(client, canal, destinatario, payload) {
-    return client.query(
+// Porton unico de la cola de salida: solo se encolan los avisos que tienen proveedor real. Hoy es solo el
+// correo de factura (Resend). Un aviso sin proveedor no se encola: terminaria en error y ensuciaria el
+// panel con "Avisos con problemas". Para agregar un proveedor (correo o push) se suma su canal y tipo aqui
+// y su plantilla en workers/notificaciones.js.
+const TIPOS_CON_ENVIO = Object.freeze(['factura_emitida']);
+
+function tieneProveedor(canal, tipo) {
+    return canal === 'email' && TIPOS_CON_ENVIO.includes(tipo);
+}
+
+/** Encola un aviso si tiene proveedor, con el `client` de la transaccion del evento. Devuelve filas encoladas (0 o 1). */
+async function encolarNotificacion(client, { canal, destinatario, payload }) {
+    if (!tieneProveedor(canal, payload && payload.tipo)) return 0;
+    await client.query(
         `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ($1, $2, $3)`,
         [canal, destinatario, JSON.stringify(payload)]
     );
+    return 1;
+}
+
+function insertar(client, canal, destinatario, payload) {
+    return encolarNotificacion(client, { canal, destinatario, payload });
 }
 
 /**
@@ -42,14 +58,8 @@ async function encolarAMecanico(client, mecanicoId, payload) {
     );
     const mecanico = r.rows[0];
     if (!mecanico) return 0;
-    if (mecanico.telefono_whatsapp) {
-        await insertar(client, 'whatsapp', mecanico.telefono_whatsapp, payload);
-        return 1;
-    }
-    if (mecanico.email) {
-        await insertar(client, 'email', mecanico.email, payload);
-        return 1;
-    }
+    if (mecanico.telefono_whatsapp) return insertar(client, 'whatsapp', mecanico.telefono_whatsapp, payload);
+    if (mecanico.email) return insertar(client, 'email', mecanico.email, payload);
     return 0;
 }
 
@@ -66,14 +76,8 @@ async function encolarAGerentes(client, payload, { excluirUsuarioId = null } = {
     );
     let encoladas = 0;
     for (const gerente of r.rows) {
-        if (gerente.email) {
-            await insertar(client, 'email', gerente.email, payload);
-            encoladas++;
-        }
-        if (gerente.telefono_whatsapp) {
-            await insertar(client, 'whatsapp', gerente.telefono_whatsapp, payload);
-            encoladas++;
-        }
+        if (gerente.email) encoladas += await insertar(client, 'email', gerente.email, payload);
+        if (gerente.telefono_whatsapp) encoladas += await insertar(client, 'whatsapp', gerente.telefono_whatsapp, payload);
     }
     return encoladas;
 }
@@ -145,6 +149,7 @@ const SQL_AVISOS_PROBLEMAS = `(${SQL_AVISOS_EN_ERROR} OR ${SQL_AVISOS_ATRASADOS}
 module.exports = {
     SQL_AVISOS_PROBLEMAS, SQL_AVISOS_EN_ERROR, SQL_AVISOS_ATRASADOS,
     TIPOS_AVISO, TIPOS_INTERNOS, MOTIVOS_AJUSTE_CON_AVISO,
+    TIPOS_CON_ENVIO, tieneProveedor, encolarNotificacion,
     encolarAMecanico, encolarAGerentes,
     avisarAsignacion, avisarPorValorizar, avisarFacturaAnulada, avisarAjusteInventario,
 };

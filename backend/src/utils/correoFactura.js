@@ -2,6 +2,8 @@
 // correos encolados cuando la factura se anula. Funciones puras salvo las que reciben un cliente
 // de base de datos (`db`) y deben llamarse dentro de la transaccion de quien las usa.
 
+const { encolarNotificacion } = require('./avisos');
+
 const MAX_ASUNTO = 200;
 const MAX_CUERPO = 5000;
 
@@ -165,9 +167,9 @@ async function encolarCorreoFactura(pool, { facturaId, ordenId = null, asunto, c
         }
         // un correo en error de un intento anterior ya no corresponde: este lo reemplaza
         await cancelarCorreosPrevios(client, facturaId, 'Reemplazado');
-        await client.query(
-            `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ('email', $1, $2)`,
-            [factura.cliente_email, JSON.stringify({
+        await encolarNotificacion(client, {
+            canal: 'email', destinatario: factura.cliente_email,
+            payload: {
                 tipo: 'factura_emitida',
                 factura_id: factura.id,
                 orden_trabajo_id: factura.orden_trabajo_id,
@@ -179,8 +181,8 @@ async function encolarCorreoFactura(pool, { facturaId, ordenId = null, asunto, c
                 periodo_hasta: factura.periodo_hasta,
                 asunto: texto.asunto,
                 cuerpo: texto.cuerpo,
-            })]
-        );
+            },
+        });
         await client.query('COMMIT');
         return { status: 200, body: { ok: true, mensaje: 'Envio de correo encolado' } };
     } catch (err) {

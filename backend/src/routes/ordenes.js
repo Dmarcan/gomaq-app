@@ -17,7 +17,7 @@ const { montoEnteroONulo } = require('../utils/auditoriaLinea');
 const {
     dejarEvento, leerUuidTarea, sincronizadoTarde, decidirEventoDiagnostico, decidirEventoAsignacion, esMismoTecnico,
 } = require('../utils/eventosOt');
-const { avisarAsignacion, avisarPorValorizar } = require('../utils/avisos');
+const { avisarAsignacion, avisarPorValorizar, encolarNotificacion } = require('../utils/avisos');
 
 const {
     validarEstadoEquipoCierre, aplicarEntradaEquipo, aplicarCierreEquipo, origenDeCliente,
@@ -366,17 +366,17 @@ async function encolarAvisoAsignacion(client, orden, mecanico) {
         'SELECT marca, modelo, patente FROM vehiculos WHERE usuario_id = $1 AND activo = true',
         [mecanico.id]
     );
-    await client.query(
-        `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ($1, $2, $3)`,
-        [contacto.canal, contacto.destinatario, JSON.stringify({
+    await encolarNotificacion(client, {
+        canal: contacto.canal, destinatario: contacto.destinatario,
+        payload: {
             tipo: 'mecanico_asignado',
             orden_trabajo_id: orden.id,
             maquinaria_codigo: orden.maquinaria_codigo,
             mecanico_nombre: mecanico.nombre,
             mecanico_rut: mecanico.rut,
             vehiculo: vehiculo.rows[0] || null,
-        })]
-    );
+        },
+    });
 }
 
 // el mecanico toma una orden que nadie tiene asignada.
@@ -914,15 +914,15 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
         const contactoCierre = await contactoCliente(client, orden.cliente_id);
         if (contactoCierre) {
             const maquinaria = await client.query('SELECT codigo FROM maquinarias WHERE id = $1', [orden.maquinaria_id]);
-            await client.query(
-                `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ($1, $2, $3)`,
-                [contactoCierre.canal, contactoCierre.destinatario, JSON.stringify({
+            await encolarNotificacion(client, {
+                canal: contactoCierre.canal, destinatario: contactoCierre.destinatario,
+                payload: {
                     tipo: 'ot_finalizada',
                     orden_trabajo_id: orden.id,
                     maquinaria_codigo: maquinaria.rows[0] ? maquinaria.rows[0].codigo : null,
                     observacion_final: orden.observacion_final,
-                })]
-            );
+                },
+            });
         }
 
         // una orden con repuestos facturables queda esperando que el gerente apruebe el monto. El reintento

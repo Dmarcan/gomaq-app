@@ -4,7 +4,7 @@ import '../theme/gomaq_theme.dart';
 import 'dialogos.dart';
 
 /// Cómo le llega a la persona el código de su invitación o de restablecer la contraseña: por correo o en
-/// un mensaje que quien administra copia y manda a mano (WhatsApp u otro medio). El correo se deshabilita
+/// un mensaje que quien administra copia y manda a mano (por el medio que prefiera). El correo se deshabilita
 /// si el servidor no puede enviarlo (sin clave de Resend o con el remitente de pruebas).
 class SelectorCanalCodigo extends StatelessWidget {
   final String canal;
@@ -46,7 +46,7 @@ class SelectorCanalCodigo extends StatelessWidget {
         const SizedBox(height: 6),
         Text(
           canal == 'manual'
-              ? 'Verás un mensaje con el código para copiarlo y mandarlo por WhatsApp. Se muestra una sola vez. '
+              ? 'Verás un mensaje con el código para copiarlo y enviarlo por mensaje o correo. Se muestra una sola vez. '
                   'Sirve también si la persona no tiene un correo real.'
               : 'Se envía al correo de acceso de la cuenta.',
           style: const TextStyle(fontSize: 12, color: Colors.black54),

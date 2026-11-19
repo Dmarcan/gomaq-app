@@ -14,6 +14,7 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 
 const { SQL_CUENTAS_POR_APROBAR } = require('../utils/pendientes');
 const { rutValido, MENSAJE_RUT_INVALIDO } = require('../utils/rut');
+const { encolarNotificacion } = require('../utils/avisos');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
@@ -502,10 +503,9 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
 
         // Aviso de cuenta aprobada por el Outbox, en la misma transaccion. Sale en cuanto se
         // configure el proveedor de correo (pendiente del README), como el resto de avisos.
-        await client.query(
-            `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ('email', $1, $2)`,
-            [s.email, JSON.stringify({ tipo: 'cuenta_aprobada', nombre_contacto: s.nombre_contacto })]
-        );
+        await encolarNotificacion(client, {
+            canal: 'email', destinatario: s.email, payload: { tipo: 'cuenta_aprobada', nombre_contacto: s.nombre_contacto },
+        });
 
         await client.query('COMMIT');
         res.json({ ok: true, usuario: nuevoUsuario.rows[0] });

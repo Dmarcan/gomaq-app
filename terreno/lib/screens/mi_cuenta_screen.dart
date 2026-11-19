@@ -193,7 +193,7 @@ class _MiCuentaScreenState extends State<MiCuentaScreen> {
             TextField(
               controller: _telefonoCtrl,
               keyboardType: TextInputType.phone,
-              decoration: const InputDecoration(labelText: 'Teléfono / WhatsApp'),
+              decoration: const InputDecoration(labelText: 'Teléfono'),
             ),
             const SizedBox(height: 12),
             SizedBox(

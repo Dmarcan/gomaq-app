@@ -500,105 +500,6 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
     );
   }
 
-  Future<void> _guardarAlertas(Map<String, dynamic> usuario, {bool? recibe, String? telefono}) async {
-    try {
-      final actualizado = await ApiClient.instance.patch('/api/usuarios/${usuario['id']}/alertas', {
-        'recibe_alertas_mantencion': ?recibe,
-        'telefono_whatsapp': ?telefono,
-      });
-      if (!mounted) return;
-      setState(() {
-        final i = _internos.indexWhere((u) => u['id'] == usuario['id']);
-        if (i != -1) _internos[i] = actualizado;
-      });
-    } on ApiException catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('No se pudieron guardar las alertas: ${e.message}')));
-    }
-  }
-
-  Future<void> _editarWhatsapp(Map<String, dynamic> usuario) async {
-    final ctrl = TextEditingController(text: usuario['telefono_whatsapp'] ?? '');
-    final guardado = await mostrarFormulario(
-      context,
-      icono: Icons.chat,
-      titulo: 'WhatsApp de ${usuario['nombre']}',
-      subtitulo: 'Número al que llegan los avisos de mantención',
-      textoAccion: 'Guardar número',
-      ancho: 420,
-      contenido: (context, redibujar) => TextFormField(
-        controller: ctrl,
-        autofocus: true,
-        keyboardType: TextInputType.phone,
-        decoration: decoracionCampo('Número', ayuda: 'Con código de país: +56 9 1234 5678. Déjalo en blanco para quitarlo.'),
-        // vacío es válido: es la forma de quitar el número
-        validator: (v) {
-          if (v == null || v.trim().isEmpty) return null;
-          final digitos = v.replaceAll(RegExp(r'[\s()-]'), '');
-          return RegExp(r'^\+?\d{8,15}$').hasMatch(digitos) ? null : 'Escribe un número válido, por ejemplo +56 9 1234 5678.';
-        },
-      ),
-      alGuardar: () async {
-        final actualizado = await ApiClient.instance.patch('/api/usuarios/${usuario['id']}/alertas', {'telefono_whatsapp': ctrl.text.trim()});
-        if (!mounted) return;
-        setState(() {
-          final i = _internos.indexWhere((u) => u['id'] == usuario['id']);
-          if (i != -1) _internos[i] = actualizado;
-        });
-      },
-    );
-    ctrl.dispose();
-    if (guardado && mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Número guardado')));
-  }
-
-  /// Quien recibe el aviso de mantencion proxima. Se configura aqui y no en el .env del servidor,
-  /// para que cambiar el destinatario no exija acceso al servidor.
-  Widget _tarjetaAlertas() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Alertas de mantención', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const SizedBox(height: 4),
-            Text(
-              'Quiénes reciben el aviso cuando un equipo queda a 50 h o menos de su mantención. '
-              'Se envía por correo y, si hay número cargado, también por WhatsApp.',
-              style: TextStyle(fontSize: 13, color: Colors.grey[700]),
-            ),
-            const SizedBox(height: 8),
-            if (_internos.isEmpty)
-              const Text('No hay usuarios internos registrados')
-            else
-              ..._internos.map((u) {
-                final telefono = u['telefono_whatsapp'];
-                return SwitchListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: u['recibe_alertas_mantencion'] == true,
-                  onChanged: (v) => _guardarAlertas(u, recibe: v),
-                  title: Text('${u['nombre']} · ${_rolLegible(u['rol'])}'),
-                  subtitle: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          '${u['email']}${telefono == null || telefono.toString().isEmpty ? ' · sin WhatsApp' : ' · $telefono'}',
-                          style: const TextStyle(fontSize: 12),
-                        ),
-                      ),
-                      TextButton(
-                        onPressed: () => _editarWhatsapp(u),
-                        child: const Text('WhatsApp', style: TextStyle(fontSize: 12)),
-                      ),
-                    ],
-                  ),
-                );
-              }),
-          ],
-        ),
-      ),
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     if (_cargando) return const Center(child: CircularProgressIndicator());
@@ -608,11 +509,10 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
       onRefresh: _cargar,
       child: ListView.builder(
         padding: const EdgeInsets.all(16),
-        // +3: el titulo de las solicitudes (primero), y al final la tarjeta de cuentas y la de alertas
-        itemCount: _solicitudes.length + 3,
+        // +2: el titulo de las solicitudes (primero) y al final la tarjeta de cuentas
+        itemCount: _solicitudes.length + 2,
         itemBuilder: (context, index) {
           if (index == _solicitudes.length + 1) return _tarjetaCuentas();
-          if (index == _solicitudes.length + 2) return _tarjetaAlertas();
           if (index == 0) {
             return Padding(
               padding: const EdgeInsets.only(bottom: 8),
@@ -640,7 +540,7 @@ class _UsuariosScreenState extends State<UsuariosScreen> {
                   _dato('Correo', s['email']),
                   _estadoCorreo(s),
                   _dato('RUT empresa', s['rut_empresa']),
-                  _dato('WhatsApp', s['telefono_whatsapp']),
+                  _dato('Teléfono', s['telefono_whatsapp']),
                   _dato('Horario de trabajo', s['horario_trabajo']),
                   _dato('Horario de colación', s['horario_colacion']),
                   _dato('Dirección', s['direccion']),

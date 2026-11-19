@@ -5334,8 +5334,11 @@ describe('bloque 5 (PR B): revision adversarial del correo de la factura', () =>
     });
 });
 
-describe('bloque 5 (parte C): avisos al mecanico y al gerente', () => {
+describe('bloque 5 (parte C): avisos sin proveedor no se encolan', () => {
+    // Desde la migracion 046 solo se encola lo que tiene envio real (el correo de factura, ver utils/avisos.js).
+    // Estas pruebas conservan el recorrido de cada accion (estados y respuestas) y comprueban que no deja filas.
     const TIPOS = ['ot_asignada', 'ot_reasignada', 'ot_por_valorizar', 'factura_anulada', 'ajuste_inventario'];
+    const SIN_PROVEEDOR = [...TIPOS, 'mecanico_asignado', 'ot_finalizada', 'cuenta_aprobada', 'mantencion_proxima'];
     const MARCA = { telefono: '+56911110000', telefonoDos: '+56922220000' };
     let inicio;
     let respaldo;
@@ -5371,52 +5374,24 @@ describe('bloque 5 (parte C): avisos al mecanico y al gerente', () => {
             await pool.query('UPDATE usuarios SET telefono_whatsapp = $1 WHERE id = $2', [u.telefono_whatsapp, u.id]);
         }
         await pool.query(
-            `DELETE FROM notificaciones_pendientes WHERE created_at >= $1 AND payload->>'tipo' = ANY($2)`, [inicio, TIPOS]);
+            `DELETE FROM notificaciones_pendientes WHERE created_at >= $1 AND payload->>'tipo' = ANY($2)`, [inicio, SIN_PROVEEDOR]);
     });
 
-    test('asignar avisa al mecanico nuevo por WhatsApp; el doble clic y el mismo tecnico no avisan otra vez', async (t) => {
+    test('asignar y reasignar no encolan avisos (con WhatsApp ni con correo)', async (t) => {
         if (!requiereBase(t)) return;
         await contactos(MARCA.telefono, MARCA.telefonoDos);
         const ot = await crearOt('asignada', null);
-        const asignar = () => pedir('PATCH', `/api/ordenes-trabajo/${ot}/asignar`, 'administrativo', { mecanico_id: datos.mecanicoId });
-        assert.equal((await asignar()).status, 200);
-        let lista = await avisos('ot_asignada', ot);
-        assert.equal(lista.length, 1);
-        assert.equal(lista[0].canal, 'whatsapp');
-        assert.equal(lista[0].destinatario, MARCA.telefono);
-        assert.ok(lista[0].payload.maquinaria_codigo);
-        assert.equal((await avisos('ot_reasignada', ot)).length, 0, 'sin tecnico anterior no hay aviso de reasignacion');
-        assert.equal((await asignar()).status, 200, 'doble clic');
-        lista = await avisos('ot_asignada', ot);
-        assert.equal(lista.length, 1, 'el mismo tecnico no recibe un segundo aviso');
-    });
-
-    test('reasignar avisa al nuevo y al anterior ("ya no vayas")', async (t) => {
-        if (!requiereBase(t)) return;
-        await contactos(MARCA.telefono, MARCA.telefonoDos);
-        const ot = await crearOt('asignada', datos.mecanicoId);
-        const r = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/asignar`, 'administrativo', { mecanico_id: datos.mecanicoDosId });
-        assert.equal(r.status, 200);
-        const nuevo = await avisos('ot_asignada', ot);
-        assert.equal(nuevo.length, 1);
-        assert.equal(nuevo[0].destinatario, MARCA.telefonoDos);
-        const anterior = await avisos('ot_reasignada', ot);
-        assert.equal(anterior.length, 1);
-        assert.equal(anterior[0].destinatario, MARCA.telefono);
-    });
-
-    test('sin WhatsApp el aviso va por correo', async (t) => {
-        if (!requiereBase(t)) return;
+        const asignar = (mecanicoId) => pedir('PATCH', `/api/ordenes-trabajo/${ot}/asignar`, 'administrativo', { mecanico_id: mecanicoId });
+        assert.equal((await asignar(datos.mecanicoId)).status, 200);
+        assert.equal((await asignar(datos.mecanicoId)).status, 200, 'doble clic');
+        assert.equal((await asignar(datos.mecanicoDosId)).status, 200, 'reasignacion');
         await contactos(null, null);
-        const ot = await crearOt('asignada', null);
-        assert.equal((await pedir('PATCH', `/api/ordenes-trabajo/${ot}/asignar`, 'administrativo', { mecanico_id: datos.mecanicoId })).status, 200);
-        const lista = await avisos('ot_asignada', ot);
-        assert.equal(lista.length, 1);
-        assert.equal(lista[0].canal, 'email');
-        assert.equal(lista[0].destinatario, 'mecanico@gomaq.test');
+        assert.equal((await asignar(datos.mecanicoId)).status, 200, 'sin WhatsApp');
+        assert.equal((await avisos('ot_asignada', ot)).length, 0);
+        assert.equal((await avisos('ot_reasignada', ot)).length, 0);
+        assert.equal((await avisos('mecanico_asignado', ot)).length, 0);
     });
 
-    // una cuenta desactivada no puede recibir ordenes: la asignacion misma se rechaza y por lo tanto tampoco hay aviso
     test('a un mecanico inactivo no se le asigna ni se le avisa', async (t) => {
         if (!requiereBase(t)) return;
         await contactos(MARCA.telefono, MARCA.telefonoDos);
@@ -5431,7 +5406,7 @@ describe('bloque 5 (parte C): avisos al mecanico y al gerente', () => {
         }
     });
 
-    test('cerrar una OT con repuestos facturables avisa al gerente; el reintento del cierre no repite el aviso', async (t) => {
+    test('cerrar una OT no encola avisos, con o sin repuestos facturables; el reintento tampoco', async (t) => {
         if (!requiereBase(t)) return;
         await pool.query("UPDATE usuarios SET telefono_whatsapp = '+56933330000' WHERE email = 'admin@gomaq.test'");
         const ot = await crearOt('en_reparacion');
@@ -5439,38 +5414,32 @@ describe('bloque 5 (parte C): avisos al mecanico y al gerente', () => {
         const uuid = crypto.randomUUID();
         const cerrar = () => pedir('PATCH', `/api/ordenes-trabajo/${ot}/finalizar`, 'mecanico', { uuid, uuid_cliente: uuid, observacion_final: 'listo' });
         assert.equal((await cerrar()).status, 200);
-        const lista = await avisos('ot_por_valorizar', ot);
-        assert.equal(lista.length, 2, 'un correo y un WhatsApp para el gerente');
-        assert.deepEqual(lista.map((x) => x.canal).sort(), ['email', 'whatsapp']);
-        assert.equal(lista[0].payload.causa, 'Orden finalizada');
         assert.equal((await cerrar()).status, 200, 'reintento');
-        assert.equal((await avisos('ot_por_valorizar', ot)).length, 2, 'el reintento no duplica');
+        const sinRepuestos = await crearOt('en_reparacion');
+        assert.equal((await pedir('PATCH', `/api/ordenes-trabajo/${sinRepuestos}/finalizar`, 'mecanico', { observacion_final: 'sin repuestos' })).status, 200);
+        for (const orden of [ot, sinRepuestos]) {
+            assert.equal((await avisos('ot_por_valorizar', orden)).length, 0);
+            assert.equal((await avisos('ot_finalizada', orden)).length, 0);
+        }
     });
 
-    test('cerrar una OT sin nada facturable no avisa al gerente', async (t) => {
-        if (!requiereBase(t)) return;
-        const ot = await crearOt('en_reparacion');
-        assert.equal((await pedir('PATCH', `/api/ordenes-trabajo/${ot}/finalizar`, 'mecanico', { observacion_final: 'sin repuestos' })).status, 200);
-        assert.equal((await avisos('ot_por_valorizar', ot)).length, 0);
-    });
-
-    test('anular la valorizacion por un cambio de lineas avisa al gerente una sola vez', async (t) => {
+    test('cambiar las lineas de una OT valorizada y agregar una linea tardia no encolan avisos', async (t) => {
         if (!requiereBase(t)) return;
         await pool.query("UPDATE usuarios SET telefono_whatsapp = '+56933330000' WHERE email = 'admin@gomaq.test'");
         const { ot, a } = await otValorizada();
-        const antes = (await avisos('ot_por_valorizar', ot)).length;
         const r = await pedir('PATCH', rutaLinea(ot, a), 'administrativo', { precio_unitario: 7777, ...MOTIVO_VALIDO });
         assert.equal(r.status, 200);
-        const despues = await avisos('ot_por_valorizar', ot);
-        assert.equal(despues.length, antes + 2, 'exactamente un correo y un WhatsApp para el gerente');
-        assert.equal(despues[despues.length - 1].payload.causa, 'Cambio en las líneas facturables');
-        // un segundo cambio ya sin valorizacion no la anula de nuevo ni avisa
-        const n = despues.length;
         assert.equal((await pedir('PATCH', rutaLinea(ot, a), 'administrativo', { precio_unitario: 8888, ...MOTIVO_VALIDO })).status, 200);
-        assert.equal((await avisos('ot_por_valorizar', ot)).length, n);
+        const tardia = await crearOt();
+        await cerrarOt(tardia, null);
+        const nueva = await pedir('POST', `/api/insumos/orden/${tardia}`, 'administrativo',
+            { cantidad: 1, descripcion: 'Repuesto tardio', precio_unitario: 1000, facturable: 'si', ...MOTIVO_VALIDO });
+        assert.equal(nueva.status, 201);
+        assert.equal((await avisos('ot_por_valorizar', ot)).length, 0);
+        assert.equal((await avisos('ot_por_valorizar', tardia)).length, 0);
     });
 
-    test('anular una factura avisa al gerente; repetir con la misma Idempotency-Key no repite el aviso', async (t) => {
+    test('anular una factura no encola avisos; repetir con la misma Idempotency-Key tampoco', async (t) => {
         if (!requiereBase(t)) return;
         await pool.query("UPDATE usuarios SET telefono_whatsapp = '+56933330000' WHERE email = 'admin@gomaq.test'");
         const ot = await crearOt();
@@ -5480,152 +5449,25 @@ describe('bloque 5 (parte C): avisos al mecanico y al gerente', () => {
         const anular = () => pedir('POST', `/api/ordenes-trabajo/${ot}/factura/${factura.id}/anular`, 'administrativo',
             { ...MOTIVO_VALIDO }, { 'Idempotency-Key': llave });
         assert.equal((await anular()).status, 200);
-        const lista = await avisos('factura_anulada', ot);
-        assert.equal(lista.length, 2);
-        assert.equal(lista[0].payload.folio, 'T-5301');
-        assert.deepEqual(Object.keys(lista[0].payload).sort(), ['folio', 'orden_trabajo_id', 'tipo'], 'payload minimo: sin monto ni motivo libre');
         assert.equal((await anular()).status, 200, 'repeticion');
-        assert.equal((await avisos('factura_anulada', ot)).length, 2, 'la repeticion no duplica');
+        assert.equal((await avisos('factura_anulada', ot)).length, 0);
     });
 
-    test('anular una factura que no existe no deja aviso', async (t) => {
+    test('un conteo por perdida o merma no encola avisos', async (t) => {
         if (!requiereBase(t)) return;
-        const ot = await crearOt();
-        const antes = (await avisos('factura_anulada')).length;
-        const r = await pedir('POST', `/api/ordenes-trabajo/${ot}/factura/99999999/anular`, 'administrativo', { ...MOTIVO_VALIDO });
-        assert.equal(r.status, 404);
-        assert.equal((await avisos('factura_anulada')).length, antes);
-    });
-
-    test('un conteo por perdida o merma avisa al gerente; por diferencia o sin diferencia no', async (t) => {
-        if (!requiereBase(t)) return;
-        await pool.query("UPDATE usuarios SET telefono_whatsapp = NULL WHERE email = 'admin@gomaq.test'");
         const ubic = await pool.query("INSERT INTO ubicaciones_stock (nombre, tipo) VALUES ('Aviso prueba 5C', 'bodega') RETURNING id");
         datos.ubicaciones.push(ubic.rows[0].id);
         const insumo = await pool.query("INSERT INTO insumos (nombre, unidad_medida) VALUES ('Insumo aviso 5C', 'un') RETURNING id");
         datos.insumos.push(insumo.rows[0].id);
         await pool.query('INSERT INTO stock_ubicacion (ubicacion_id, insumo_id, cantidad) VALUES ($1, $2, 10)', [ubic.rows[0].id, insumo.rows[0].id]);
-        const contar = (contada, esperada, motivo, uuid = crypto.randomUUID()) => pedir('POST', '/api/insumos/ajuste', 'administrativo', {
+        const contar = (contada, esperada, motivo) => pedir('POST', '/api/insumos/ajuste', 'administrativo', {
             ubicacion_id: ubic.rows[0].id, insumo_id: insumo.rows[0].id, cantidad_contada: contada, cantidad_esperada: esperada,
-            motivo_codigo: motivo, uuid_cliente: uuid,
+            motivo_codigo: motivo, uuid_cliente: crypto.randomUUID(),
         });
-        const total = async () => (await avisos('ajuste_inventario')).filter((x) => x.payload.insumo_nombre === 'Insumo aviso 5C').length;
         assert.equal((await contar(8, 10, 'diferencia_conteo')).status, 201);
-        assert.equal(await total(), 0, 'una diferencia de conteo no avisa');
-        assert.equal((await contar(8, 8, 'perdida_robo')).status, 200);
-        assert.equal(await total(), 0, 'un conteo sin diferencia no avisa');
-        const uuid = crypto.randomUUID();
-        assert.equal((await contar(5, 8, 'perdida_robo', uuid)).status, 201);
-        assert.equal(await total(), 1);
-        const aviso = (await avisos('ajuste_inventario')).find((x) => x.payload.insumo_nombre === 'Insumo aviso 5C');
-        assert.equal(aviso.payload.delta, -3);
-        assert.equal(aviso.payload.motivo_codigo, 'perdida_robo');
-        assert.ok(!('nota' in aviso.payload), 'la nota libre no viaja en el aviso');
-        assert.equal((await contar(5, 8, 'perdida_robo', uuid)).status, 200, 'reintento idempotente');
-        assert.equal(await total(), 1, 'el reintento no duplica');
+        assert.equal((await contar(5, 8, 'perdida_robo')).status, 201);
         assert.equal((await contar(3, 5, 'danio_merma')).status, 201);
-        assert.equal(await total(), 2, 'danio o merma tambien avisa');
-    });
-
-    test('una anulacion que deja la OT sin nada facturable no avisa al gerente', async (t) => {
-        if (!requiereBase(t)) return;
-        await pool.query("UPDATE usuarios SET telefono_whatsapp = '+56933330000' WHERE email = 'admin@gomaq.test'");
-        const ot = await crearOt();
-        const linea = await agregarLinea(ot, { descripcion: 'unica cobrable', precio_unitario: 1000, facturable: 'si' });
-        await cerrarOt(ot, 1000);
-        const r = await pedir('POST', `${rutaLinea(ot, linea.id)}/anular`, 'administrativo', { ...MOTIVO_VALIDO });
-        assert.equal(r.status, 200);
-        const v = await pool.query('SELECT valorizacion, facturable FROM ordenes_trabajo WHERE id = $1', [ot]);
-        assert.equal(v.rows[0].valorizacion, null, 'la valorizacion se anulo');
-        assert.equal(v.rows[0].facturable, false, 'y no queda nada que cobrar');
-        assert.equal((await avisos('ot_por_valorizar', ot)).length, 0);
-    });
-
-    test('una OT finalizada no facturable que pasa a facturable avisa al gerente', async (t) => {
-        if (!requiereBase(t)) return;
-        await pool.query("UPDATE usuarios SET telefono_whatsapp = '+56933330000' WHERE email = 'admin@gomaq.test'");
-        const ot = await crearOt();
-        await cerrarOt(ot, null);
-        assert.equal((await avisos('ot_por_valorizar', ot)).length, 0);
-        const r = await pedir('POST', `/api/insumos/orden/${ot}`, 'administrativo',
-            { cantidad: 1, descripcion: 'Repuesto tardio', precio_unitario: 1000, facturable: 'si', ...MOTIVO_VALIDO });
-        assert.equal(r.status, 201);
-        const lista = await avisos('ot_por_valorizar', ot);
-        assert.equal(lista.length, 2, 'correo y WhatsApp');
-        // una segunda linea facturable ya no cambia nada: la OT ya estaba esperando valorizacion
-        const otra = await pedir('POST', `/api/insumos/orden/${ot}`, 'administrativo',
-            { cantidad: 1, descripcion: 'Otro repuesto', precio_unitario: 500, facturable: 'si', ...MOTIVO_VALIDO });
-        assert.equal(otra.status, 201);
-        assert.equal((await avisos('ot_por_valorizar', ot)).length, 2);
-    });
-
-    test('un gerente inactivo no recibe avisos', async (t) => {
-        if (!requiereBase(t)) return;
-        const ot = await crearOt();
-        await facturarDirecto(ot, 'T-5302');
-        const factura = (await pool.query('SELECT id FROM facturas WHERE orden_trabajo_id = $1', [ot])).rows[0];
-        try {
-            await pool.query("UPDATE usuarios SET estado_cuenta = 'rechazado' WHERE email = 'admin@gomaq.test'");
-            const r = await pedir('POST', `/api/ordenes-trabajo/${ot}/factura/${factura.id}/anular`, 'administrativo', { ...MOTIVO_VALIDO });
-            assert.equal(r.status, 200);
-            assert.equal((await avisos('factura_anulada', ot)).length, 0);
-        } finally {
-            await pool.query("UPDATE usuarios SET estado_cuenta = 'activo' WHERE email = 'admin@gomaq.test'");
-        }
-    });
-
-    test('el gerente que anula la factura no se avisa a si mismo; otro gerente si', async (t) => {
-        if (!requiereBase(t)) return;
-        const ot = await crearOt();
-        await facturarDirecto(ot, 'T-5303');
-        const factura = (await pool.query('SELECT id FROM facturas WHERE orden_trabajo_id = $1', [ot])).rows[0];
-        const otro = await pool.query(
-            `INSERT INTO usuarios (nombre, email, password_hash, rol, estado_cuenta)
-             VALUES ('Gerente Dos 5C', 'gerente2.5c@gomaq.test', 'x', 'gerente', 'activo') RETURNING id`);
-        try {
-            const r = await pedir('POST', `/api/ordenes-trabajo/${ot}/factura/${factura.id}/anular`, 'gerente', { ...MOTIVO_VALIDO });
-            assert.equal(r.status, 200);
-            const lista = await avisos('factura_anulada', ot);
-            assert.ok(lista.length >= 1);
-            assert.ok(lista.every((x) => x.destinatario !== 'admin@gomaq.test' && x.destinatario !== '+56933330000'),
-                'el gerente que ejecuta la accion no recibe el aviso');
-            assert.ok(lista.some((x) => x.destinatario === 'gerente2.5c@gomaq.test'), 'el otro gerente si');
-        } finally {
-            await pool.query('DELETE FROM usuarios WHERE id = $1', [otro.rows[0].id]);
-        }
-    });
-
-    test('si la transaccion se revierte despues de encolar, el aviso no queda', async (t) => {
-        if (!requiereBase(t)) return;
-        const { avisarFacturaAnulada } = require('../src/utils/avisos');
-        const antes = (await avisos('factura_anulada')).length;
-        const client = await pool.connect();
-        try {
-            await client.query('BEGIN');
-            const n = await avisarFacturaAnulada(client, { factura: { orden_trabajo_id: null, folio: 'T-ROLLBACK' } });
-            assert.ok(n >= 1, 'se encolo dentro de la transaccion');
-            await client.query('ROLLBACK');
-        } finally {
-            client.release();
-        }
-        assert.equal((await avisos('factura_anulada')).length, antes, 'el ROLLBACK se llevo el aviso');
-    });
-
-    test('un conteo que suma stock no avisa aunque el motivo sea perdida o merma', async (t) => {
-        if (!requiereBase(t)) return;
-        const ubic = await pool.query("INSERT INTO ubicaciones_stock (nombre, tipo) VALUES ('Aviso positivo 5C', 'bodega') RETURNING id");
-        datos.ubicaciones.push(ubic.rows[0].id);
-        const insumo = await pool.query("INSERT INTO insumos (nombre, unidad_medida) VALUES ('Insumo positivo 5C', 'un') RETURNING id");
-        datos.insumos.push(insumo.rows[0].id);
-        await pool.query('INSERT INTO stock_ubicacion (ubicacion_id, insumo_id, cantidad) VALUES ($1, $2, 2)', [ubic.rows[0].id, insumo.rows[0].id]);
-        const r = await pedir('POST', '/api/insumos/ajuste', 'administrativo', {
-            ubicacion_id: ubic.rows[0].id, insumo_id: insumo.rows[0].id, cantidad_contada: 6, cantidad_esperada: 2,
-            motivo_codigo: 'perdida_robo', uuid_cliente: crypto.randomUUID(),
-        });
-        assert.equal(r.status, 201);
-        assert.equal(r.body.delta, 4);
-        const lista = (await avisos('ajuste_inventario')).filter((x) => x.payload.insumo_nombre === 'Insumo positivo 5C');
-        assert.equal(lista.length, 0);
+        assert.equal((await avisos('ajuste_inventario')).filter((x) => x.payload.insumo_nombre === 'Insumo aviso 5C').length, 0);
     });
 
     test('el contador de notificaciones en error del dashboard no cuenta los avisos internos', async (t) => {
@@ -5649,15 +5491,12 @@ describe('bloque 5 (parte C): avisos al mecanico y al gerente', () => {
         }
     });
 
-    test('los avisos nuevos quedan pendientes como cualquier otro y no rompen al worker', async (t) => {
+    test('ninguna accion de este bloque dejo filas de avisos sin proveedor', async (t) => {
         if (!requiereBase(t)) return;
-        const pendientes = await pool.query(
-            `SELECT estado, intentos FROM notificaciones_pendientes WHERE created_at >= $1 AND payload->>'tipo' = ANY($2)`, [inicio, TIPOS]);
-        assert.ok(pendientes.rows.length > 0);
-        // en el CI el servidor corre el worker adentro y, con el proveedor aun simulado, puede tomar
-        // un aviso (intentos > 0 o estado 'error') antes de que esta prueba lo lea: lo que importa es
-        // que el aviso exista y que ni el worker ni su estado se rompan (nunca 'cancelado' ni raro)
-        assert.ok(pendientes.rows.every((x) => ['pendiente', 'error', 'enviado'].includes(x.estado) && x.intentos >= 0));
+        const r = await pool.query(
+            `SELECT payload->>'tipo' AS tipo FROM notificaciones_pendientes WHERE created_at >= $1 AND payload->>'tipo' = ANY($2)`,
+            [inicio, SIN_PROVEEDOR]);
+        assert.deepEqual(r.rows, []);
     });
 });
 

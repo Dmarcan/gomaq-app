@@ -9,6 +9,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularEstadoMantencion, requiereAviso, HORAS_AVISO_MANTENCION, cargarAlertasMantencion } = require('../utils/mantencion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
+const { encolarNotificacion } = require('../utils/avisos');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
@@ -48,23 +49,12 @@ async function encolarAvisoMantencion(client, maquinaria, estado) {
 
     let encoladas = 0;
     for (const usuario of destinatarios.rows) {
-        if (usuario.email) {
-            await client.query(
-                `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ('email', $1, $2)`,
-                [usuario.email, JSON.stringify(payload)]
-            );
-            encoladas++;
-        }
-        if (usuario.telefono_whatsapp) {
-            await client.query(
-                `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ('whatsapp', $1, $2)`,
-                [usuario.telefono_whatsapp, JSON.stringify(payload)]
-            );
-            encoladas++;
-        }
+        if (usuario.email) encoladas += await encolarNotificacion(client, { canal: 'email', destinatario: usuario.email, payload });
+        if (usuario.telefono_whatsapp) encoladas += await encolarNotificacion(client, { canal: 'whatsapp', destinatario: usuario.telefono_whatsapp, payload });
     }
 
-    await client.query('UPDATE maquinarias SET alerta_mantencion_enviada = true WHERE id = $1', [maquinaria.id]);
+    // sin proveedor no se encola nada: no se marca como enviada, para que avise cuando exista uno
+    if (encoladas > 0) await client.query('UPDATE maquinarias SET alerta_mantencion_enviada = true WHERE id = $1', [maquinaria.id]);
     return encoladas;
 }
 
