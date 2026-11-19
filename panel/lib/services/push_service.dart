@@ -6,16 +6,12 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:gomaq_comun/push.dart';
 import 'api_client.dart';
 import 'push_config.dart';
 
-/// Lo que llega en un aviso push: texto y el `data` que arma el backend (`tipo`, `orden_trabajo_id`).
-class MensajePush {
-  final String? titulo;
-  final String? cuerpo;
-  final Map<String, dynamic> data;
-  const MensajePush({this.titulo, this.cuerpo, this.data = const {}});
-}
+// MensajePush y ApiPush viven en gomaq_comun; se reexportan para quien ya los importaba desde aqui.
+export 'package:gomaq_comun/push.dart';
 
 /// Estado del permiso de notificaciones del navegador o del telefono.
 enum PermisoAvisos { concedido, denegado, pendiente }
@@ -38,12 +34,6 @@ abstract interface class PushPlataforma {
   Stream<MensajePush> get alAbrirDesdeNotificacion;
   Future<MensajePush?> mensajeInicial();
   Future<void> borrarToken();
-}
-
-/// Lo que PushService necesita del cliente HTTP (en linea).
-abstract interface class ApiPush {
-  Future<dynamic> post(String path, Map<String, dynamic> body);
-  Future<dynamic> delete(String path, Map<String, dynamic> body);
 }
 
 class _ApiPushReal implements ApiPush {
