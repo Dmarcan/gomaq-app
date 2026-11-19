@@ -371,6 +371,7 @@ class _RegistroClienteScreenState extends State<RegistroClienteScreen> {
           decoration: const InputDecoration(
             labelText: 'Teléfono de contacto',
             helperText: 'De 8 a 15 dígitos; puedes usar +, espacios o guiones. Ej.: +56 9 1234 5678.',
+            helperMaxLines: 3,
             counterText: '',
           ),
           keyboardType: TextInputType.phone,

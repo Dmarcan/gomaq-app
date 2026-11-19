@@ -186,11 +186,26 @@ class _ClienteMisEquiposScreenState extends State<ClienteMisEquiposScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      ListTile(
-                        title: Text('${m['codigo']} - ${m['tipo']}'),
-                        subtitle: Text(m['ubicacion'] ?? 'Sin ubicación registrada'),
-                        trailing: EstadoChip(estado: m['estado']),
-                      ),
+                      // en pantallas angostas la etiqueta de estado va debajo: a un lado deja el nombre del equipo en
+                      // cuatro lineas (por ejemplo con "Parcialmente operativa")
+                      if (MediaQuery.sizeOf(context).width < 480)
+                        ListTile(
+                          title: Text('${m['codigo']} - ${m['tipo']}'),
+                          subtitle: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(m['ubicacion'] ?? 'Sin ubicación registrada'),
+                              const SizedBox(height: 6),
+                              EstadoChip(estado: m['estado']),
+                            ],
+                          ),
+                        )
+                      else
+                        ListTile(
+                          title: Text('${m['codigo']} - ${m['tipo']}'),
+                          subtitle: Text(m['ubicacion'] ?? 'Sin ubicación registrada'),
+                          trailing: EstadoChip(estado: m['estado']),
+                        ),
                       if (m['asistencia_abierta'] != null)
                         Padding(
                           padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),

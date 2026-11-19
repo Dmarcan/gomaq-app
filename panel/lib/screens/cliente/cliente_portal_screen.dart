@@ -46,8 +46,12 @@ class _ClientePortalScreenState extends State<ClientePortalScreen> {
         title: Row(
           children: [
             Image.asset('assets/logo_gomaq_sobre_claro.png', height: 20, semanticLabel: 'GOMAQ'),
-            const SizedBox(width: 12),
-            Flexible(child: Text(_titulos[_tab], overflow: TextOverflow.ellipsis)),
+            // en pantallas angostas los cuatro iconos de la derecha no dejan espacio al titulo (se veia "M...");
+            // la seccion ya la indica la barra de abajo, asi que solo se muestra desde 480 px
+            if (MediaQuery.sizeOf(context).width >= 480) ...[
+              const SizedBox(width: 12),
+              Flexible(child: Text(_titulos[_tab], overflow: TextOverflow.ellipsis)),
+            ],
           ],
         ),
         backgroundColor: GomaqColors.fondoCalido,

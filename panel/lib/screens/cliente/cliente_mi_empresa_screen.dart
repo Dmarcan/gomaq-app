@@ -271,6 +271,7 @@ class _ClienteMiEmpresaScreenState extends State<ClienteMiEmpresaScreen> {
             decoration: const InputDecoration(
               labelText: 'Teléfono de contacto',
               helperText: 'De 8 a 15 dígitos; puedes usar +, espacios o guiones.',
+              helperMaxLines: 2,
               counterText: '',
             ),
             keyboardType: TextInputType.phone,
