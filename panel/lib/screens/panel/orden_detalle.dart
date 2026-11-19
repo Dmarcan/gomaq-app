@@ -15,6 +15,7 @@ import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../widgets/estado_chip.dart';
 import '../../widgets/estado_vacio.dart';
+import '../../widgets/fotos_orden.dart';
 import '../../widgets/motivo_cambio_dialogo.dart';
 
 /// Abre el detalle de una orden por su id (con el campo para aprobar la valorización si
@@ -103,7 +104,10 @@ class DetalleOrden extends StatefulWidget {
   final Map<String, dynamic> orden;
   final VoidCallback onCambio;
   final bool enPagina;
-  const DetalleOrden({super.key, required this.orden, required this.onCambio, this.enPagina = false});
+
+  /// Cómo se piden las fotos de la orden; por defecto el servidor. Solo las pruebas lo reemplazan.
+  final Future<List<dynamic>> Function()? cargadorFotos;
+  const DetalleOrden({super.key, required this.orden, required this.onCambio, this.enPagina = false, this.cargadorFotos});
 
   @override
   State<DetalleOrden> createState() => DetalleOrdenState();
@@ -756,6 +760,12 @@ class DetalleOrdenState extends State<DetalleOrden> {
           const Divider(height: 32),
 
           _seccionLineas(auth),
+
+          // las fotos del antes y el después, junto al diagnóstico y a "Aprobar valorización": el gerente decide
+          // el monto viendo lo que hizo el mecánico (HU-04)
+          const SizedBox(height: 8),
+          FotosOrden(ordenId: o['id'], cargador: widget.cargadorFotos, notaCorreo: false),
+          const Divider(height: 32),
 
           if (auth.esAdministrativo && o['mecanico_id'] == null) ...[
             const TituloSeccion('Asignar mecánico'),

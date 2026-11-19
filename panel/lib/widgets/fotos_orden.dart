@@ -31,6 +31,10 @@ class FotosOrden extends StatefulWidget {
   final bool seleccionable;
   final Set<int>? seleccionInicial;
   final ValueChanged<Set<int>>? alCambiarSeleccion;
+
+  /// Sin selección y fuera del portal del cliente, avisa que las fotos no se adjuntan al correo. En el detalle
+  /// de la orden (que solo las muestra) esa nota no viene al caso: se apaga con false.
+  final bool notaCorreo;
   const FotosOrden({
     super.key,
     required this.ordenId,
@@ -39,6 +43,7 @@ class FotosOrden extends StatefulWidget {
     this.seleccionable = false,
     this.seleccionInicial,
     this.alCambiarSeleccion,
+    this.notaCorreo = true,
   });
 
   @override
@@ -301,7 +306,7 @@ class _FotosOrdenState extends State<FotosOrden> {
           _grupo('Después', despues),
           if (widget.seleccionable) _resumenSeleccion(),
         ],
-        if (!widget.paraCliente && !widget.seleccionable) ...[
+        if (!widget.paraCliente && !widget.seleccionable && widget.notaCorreo) ...[
           const SizedBox(height: 4),
           const Text('Las fotos no se adjuntan al correo.', style: TextStyle(fontSize: 12, color: Colors.black54)),
         ],
