@@ -25,9 +25,48 @@ bool puedeReintentarAviso(Map n) => n['estado'] == 'error' && !esAvisoSinProveed
 Color colorPuntoAviso(Map n) =>
     esAvisoSinProveedor(n) ? GomaqColors.grisApagado : GomaqColors.colorEstado(n['estado']);
 
-/// La línea de detalle de un aviso. Un error por proveedor sin conectar se dice en limpio; los demás
-/// errores se muestran como vienen.
+/// El aviso es el correo de una factura (canal correo, tipo `factura_emitida`).
+bool esCorreoDeFactura(Map n) => n['canal'] == 'email' && payloadAviso(n)['tipo'] == 'factura_emitida';
+
+/// Id de la factura de un correo de factura, o null si el aviso no lo trae.
+int? facturaDelAviso(Map n) {
+  final v = payloadAviso(n)['factura_id'];
+  return v is num ? v.toInt() : int.tryParse('${v ?? ''}');
+}
+
+/// Fotos del antes y el después que llevó ese correo (ids de `foto_ids` del aviso). Vacía si no llevó.
+List<int> fotosDelAviso(Map n) {
+  final v = payloadAviso(n)['foto_ids'];
+  return v is List ? [for (final id in v) if (id is num) id.toInt()] : const [];
+}
+
+/// "2 fotos adjuntas" / "1 foto adjunta"; null si el correo no llevó fotos.
+String? textoFotosAviso(Map n) {
+  final k = fotosDelAviso(n).length;
+  return k == 0 ? null : '$k ${k == 1 ? 'foto adjunta' : 'fotos adjuntas'}';
+}
+
+/// Reenviar desde la fila: correos de factura que ya salieron, fallaron o se cancelaron. No los que esperan salir
+/// (ya van a salir), ni los de un correo sin proveedor (volvería a fallar igual), ni los cancelados porque la
+/// factura se anuló (no hay nada que reenviar). Si el servidor dice que la factura ya no existe, tampoco.
+bool puedeReenviarFila(Map n) {
+  if (!esCorreoDeFactura(n) || facturaDelAviso(n) == null) return false;
+  final estado = n['estado'];
+  if (estado != 'enviado' && estado != 'error' && estado != 'cancelado') return false;
+  if (esAvisoSinProveedor(n)) return false;
+  if (estado == 'cancelado' && '${n['ultimo_error'] ?? ''}'.toLowerCase().contains('factura anulada')) return false;
+  return n['factura_existe'] != false;
+}
+
+/// La línea de detalle de un aviso, con las fotos que llevó si las llevó.
 String textoDetalleNotificacion(Map n) {
+  final base = _detalleBase(n);
+  final fotos = textoFotosAviso(n);
+  return fotos == null ? base : '$base · $fotos';
+}
+
+/// Un error por proveedor sin conectar se dice en limpio; los demás errores se muestran como vienen.
+String _detalleBase(Map n) {
   if (n['estado'] == 'error') {
     if (errorProveedorSinConectar(n['ultimo_error'])) {
       return 'Sin proveedor de envío conectado: el aviso quedó registrado.';
@@ -65,8 +104,9 @@ bool avisoCoincide(Map n, String texto) {
 /// Busca facturas emitidas por folio o cliente: `GET /api/facturacion/emitidas?q=...`. Devuelve las filas.
 typedef BuscarFacturas = Future<List<Map<String, dynamic>>> Function(String q);
 
-/// Reenvía el correo de una factura: `POST /api/facturacion/:id/autorizar-envio`.
-typedef ReenviarCorreo = Future<void> Function(int facturaId);
+/// Reenvía el correo de una factura: `POST /api/facturacion/:id/autorizar-envio`. Con [fotoIds] va esa selección
+/// de fotos (una lista vacía = sin fotos); sin ella el servidor repite la del último correo de esa factura.
+typedef ReenviarCorreo = Future<void> Function(int facturaId, {List<int>? fotoIds});
 
 /// Carga los avisos (`soloProblemas` pide la vista filtrada del dashboard; `canal` es 'push', 'email' o
 /// 'whatsapp' y solo aplica a la lista completa).
@@ -108,8 +148,8 @@ Future<List<Map<String, dynamic>>> _buscarFacturasPorDefecto(String q) async {
   return [for (final f in ((r as Map)['items'] as List? ?? const [])) Map<String, dynamic>.from(f as Map)];
 }
 
-Future<void> _reenviarPorDefecto(int facturaId) async {
-  await ApiClient.instance.post('/api/facturacion/$facturaId/autorizar-envio', {});
+Future<void> _reenviarPorDefecto(int facturaId, {List<int>? fotoIds}) async {
+  await ApiClient.instance.post('/api/facturacion/$facturaId/autorizar-envio', {'foto_ids': ?fotoIds});
 }
 
 class NotificacionesScreen extends StatefulWidget {
@@ -200,21 +240,32 @@ class _NotificacionesScreenState extends State<NotificacionesScreen> {
     });
   }
 
-  Future<void> _reenviarCorreo(Map<String, dynamic> f) async {
+  /// Reenvío desde una fila de la lista: repite las mismas fotos que llevó ese correo (o ninguna, si no llevó).
+  Future<void> _reenviarDesdeFila(Map n) {
+    final p = payloadAviso(n);
+    return _reenviarCorreo(
+      {'id': facturaDelAviso(n), 'folio': p['folio'] ?? facturaDelAviso(n), 'cliente_nombre': p['cliente_nombre']},
+      fotoIds: fotosDelAviso(n),
+    );
+  }
+
+  Future<void> _reenviarCorreo(Map<String, dynamic> f, {List<int>? fotoIds}) async {
     final correo = f['cliente_email'];
     final destino = correo is String && correo.isNotEmpty
         ? 'al correo $correo'
         : 'al correo registrado de ${f['cliente_nombre'] ?? 'el cliente'}';
+    final k = fotoIds?.length ?? 0;
+    final fotos = k == 0 ? '' : ', con ${k == 1 ? '1 foto adjunta' : '$k fotos adjuntas'}';
     final ok = await mostrarConfirmacion(
       context,
       titulo: 'Reenviar correo',
-      mensaje: 'Se enviará de nuevo la factura ${f['folio']} $destino.',
+      mensaje: 'Se enviará de nuevo la factura ${f['folio']} $destino$fotos.',
       textoAccion: 'Reenviar',
       icono: Icons.forward_to_inbox,
     );
     if (!ok || !mounted) return;
     try {
-      await widget.reenviarCorreo(f['id'] as int);
+      await widget.reenviarCorreo(f['id'] as int, fotoIds: fotoIds);
       if (!mounted) return;
       setState(() => _aviso = 'Correo de la factura ${f['folio']} puesto en la cola de envío.');
       _cargar();
@@ -448,17 +499,35 @@ class _NotificacionesScreenState extends State<NotificacionesScreen> {
                 textoDetalleNotificacion(n),
                 style: esAvisoSinProveedor(n) ? const TextStyle(color: GomaqColors.grisApagado) : null,
               ),
-              trailing: puedeReintentarAviso(n)
-                  ? OutlinedButton.icon(
-                      onPressed: () => _reintentar(n['id']),
-                      icon: const Icon(Icons.replay, size: 16),
-                      label: const Text('Reintentar'),
-                    )
-                  : null,
+              trailing: _accionDeFila(n),
             ),
           ),
       ],
     );
+  }
+
+  /// El botón de la fila. Un correo de factura se **reenvía** (envío nuevo, con las mismas fotos): vale para los
+  /// enviados, con error y cancelados, y reemplaza a "Reintentar", que queda para el resto de los avisos con error
+  /// y para quien no puede reenviar (el gerente: autorizar el envío es del administrativo).
+  Widget? _accionDeFila(Map n) {
+    if (_puedeReenviar && puedeReenviarFila(n)) {
+      return Tooltip(
+        message: 'Reenviar el correo de la factura ${payloadAviso(n)['folio'] ?? ''}'.trim(),
+        child: OutlinedButton.icon(
+          onPressed: () => _reenviarDesdeFila(n),
+          icon: const Icon(Icons.forward_to_inbox, size: 16),
+          label: const Text('Reenviar'),
+        ),
+      );
+    }
+    if (puedeReintentarAviso(n)) {
+      return OutlinedButton.icon(
+        onPressed: () => _reintentar(n['id']),
+        icon: const Icon(Icons.replay, size: 16),
+        label: const Text('Reintentar'),
+      );
+    }
+    return null;
   }
 
   String _titulo(Map n) {

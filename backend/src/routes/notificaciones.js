@@ -14,8 +14,13 @@ const CANALES = ['email', 'whatsapp', 'push'];
 // Las filas del canal push llevan en `destinatario` el id de un dispositivo, que no dice nada a quien lee la
 // lista: se agregan el nombre y el rol del usuario del aviso (payload.usuario_id) como usuario_nombre y
 // usuario_rol. Nunca se une ni se devuelve el token del dispositivo. El CASE evita castear un id no numerico.
+// Los correos de una factura (`factura_emitida`) llevan ademas `factura_existe`: si esa factura sigue en la base
+// (una anulada se borra). El panel lo usa para ofrecer "Reenviar correo" solo donde hay algo que reenviar; en
+// las demas filas es null. Mismo cuidado con el CAST: solo se castea un id numerico.
 // `filas` es la consulta ya filtrada y acotada (con su alias `n`); el orden va afuera, sobre el resultado.
-const conUsuario = (filas, orden) => `SELECT n.*, u.nombre AS usuario_nombre, u.rol::text AS usuario_rol
+const conUsuario = (filas, orden) => `SELECT n.*, u.nombre AS usuario_nombre, u.rol::text AS usuario_rol,
+        CASE WHEN n.canal = 'email' AND n.payload->>'tipo' = 'factura_emitida' AND n.payload->>'factura_id' ~ '^[0-9]{1,9}$'
+             THEN EXISTS (SELECT 1 FROM facturas f WHERE f.id = (n.payload->>'factura_id')::int) END AS factura_existe
     FROM (${filas}) n
     LEFT JOIN usuarios u ON n.canal = 'push'
         AND u.id = CASE WHEN n.payload->>'usuario_id' ~ '^[0-9]{1,9}$' THEN (n.payload->>'usuario_id')::int END

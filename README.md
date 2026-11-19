@@ -223,6 +223,16 @@ El correo que recibe el cliente con su factura de reparación puede llevar, junt
 - **Worker:** un correo con fotos tiene un plazo de envío mayor (`NOTIF_TIMEOUT_FOTOS_MS`, 60 s por defecto; el resto sigue en `NOTIF_TIMEOUT_MS`) y el plazo de toma de una fila se calcula con ese valor.
 - **Dependencia nueva:** `sharp` 0.35.5 (Apache-2.0), sin scripts de instalación; trae binarios precompilados por plataforma (`@img/sharp-*`). Las dos imágenes (`Dockerfile` y `Dockerfile.worker`) son `node:22-bookworm-slim` (Linux glibc), donde usa el binario `linux-x64`. Verificado en producción el 19-11-2026: un correo con dos fotos y el PDF salió sin error desde `gomaq-worker`.
 
+### Reenviar el correo de una factura desde Notificaciones
+
+Cada fila de **correo de factura** (canal correo, tipo `factura_emitida`) de la pantalla Notificaciones tiene un botón **Reenviar** para el administrativo, además del que ya había en las facturas encontradas con Buscar.
+
+- **En qué filas:** enviadas, con error y canceladas. No en las pendientes (ya van a salir), ni en las canceladas porque la factura se anuló (`ultimo_error` "Factura anulada": ya no hay nada que reenviar), ni en las que la lista marca con `factura_existe = false`, ni en los avisos con error por falta de proveedor (volverían a fallar igual).
+- **`factura_existe`:** `GET /api/notificaciones` lo agrega a los correos de factura (true si esa factura sigue en la base, false si se borró al anularla, null en el resto de las filas y en un `factura_id` que no es numérico).
+- **Fotos:** se reenvía con **las mismas fotos que llevó ese correo** (`foto_ids` del aviso; una lista vacía si no llevó). La fila muestra "N fotos adjuntas" y el diálogo de confirmación lo repite. El reenvío crea un envío nuevo y cancela el anterior que no hubiera salido (`Reemplazado`), como siempre.
+- **"Reintentar":** en los correos de factura lo reemplaza "Reenviar". Sigue en los push con error y para el gerente, que no puede autorizar envíos (`autorizar-envio` es del administrativo).
+- **No verificado:** el botón contra el panel desplegado; las pruebas usan el servidor y el panel simulados.
+
 ### Diseño del correo de la factura
 
 `backend/src/utils/plantillaCorreoFactura.js` (HTML y texto plano) y `backend/src/utils/envioFactura.js` (adjuntos). Tablas de una columna con estilos en línea, que se ven igual en Gmail, Outlook y el celular (verificado a 375 px y en escritorio en un navegador; no en cada cliente de correo).
