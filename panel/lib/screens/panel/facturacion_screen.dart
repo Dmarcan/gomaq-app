@@ -6,6 +6,7 @@ import '../../services/api_client.dart';
 import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
 import '../../utils/cobranza.dart';
+import '../../utils/envio_factura.dart';
 import '../../utils/numeros.dart';
 import '../../utils/formato.dart';
 import '../../widgets/campo_fecha_opcional.dart';
@@ -298,6 +299,9 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
   Map<String, dynamic>? _vista;
   bool _cargandoVista = false;
   String? _errorVista;
+  // fotos del antes y el después que van adjuntas al correo; null mientras no cargaron (o si fallaron): en ese
+  // caso no se manda lista y el servidor repite la del último correo, si lo hubo
+  Set<int>? _fotosElegidas;
 
   bool get _facturaPorPeriodo => widget.item['tipo'] == 'arriendo' && widget.item['guia_despacho_id'] != null;
 
@@ -690,10 +694,11 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
     // proponer, el servidor lo arma de nuevo (con los datos vigentes de la factura)
     final cambioAsunto = _vista == null || _asuntoCtrl.text != (_vista!['asunto']?.toString() ?? '');
     final cambioCuerpo = _vista == null || _cuerpoCtrl.text != (_vista!['cuerpo']?.toString() ?? '');
-    final cuerpo = <String, dynamic>{
-      if (cambioAsunto) 'asunto': _asuntoCtrl.text,
-      if (cambioCuerpo) 'cuerpo': _cuerpoCtrl.text,
-    };
+    final cuerpo = cuerpoAutorizacionEnvio(
+      asunto: cambioAsunto ? _asuntoCtrl.text : null,
+      cuerpo: cambioCuerpo ? _cuerpoCtrl.text : null,
+      fotos: _fotosElegidas,
+    );
     try {
       await ApiClient.instance.post('/api/facturacion/${_facturaCreada!['id']}/autorizar-envio', cuerpo);
       if (mounted) {
@@ -1222,7 +1227,14 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
       ],
       if (_vista?['orden_trabajo_id'] != null) ...[
         const SizedBox(height: 8),
-        FotosOrden(ordenId: _vista!['orden_trabajo_id']),
+        FotosOrden(
+          ordenId: _vista!['orden_trabajo_id'],
+          seleccionable: true,
+          seleccionInicial: {
+            for (final id in (_vista!['fotos_elegidas_antes'] as List? ?? const [])) if (id is num) id.toInt(),
+          },
+          alCambiarSeleccion: (s) => _fotosElegidas = s,
+        ),
       ],
     ];
   }

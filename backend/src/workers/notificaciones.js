@@ -5,6 +5,7 @@ const { enviarCorreoResend } = require('../services/correoResend');
 const { enviarPushFcm, leerCuentaServicio } = require('../services/fcm');
 const { armarMensajePush, motivoDescarte } = require('../utils/push');
 const { SQL_OT_SIN_ASIGNAR } = require('../utils/ordenes');
+const { prepararAdjuntosFotos, descargadorDeBucket, formatearMb, MAX_BYTES_FOTOS } = require('../utils/fotosCorreo');
 
 const INTERVALO_MS = 15000;
 const MAX_INTENTOS = 5;
@@ -48,6 +49,44 @@ async function adjuntarPdfFactura(facturaId, signal) {
 }
 
 /**
+ * Fotos del antes y el despues que el administrativo eligio para el correo (`payload.foto_ids`). Se leen de la
+ * orden de la factura (una foto de otra orden no se adjunta jamas) y se reducen con el mismo procedimiento con que
+ * la API midio el peso. Una foto que ya no existe se omite y se informa; que no quepan en el tope o que falte la
+ * configuracion es un error del envio. `deps` solo se reemplaza en pruebas.
+ */
+async function adjuntarFotosFactura(payload, signal, deps = {}) {
+    const ids = Array.isArray(payload.foto_ids) ? payload.foto_ids : [];
+    if (ids.length === 0) return { adjuntos: [], faltantes: [] };
+    if (!payload.orden_trabajo_id) {
+        throw Object.assign(new Error('El correo pide fotos pero la factura no tiene orden de trabajo'), { permanente: true });
+    }
+    const filas = await pool.query(
+        `SELECT id, tipo, path FROM evidencias_fotograficas
+         WHERE orden_trabajo_id = $1 AND id = ANY($2::int[])
+         ORDER BY (tipo = 'despues'), created_at, id`,
+        [payload.orden_trabajo_id, ids]
+    );
+    const existentes = new Set(filas.rows.map((f) => f.id));
+    const sinFila = ids.filter((id) => !existentes.has(id));
+    let descargar = deps.descargar;
+    if (!descargar) {
+        if (!process.env.SUPABASE_URL || !process.env.SUPABASE_SERVICE_KEY) {
+            throw errorConfiguracion('Faltan SUPABASE_URL y SUPABASE_SERVICE_KEY en el worker para adjuntar las fotos');
+        }
+        const { supabase, BUCKET } = require('../config/supabase');
+        descargar = descargadorDeBucket(supabase, BUCKET, signal);
+    }
+    const r = await prepararAdjuntosFotos({ fotos: filas.rows, descargar, ...(deps.reducir ? { reducir: deps.reducir } : {}) });
+    if (r.excede) {
+        throw Object.assign(
+            new Error(`Las fotos pesan ${formatearMb(r.total)} ya reducidas y el maximo es ${formatearMb(MAX_BYTES_FOTOS)}`),
+            { permanente: true }
+        );
+    }
+    return { adjuntos: r.adjuntos.map(({ filename, content }) => ({ filename, content })), faltantes: [...sinFila, ...r.faltantes] };
+}
+
+/**
  * Push a un dispositivo (`destinatario` = id del dispositivo). El mensaje sale de la lista blanca de
  * utils/push.js, nunca del payload completo. Los errores de FCM traen `descartar`, `reintentarEnSegundos` o
  * `permanente` (ver services/fcm.js). `deps` solo se reemplaza en pruebas.
@@ -87,7 +126,8 @@ async function enviarNotificacion(notificacion, signal) {
         cuerpo: payload.cuerpo,
         contacto: process.env.CORREO_CONTACTO,
     });
-    const adjuntos = await adjuntarPdfFactura(payload.factura_id, signal);
+    const pdf = await adjuntarPdfFactura(payload.factura_id, signal);
+    const fotos = await adjuntarFotosFactura(payload, signal);
     await enviarCorreoResend({
         apiKey,
         desde: process.env.CORREO_REMITENTE || 'onboarding@resend.dev',
@@ -95,10 +135,15 @@ async function enviarNotificacion(notificacion, signal) {
         asunto: correo.asunto,
         texto: correo.texto,
         html: correo.html,
-        adjuntos,
+        adjuntos: [...pdf, ...fotos.adjuntos],
         claveIdempotencia: `gomaq-notif-${notificacion.id}`,
         signal,
     });
+    // el correo salio, pero sin alguna foto elegida (ya no existe): queda anotado en Notificaciones
+    if (fotos.faltantes.length > 0) {
+        return { nota: `Enviado sin ${fotos.faltantes.length} foto(s) que ya no existen (ids ${fotos.faltantes.join(', ')})` };
+    }
+    return undefined;
 }
 
 // El envio real se puede reemplazar (solo las pruebas lo hacen) para simular un proveedor que responde bien.
@@ -109,7 +154,16 @@ function usarEnvio(fn) {
 
 // Cuanto tiempo queda "tomada" una notificacion mientras se envia. Si el proceso muere a mitad
 // de camino, pasado este plazo otra instancia (o el mismo proceso al reiniciar) la retoma.
-const PLAZO_TOMA_SEGUNDOS = plazoTomaSegundos({ lote: LOTE, timeoutMs: TIMEOUT_ENVIO_MS });
+// Un correo con fotos descarga y reduce imagenes antes de enviar: tiene un plazo mas largo que el resto.
+const TIMEOUT_CON_FOTOS_MS = Math.max(TIMEOUT_ENVIO_MS, Number(process.env.NOTIF_TIMEOUT_FOTOS_MS) || 60000);
+const PLAZO_TOMA_SEGUNDOS = plazoTomaSegundos({ lote: LOTE, timeoutMs: TIMEOUT_CON_FOTOS_MS });
+
+function plazoDeEnvio(notificacion) {
+    const payload = notificacion.payload || {};
+    return notificacion.canal === 'email' && Array.isArray(payload.foto_ids) && payload.foto_ids.length > 0
+        ? TIMEOUT_CON_FOTOS_MS
+        : TIMEOUT_ENVIO_MS;
+}
 
 // Mira el dispositivo (activo, app), su dueno (cuenta activa, rol, empresa), su sesion y (ot_disponible) la OT, y
 // deja la decision a utils/push.js: un tipo solo va a la app y a los roles de su destino (DESTINOS_PUSH), asi un
@@ -186,10 +240,13 @@ async function procesarUna(notificacion) {
     // bloquear la fila durante todo el envio (hasta TIMEOUT_ENVIO_MS).
     if (!(await sigueVigente(notificacion))) return;
     try {
-        await conTimeout((signal) => enviar(notificacion, signal), TIMEOUT_ENVIO_MS);
+        const resultado = await conTimeout((signal) => enviar(notificacion, signal), plazoDeEnvio(notificacion));
+        // un envio puede devolver { nota }: salio, pero con algo que el administrativo debe saber
+        const nota = resultado && typeof resultado.nota === 'string' ? resultado.nota : null;
         const marcada = await pool.query(
-            `UPDATE notificaciones_pendientes SET estado = 'enviado', enviado_at = now() WHERE id = $1 AND estado = 'pendiente'`,
-            [notificacion.id]
+            `UPDATE notificaciones_pendientes SET estado = 'enviado', enviado_at = now(), ultimo_error = COALESCE($2, ultimo_error)
+             WHERE id = $1 AND estado = 'pendiente'`,
+            [notificacion.id, nota]
         );
         if (marcada.rowCount === 0) {
             // Contrato: la anulacion puede cancelar la fila entre la revision de sigueVigente y la respuesta
@@ -297,4 +354,4 @@ function iniciarWorker() {
     };
 }
 
-module.exports = { iniciarWorker, sigueVigente, procesarUna, usarEnvio, enviarPush };
+module.exports = { iniciarWorker, sigueVigente, procesarUna, usarEnvio, enviarPush, adjuntarFotosFactura, plazoDeEnvio };

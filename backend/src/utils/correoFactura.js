@@ -3,6 +3,9 @@
 // de base de datos (`db`) y deben llamarse dentro de la transaccion de quien las usa.
 
 const { encolarNotificacion } = require('./avisos');
+const {
+    validarIdsFotos, leerFotosDeOrden, prepararAdjuntosFotos, descargadorDeBucket, formatearMb, MAX_BYTES_FOTOS,
+} = require('./fotosCorreo');
 
 const MAX_ASUNTO = 200;
 const MAX_CUERPO = 5000;
@@ -134,12 +137,80 @@ async function hayEnvioPendiente(db, facturaId) {
 }
 
 /**
+ * Ids de las fotos que llevo el ultimo correo de esta factura (del mismo payload con que se encolo), solo las que
+ * siguen existiendo en su orden. Un reenvio repite esa seleccion; el cuadro de la factura la marca de nuevo.
+ */
+async function fotosDelUltimoCorreo(db, factura) {
+    if (!factura || !factura.orden_trabajo_id) return [];
+    const previo = await db.query(
+        `SELECT payload->'foto_ids' AS foto_ids FROM notificaciones_pendientes
+         WHERE payload->>'tipo' = 'factura_emitida' AND payload->>'factura_id' = $1::text
+         ORDER BY id DESC LIMIT 1`,
+        [factura.id]
+    );
+    const ids = previo.rows[0] && Array.isArray(previo.rows[0].foto_ids) ? previo.rows[0].foto_ids.filter(Number.isInteger) : [];
+    if (ids.length === 0) return [];
+    const vigentes = await db.query(
+        'SELECT id FROM evidencias_fotograficas WHERE orden_trabajo_id = $1 AND id = ANY($2::int[])',
+        [factura.orden_trabajo_id, ids]
+    );
+    const existen = new Set(vigentes.rows.map((f) => f.id));
+    return ids.filter((id) => existen.has(id));
+}
+
+/**
+ * Comprueba las fotos que el administrativo eligio para el correo ANTES de encolarlo: que sean ids validos,
+ * que todas sean de la orden de la factura y que, reducidas, quepan en el tope de peso. Se hace fuera de la
+ * transaccion del envio porque descargar y reducir toma segundos y no conviene tener la factura bloqueada.
+ * Devuelve { ids } (lista vacia si no se pidieron fotos) o { status, error } listo para responder.
+ *
+ * @param {object} supabase  cliente de Supabase (solo se usa si hay fotos)
+ * @param {string} bucket    bucket de las evidencias
+ */
+async function validarFotosDelEnvio(db, supabase, bucket, { facturaId, ordenId = null, fotoIds, descargar = null, reducir = undefined }) {
+    const noEncontrada = { status: 404, error: ordenId ? 'Factura no encontrada para esta orden de trabajo' : 'Factura no encontrada' };
+    let factura = null;
+    let pedidas = fotoIds;
+    if (pedidas === undefined || pedidas === null) {
+        // sin lista (por ejemplo, un reenvio desde Notificaciones): se repite la seleccion del ultimo correo
+        factura = await leerFacturaParaCorreo(db, facturaId, ordenId);
+        if (!factura) return noEncontrada;
+        pedidas = await fotosDelUltimoCorreo(db, factura);
+    }
+    const v = validarIdsFotos(pedidas);
+    if (v.error) return { status: 400, error: v.error };
+    if (v.ids.length === 0) return { ids: [] };
+    if (!factura) factura = await leerFacturaParaCorreo(db, facturaId, ordenId);
+    if (!factura) return noEncontrada;
+    if (!factura.orden_trabajo_id) return { status: 400, error: 'Esta factura no tiene orden de trabajo: no admite fotos' };
+    const leidas = await leerFotosDeOrden(db, factura.orden_trabajo_id, v.ids);
+    if (leidas.error) return { status: 400, error: leidas.error };
+    let preparadas;
+    try {
+        preparadas = await prepararAdjuntosFotos({ fotos: leidas.fotos, descargar: descargar || descargadorDeBucket(supabase, bucket), ...(reducir ? { reducir } : {}) });
+    } catch (err) {
+        console.error('[correoFactura] no se pudieron preparar las fotos:', err.message);
+        return { status: 503, error: 'No se pudieron leer las fotos para medir su peso. Intenta de nuevo en un momento' };
+    }
+    if (preparadas.faltantes.length > 0) {
+        return { status: 409, error: 'Alguna de las fotos elegidas ya no está disponible: actualiza la vista previa' };
+    }
+    if (preparadas.excede) {
+        return {
+            status: 400,
+            error: `Las fotos pesan ${formatearMb(preparadas.total)} ya reducidas y el máximo es ${formatearMb(MAX_BYTES_FOTOS)}: quita algunas`,
+        };
+    }
+    return { ids: v.ids };
+}
+
+/**
  * Encola el correo de una factura. Va en una transaccion propia: bloquea la fila de la factura
  * (la anulacion tambien la bloquea, asi que una de las dos espera a la otra y nunca queda un correo
  * pendiente de una factura que ya no existe) y rechaza un segundo envio mientras haya uno pendiente.
  * Devuelve { status, body } listo para responder.
  */
-async function encolarCorreoFactura(pool, { facturaId, ordenId = null, asunto, cuerpo }) {
+async function encolarCorreoFactura(pool, { facturaId, ordenId = null, asunto, cuerpo, fotoIds = [] }) {
     const client = await pool.connect();
     try {
         await client.query('BEGIN');
@@ -161,6 +232,15 @@ async function encolarCorreoFactura(pool, { facturaId, ordenId = null, asunto, c
             await client.query('ROLLBACK');
             return { status: 400, body: { error: texto.error } };
         }
+        // las fotos ya se midieron antes (validarFotosDelEnvio); aqui solo se confirma, con la factura
+        // bloqueada, que sigan siendo de la orden de esta factura
+        if (fotoIds.length > 0) {
+            const fotos = factura.orden_trabajo_id ? await leerFotosDeOrden(client, factura.orden_trabajo_id, fotoIds) : { error: 'Esta factura no tiene orden de trabajo: no admite fotos' };
+            if (fotos.error) {
+                await client.query('ROLLBACK');
+                return { status: 400, body: { error: fotos.error } };
+            }
+        }
         if (await hayEnvioPendiente(client, facturaId)) {
             await client.query('ROLLBACK');
             return { status: 409, body: { error: 'Esta factura ya tiene un envío pendiente' } };
@@ -181,6 +261,7 @@ async function encolarCorreoFactura(pool, { facturaId, ordenId = null, asunto, c
                 periodo_hasta: factura.periodo_hasta,
                 asunto: texto.asunto,
                 cuerpo: texto.cuerpo,
+                ...(fotoIds.length > 0 ? { foto_ids: fotoIds } : {}),
             },
         });
         await client.query('COMMIT');
@@ -195,5 +276,5 @@ async function encolarCorreoFactura(pool, { facturaId, ordenId = null, asunto, c
 
 module.exports = {
     MAX_ASUNTO, MAX_CUERPO, formatearDia, textoPorDefecto, validarTexto, validarFolio, cancelarCorreosFactura, cancelarCorreosPrevios,
-    leerFacturaParaCorreo, hayEnvioPendiente, encolarCorreoFactura,
+    leerFacturaParaCorreo, hayEnvioPendiente, encolarCorreoFactura, validarFotosDelEnvio, fotosDelUltimoCorreo,
 };

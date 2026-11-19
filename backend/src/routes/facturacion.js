@@ -5,7 +5,7 @@ const { validarIdsEnRuta } = require('../utils/validacion');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf, subidaComprobante } = require('../middleware/upload');
-const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
+const { supabase, BUCKET, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { URL_EXPIRACION_SEGUNDOS, firmarUrl } = require('../utils/urlsFirmadas');
 
 // borrar un archivo ya subido es un intento de limpieza: si falla no se cambia la respuesta, pero queda en el log
@@ -16,7 +16,7 @@ const { validarPeriodo } = require('../utils/periodosArriendo');
 const { cargarArriendos, filtrarPorFacturar, resumenEnCurso } = require('../utils/arriendos');
 const { SQL_OT_POR_VALORIZAR, SQL_OT_LISTA_FACTURAR } = require('../utils/ordenes');
 const { leerConfiguracion, validarCambioConfiguracion, CLAVES_OBSOLETAS } = require('../utils/configuracion');
-const { textoPorDefecto, leerFacturaParaCorreo, hayEnvioPendiente, encolarCorreoFactura, validarFolio, cancelarCorreosPrevios } = require('../utils/correoFactura');
+const { textoPorDefecto, leerFacturaParaCorreo, hayEnvioPendiente, encolarCorreoFactura, validarFolio, cancelarCorreosPrevios, validarFotosDelEnvio, fotosDelUltimoCorreo } = require('../utils/correoFactura');
 const { leerTextoPdf } = require('../utils/leerTextoPdf');
 const { detectarCliente } = require('../utils/detectarCliente');
 const { parsearFactura } = require('../utils/parsearDocumento');
@@ -692,17 +692,24 @@ router.get('/:facturaId/vista-previa', verifyToken, requireRole('administrativo'
         cliente_nombre: factura.cliente_nombre,
         cliente_email: factura.cliente_email,
         envio_pendiente: await hayEnvioPendiente(pool, factura.id),
+        // las fotos de la OT las trae GET /api/ordenes-trabajo/:id/evidencia (el panel ya las muestra); aqui solo
+        // la seleccion del ultimo correo de esta factura, para que un reenvio y el cuadro la repitan
+        fotos_elegidas_antes: await fotosDelUltimoCorreo(pool, factura),
     });
 });
 
 // Funciona para cualquier factura, sea de reparacion (orden_trabajo_id) o de arriendo (maquinaria_id).
 // Acepta { asunto, cuerpo } editados; sin ellos usa el texto por defecto. Ver encolarCorreoFactura
-// (bloqueo contra la anulacion).
+// (bloqueo contra la anulacion). `foto_ids` (opcional, solo facturas de reparacion): las fotos del antes y el
+// despues que van adjuntas junto al PDF; se miden reducidas antes de aceptar (tope de peso en fotosCorreo.js). Sin
+// foto_ids (un reenvio) se repite la seleccion del ultimo correo; una lista vacia significa "sin fotos".
 router.post('/:facturaId/autorizar-envio', verifyToken, requireRole('administrativo'), async (req, res) => {
     if (!/^\d{1,9}$/.test(String(req.params.facturaId))) return res.status(400).json({ error: 'Id de factura inválido' });
     const cuerpoPeticion = req.body || {};
+    const fotos = await validarFotosDelEnvio(pool, supabase, BUCKET, { facturaId: req.params.facturaId, fotoIds: cuerpoPeticion.foto_ids });
+    if (fotos.error) return res.status(fotos.status).json({ error: fotos.error });
     const r = await encolarCorreoFactura(pool, {
-        facturaId: req.params.facturaId, asunto: cuerpoPeticion.asunto, cuerpo: cuerpoPeticion.cuerpo,
+        facturaId: req.params.facturaId, asunto: cuerpoPeticion.asunto, cuerpo: cuerpoPeticion.cuerpo, fotoIds: fotos.ids,
     });
     res.status(r.status).json(r.body);
 });

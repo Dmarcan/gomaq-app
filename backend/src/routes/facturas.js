@@ -4,12 +4,12 @@ const { validarIdsEnRuta, esDiaValido, UUID } = require('../utils/validacion');
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { subidaPdf } = require('../middleware/upload');
-const { supabase, BUCKET_DOCUMENTOS } = require('../config/supabase');
+const { supabase, BUCKET, BUCKET_DOCUMENTOS } = require('../config/supabase');
 const { urlFirmadaONull } = require('../utils/urlsFirmadas');
 const { rutaArchivo } = require('../utils/rutaArchivo');
 const { dejarEvento } = require('../utils/eventosOt');
 const { validarMotivo, detalleFacturaAnulada, esIdPositivo, montoEnteroONulo } = require('../utils/auditoriaLinea');
-const { cancelarCorreosFactura, encolarCorreoFactura, validarFolio } = require('../utils/correoFactura');
+const { cancelarCorreosFactura, encolarCorreoFactura, validarFolio, validarFotosDelEnvio } = require('../utils/correoFactura');
 
 const { avisarFacturaAnulada } = require('../utils/avisos');
 const { validarNeto } = require('../utils/trasladoFactura');
@@ -219,8 +219,11 @@ router.post('/:id/factura/:facturaId/autorizar-envio', verifyToken, requireRole(
     if (!esIdPositivo(id)) return res.status(400).json({ error: 'Id de orden inválido' });
     if (!esIdPositivo(facturaId)) return res.status(400).json({ error: 'Id de factura inválido' });
     const cuerpoPeticion = req.body || {};
+    // fotos del antes y el despues (opcional): se miden reducidas antes de aceptar el envio
+    const fotos = await validarFotosDelEnvio(pool, supabase, BUCKET, { facturaId, ordenId: id, fotoIds: cuerpoPeticion.foto_ids });
+    if (fotos.error) return res.status(fotos.status).json({ error: fotos.error });
     const r = await encolarCorreoFactura(pool, {
-        facturaId, ordenId: id, asunto: cuerpoPeticion.asunto, cuerpo: cuerpoPeticion.cuerpo,
+        facturaId, ordenId: id, asunto: cuerpoPeticion.asunto, cuerpo: cuerpoPeticion.cuerpo, fotoIds: fotos.ids,
     });
     res.status(r.status).json(r.body);
 });
