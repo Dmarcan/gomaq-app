@@ -5344,7 +5344,7 @@ describe('bloque 5 (parte C): avisos sin proveedor no se encolan', () => {
     // Desde la migracion 046 solo se encola lo que tiene envio real (el correo de factura, ver utils/avisos.js).
     // Estas pruebas conservan el recorrido de cada accion (estados y respuestas) y comprueban que no deja filas.
     const TIPOS = ['ot_asignada', 'ot_reasignada', 'ot_disponible', 'ot_por_valorizar', 'factura_anulada', 'ajuste_inventario', 'asistencia_nueva'];
-    const SIN_PROVEEDOR = [...TIPOS, 'mecanico_asignado', 'ot_finalizada', 'cuenta_aprobada', 'mantencion_proxima'];
+    const SIN_PROVEEDOR = [...TIPOS, 'mecanico_asignado', 'ot_finalizada', 'mantencion_proxima'];
     const MARCA = { telefono: '+56911110000', telefonoDos: '+56922220000' };
     let inicio;
     let respaldo;
@@ -6947,6 +6947,67 @@ describe('cuentas del equipo: asignar a un desactivado y aprobar con correo repe
         } finally {
             await pool.query('DELETE FROM solicitudes_cliente WHERE id = $1', [s.rows[0].id]);
             await pool.query('DELETE FROM usuarios WHERE id = $1', [u.rows[0].id]);
+        }
+    });
+
+    test('aprobar una solicitud encola exactamente un correo de cuenta aprobada y el worker lo envia', async (t) => {
+        if (!requiereBase(t)) return;
+        const { procesarUna } = require('../src/workers/notificaciones');
+        const correo = `aprobada-${crypto.randomUUID()}@gomaq.test`;
+        const s = await pool.query(
+            `INSERT INTO solicitudes_cliente (nombre_contacto, email, password_hash, correo_verificado_at)
+             VALUES ('Contacto <Aprobado>', $1, 'x', now()) RETURNING id`,
+            [correo]
+        );
+        const id = s.rows[0].id;
+        const avisosDe = () => pool.query(
+            `SELECT * FROM notificaciones_pendientes WHERE canal = 'email' AND destinatario = $1`, [correo]);
+        const fetchOriginal = globalThis.fetch;
+        const claveOriginal = process.env.RESEND_API_KEY;
+        const panelOriginal = process.env.PANEL_URL;
+        try {
+            process.env.PANEL_URL = 'https://panel.gomaq.test';
+            const r = await pedir('POST', `/api/usuarios/solicitudes/${id}/aprobar`, 'administrativo', {});
+            assert.equal(r.status, 200, JSON.stringify(r.body));
+
+            const filas = (await avisosDe()).rows;
+            assert.equal(filas.length, 1, 'una sola fila');
+            assert.equal(filas[0].estado, 'pendiente');
+            assert.equal(filas[0].payload.tipo, 'cuenta_aprobada');
+            assert.equal(filas[0].payload.nombre_contacto, 'Contacto <Aprobado>');
+            assert.equal(filas[0].payload.url, 'https://panel.gomaq.test', 'la URL sale de la configuracion, no del host de la peticion');
+            assert.deepEqual(Object.keys(filas[0].payload).sort(), ['nombre_contacto', 'tipo', 'url']);
+
+            // aprobar de nuevo no manda otro correo
+            const otra = await pedir('POST', `/api/usuarios/solicitudes/${id}/aprobar`, 'administrativo', {});
+            assert.equal(otra.status, 404);
+            assert.equal((await avisosDe()).rows.length, 1);
+
+            // el worker, con Resend simulado, lo envia con el logo como unico adjunto
+            const envios = [];
+            process.env.RESEND_API_KEY = 're_prueba';
+            globalThis.fetch = async (url, opciones) => {
+                envios.push({ url, cuerpo: JSON.parse(opciones.body) });
+                return { ok: true, status: 200, json: async () => ({ id: 'correo-simulado' }), text: async () => '{}' };
+            };
+            await procesarUna(filas[0]);
+            assert.equal(envios.length, 1);
+            assert.deepEqual(envios[0].cuerpo.to, [correo]);
+            assert.equal(envios[0].cuerpo.subject, 'Tu cuenta de GOMAQ fue aprobada');
+            assert.match(envios[0].cuerpo.html, /Contacto &lt;Aprobado&gt;/);
+            assert.ok(envios[0].cuerpo.attachments.every((a) => a.content_id), 'solo el logo incrustado');
+            const despues = (await avisosDe()).rows[0];
+            assert.equal(despues.estado, 'enviado');
+            assert.ok(despues.enviado_at);
+        } finally {
+            globalThis.fetch = fetchOriginal;
+            if (claveOriginal === undefined) delete process.env.RESEND_API_KEY; else process.env.RESEND_API_KEY = claveOriginal;
+            if (panelOriginal === undefined) delete process.env.PANEL_URL; else process.env.PANEL_URL = panelOriginal;
+            await pool.query(`DELETE FROM notificaciones_pendientes WHERE canal = 'email' AND destinatario = $1`, [correo]);
+            const sol = await pool.query('SELECT cliente_id, usuario_id FROM solicitudes_cliente WHERE id = $1', [id]);
+            await pool.query('DELETE FROM solicitudes_cliente WHERE id = $1', [id]);
+            if (sol.rows[0] && sol.rows[0].usuario_id) await pool.query('DELETE FROM usuarios WHERE id = $1', [sol.rows[0].usuario_id]);
+            if (sol.rows[0] && sol.rows[0].cliente_id) await pool.query('DELETE FROM clientes WHERE id = $1', [sol.rows[0].cliente_id]);
         }
     });
 });

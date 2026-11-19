@@ -134,17 +134,36 @@ function encabezadoHtml(conLogo) {
         + `<tr><td bgcolor="${COLOR_NARANJA}" height="4" style="background:${COLOR_NARANJA};height:4px;line-height:4px;font-size:0;">&nbsp;</td></tr>`;
 }
 
+/** El enlace del correo si es una URL http(s) sin espacios, comillas ni signos de menor o mayor; si no, null. */
+function enlaceValido(enlace) {
+    if (!enlace || typeof enlace.url !== 'string' || typeof enlace.texto !== 'string') return null;
+    const url = enlace.url.trim();
+    const texto = enlace.texto.trim();
+    return texto && /^https?:\/\/[^\s"'<>]+$/.test(url) ? { texto, url } : null;
+}
+
+function botonHtml(enlace) {
+    return '<table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:20px 0 4px 0;"><tr>'
+        + `<td bgcolor="${COLOR_NARANJA}" style="background:${COLOR_NARANJA};border-radius:4px;">`
+        + `<a href="${escaparHtml(enlace.url)}" style="${FUENTE}display:inline-block;padding:12px 24px;font-size:15px;font-weight:bold;color:#ffffff;text-decoration:none;">${escaparHtml(enlace.texto)}</a>`
+        + '</td></tr></table>';
+}
+
 /**
- * @param {{asunto:string, cuerpo:string, contacto?:string, resumen?:object, conLogo?:boolean}} p
+ * Correo con la marca de GOMAQ: encabezado con logo, mensaje, tarjeta de resumen y boton opcionales, y pie. Lo usan
+ * la factura y los avisos al cliente (cuenta aprobada).
+ * @param {{asunto:string, cuerpo:string, contacto?:string, resumen?:object, enlace?:{texto:string, url:string}, conLogo?:boolean}} p
  * @returns {{asunto:string, texto:string, html:string, replyTo:string|null, logoCid:string}}
  */
-function armarCorreoFactura({ asunto, cuerpo, contacto, resumen, conLogo = true }) {
+function armarCorreoMarca({ asunto, cuerpo, contacto, resumen, enlace, conLogo = true }) {
     const correo = correoDeContacto(contacto);
     const filas = filasResumen(resumen);
+    const boton = enlaceValido(enlace);
     const pie = lineaContacto(correo);
 
     const textoResumen = filas.length ? `\n\n${filas.map(([e, v]) => `${e}: ${v}`).join('\n')}` : '';
-    const texto = `${cuerpo}${textoResumen}\n\n--\n${pie}`;
+    const textoEnlace = boton ? `\n\n${boton.texto}: ${boton.url}` : '';
+    const texto = `${cuerpo}${textoResumen}${textoEnlace}\n\n--\n${pie}`;
 
     const parrafos = String(cuerpo)
         .split(/\n{2,}/)
@@ -161,7 +180,7 @@ function armarCorreoFactura({ asunto, cuerpo, contacto, resumen, conLogo = true 
         + '<tr><td align="center" style="padding:16px 8px;">'
         + '<table role="presentation" width="600" cellpadding="0" cellspacing="0" border="0" bgcolor="#ffffff" style="width:100%;max-width:600px;background:#ffffff;border-radius:6px;">'
         + encabezadoHtml(conLogo)
-        + `<tr><td style="${FUENTE}padding:24px 24px 8px 24px;font-size:15px;line-height:1.5;color:#222222;">${parrafos}${tarjetaHtml(filas)}</td></tr>`
+        + `<tr><td style="${FUENTE}padding:24px 24px 8px 24px;font-size:15px;line-height:1.5;color:#222222;">${parrafos}${tarjetaHtml(filas)}${boton ? botonHtml(boton) : ''}</td></tr>`
         + `<tr><td style="${FUENTE}padding:8px 24px 24px 24px;">`
         + '<hr style="border:none;border-top:1px solid #dddddd;margin:16px 0;">'
         + `<p style="margin:0;font-size:13px;line-height:1.5;color:#555555;">${escaparHtml(pie)}</p>`
@@ -169,7 +188,10 @@ function armarCorreoFactura({ asunto, cuerpo, contacto, resumen, conLogo = true 
     return { asunto, texto, html, replyTo: correo, logoCid: LOGO_CID };
 }
 
+/** El correo de una factura: el mismo diseno de marca (nombre historico, se conserva). */
+const armarCorreoFactura = armarCorreoMarca;
+
 module.exports = {
-    armarCorreoFactura, escaparHtml, correoDeContacto, formatearPesos, diaCorto, textoFotos, filasResumen, resumenDePayload,
+    armarCorreoMarca, armarCorreoFactura, escaparHtml, correoDeContacto, formatearPesos, diaCorto, textoFotos, filasResumen, resumenDePayload,
     LOGO_CID, NOMBRE_EMPRESA, COLOR_NARANJA, COLOR_OSCURO,
 };

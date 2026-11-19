@@ -1,6 +1,7 @@
 const pool = require('../config/db');
 const { planificarReintento, plazoTomaSegundos, conTimeout } = require('../utils/reintentosNotificacion');
 const { armarEnvioFactura, leerLogoCorreo } = require('../utils/envioFactura');
+const { armarCorreoCuentaAprobada } = require('../utils/correoCuentaAprobada');
 const { enviarCorreoResend } = require('../services/correoResend');
 const { enviarPushFcm, leerCuentaServicio } = require('../services/fcm');
 const { armarMensajePush, motivoDescarte } = require('../utils/push');
@@ -115,18 +116,28 @@ async function enviarNotificacion(notificacion, signal) {
         // sin proveedor: reintentar no lo arregla, queda en 'error' (el panel permite reenviarlo despues)
         throw Object.assign(new Error(`Proveedor de ${notificacion.canal} no configurado todavia`), { permanente: true });
     }
-    if (payload.tipo !== 'factura_emitida') {
+    if (payload.tipo !== 'factura_emitida' && payload.tipo !== 'cuenta_aprobada') {
         throw Object.assign(new Error(`Sin plantilla para ${payload.tipo}`), { permanente: true });
     }
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) throw errorConfiguracion('Falta RESEND_API_KEY en el worker');
 
-    const pdf = await adjuntarPdfFactura(payload.factura_id, signal);
-    const fotos = await adjuntarFotosFactura(payload, signal);
-    // el HTML se arma despues de adjuntar: el resumen cuenta las fotos que de verdad van
-    const { correo, adjuntos } = armarEnvioFactura({
-        payload, pdf, fotos: fotos.adjuntos, logo: leerLogoCorreo(), contacto: process.env.CORREO_CONTACTO,
-    });
+    let fotos = { adjuntos: [], faltantes: [] };
+    let correo;
+    let adjuntos;
+    if (payload.tipo === 'cuenta_aprobada') {
+        // sin PDF ni fotos: solo el logo
+        ({ correo, adjuntos } = armarCorreoCuentaAprobada({
+            payload, logo: leerLogoCorreo(), contacto: process.env.CORREO_CONTACTO,
+        }));
+    } else {
+        const pdf = await adjuntarPdfFactura(payload.factura_id, signal);
+        fotos = await adjuntarFotosFactura(payload, signal);
+        // el HTML se arma despues de adjuntar: el resumen cuenta las fotos que de verdad van
+        ({ correo, adjuntos } = armarEnvioFactura({
+            payload, pdf, fotos: fotos.adjuntos, logo: leerLogoCorreo(), contacto: process.env.CORREO_CONTACTO,
+        }));
+    }
     await enviarCorreoResend({
         apiKey,
         desde: process.env.CORREO_REMITENTE || 'onboarding@resend.dev',

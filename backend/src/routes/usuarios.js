@@ -502,10 +502,14 @@ router.post('/solicitudes/:id/aprobar', verifyToken, requireRole('administrativo
             [clienteIdFinal, nuevoUsuario.rows[0].id, req.params.id]
         );
 
-        // Aviso de cuenta aprobada por el Outbox, en la misma transaccion. Sale en cuanto se
-        // configure el proveedor de correo (pendiente del README), como el resto de avisos.
+        // Aviso de cuenta aprobada por el Outbox, en la misma transaccion (si se revierte, no sale). El worker no
+        // conoce la URL del panel, asi que va en el aviso. Solo la configurada en el servidor (PANEL_URL o el dominio
+        // publico de Railway): nunca el host de la peticion, que quien aprueba (o un proxy) podria alterar para que
+        // el correo apunte a otro sitio. Sin URL, el correo sale sin boton.
+        const url = urlPanel();
         await encolarNotificacion(client, {
-            canal: 'email', destinatario: s.email, payload: { tipo: 'cuenta_aprobada', nombre_contacto: s.nombre_contacto },
+            canal: 'email', destinatario: s.email,
+            payload: { tipo: 'cuenta_aprobada', nombre_contacto: s.nombre_contacto, ...(url ? { url } : {}) },
         });
 
         await client.query('COMMIT');

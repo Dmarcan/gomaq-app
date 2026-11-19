@@ -28,13 +28,14 @@ const TIPOS_INTERNOS = Object.freeze(Object.values(TIPOS_AVISO));
 const MOTIVOS_AJUSTE_CON_AVISO = Object.freeze(['perdida_robo', 'danio_merma']);
 
 // Porton unico de la cola de salida: solo se encolan los avisos que tienen proveedor real.
-//  - correo: solo el de factura (Resend).
+//  - correo: el de factura y el de cuenta aprobada (Resend).
 //  - push (FCM): los tipos de utils/push.js (DESTINOS_PUSH: mecanico, gerencia, administrativo y cliente), y SOLO si PUSH_HABILITADO=1 en la API. El flag se
 //    activa despues de que el worker nuevo (con el canal push) este arriba: un worker antiguo marcaria 'push'
 //    como error permanente. Apagarlo es la vuelta atras. Se lee en cada llamada, no al cargar el modulo.
 // Un aviso sin proveedor no se encola: terminaria en error y ensuciaria el panel con "Avisos con problemas".
 // Para agregar un proveedor se suma su canal y tipo aqui y su plantilla en workers/notificaciones.js.
-const TIPOS_CON_ENVIO = Object.freeze(['factura_emitida']);
+// cuenta_aprobada va al cliente (no es un tipo interno): un fallo cuenta en "Avisos con problemas".
+const TIPOS_CON_ENVIO = Object.freeze(['factura_emitida', 'cuenta_aprobada']);
 
 function pushHabilitado() {
     return process.env.PUSH_HABILITADO === '1';
