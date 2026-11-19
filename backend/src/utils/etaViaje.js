@@ -75,4 +75,4 @@ function calcularQuietoDesde(previa, nueva, config = {}) {
     return new Date(previa.quieto_desde || previa.capturada_en);
 }
 
-module.exports = { CONFIG, ajustarEta, calcularQuietoDesde };
+module.exports = { ajustarEta, calcularQuietoDesde };

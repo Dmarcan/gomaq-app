@@ -241,7 +241,7 @@ function debeAnularValorizacion({ valorizacion, antes, despues }) {
 }
 
 module.exports = {
-    MOTIVOS_CAMBIO, ETIQUETAS_MOTIVO, MIN_CARACTERES_MOTIVO, MAX_CARACTERES_MOTIVO,
+    MOTIVOS_CAMBIO, ETIQUETAS_MOTIVO,
     mensajeOrdenFacturada, validarPrecioUnitario, esIdPositivo, montoEnteroONulo, cantidadValidaONulo, detalleFacturaAnulada, validarMotivo, evaluarCompuertas, difLinea, cambiaLoFacturable,
     debeAnularValorizacion,
 };

@@ -475,7 +475,7 @@ router.patch('/:id/tomar', verifyToken, requireRole('mecanico'), async (req, res
     }
 });
 
-// Patron Outbox (informe 6.4.2): la misma transaccion que asigna el mecanico
+// Patron Outbox: la misma transaccion que asigna el mecanico
 // inserta la notificacion pendiente (HU-07) para que nunca queden desincronizadas
 router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (req, res) => {
     const { mecanico_id } = req.body;
@@ -1073,7 +1073,7 @@ router.get('/:id/historial', verifyToken, requireRole('administrativo', 'gerente
              WHERE e.orden_trabajo_id = $1
              -- la creacion va siempre primero (una OT hecha sin senal nace con la hora de la
              -- sincronizacion, despues de eventos que el telefono ya habia vivido); el resto por
-             -- orden de escritura (id), decidido por David: llegada al servidor
+             -- orden de escritura (id): manda la llegada al servidor
              ORDER BY (e.tipo = 'creacion') DESC, e.id`,
         [req.params.id]
     );

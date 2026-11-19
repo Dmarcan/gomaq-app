@@ -55,4 +55,4 @@ async function clienteAlMomento(client, maquinariaId, fecha, clienteActual) {
     return clienteSegunGuia(r.rows[0]);
 }
 
-module.exports = { SQL_GUIA_VIGENTE, clienteSegunGuia, recalcularClienteEquipo, clienteAlMomento };
+module.exports = { recalcularClienteEquipo, clienteAlMomento };

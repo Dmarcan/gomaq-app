@@ -145,6 +145,6 @@ function diferenciasFicha(antes, cambios) {
 }
 
 module.exports = {
-    validarFichaCliente, validarPlazoPago, CAMPOS, PLAZO_MAXIMO_DIAS,
-    validarFichaPropia, fichaDeFila, diferenciasFicha, CAMPOS_FICHA_PROPIA, EDITABLES_PROPIOS,
+    validarFichaCliente,
+    validarFichaPropia, fichaDeFila, diferenciasFicha, CAMPOS_FICHA_PROPIA,
 };

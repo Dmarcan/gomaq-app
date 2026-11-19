@@ -14,4 +14,4 @@ function columnaOtAbierta(rol) {
     return ROLES_CON_OT_ABIERTA.includes(rol) ? `, ${SQL_OT_ABIERTA}` : '';
 }
 
-module.exports = { SQL_OT_ABIERTA, ROLES_CON_OT_ABIERTA, columnaOtAbierta };
+module.exports = { columnaOtAbierta };

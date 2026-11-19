@@ -119,4 +119,4 @@ function filtrarConAviso(todos, config) {
     return todos.filter((a) => a.en_curso && resumenEnCurso(a, config).aviso);
 }
 
-module.exports = { SQL_ARRIENDOS, cargarArriendos, finDelArriendo, filtrarPorFacturar, resumenEnCurso, filtrarConAviso };
+module.exports = { cargarArriendos, filtrarPorFacturar, resumenEnCurso, filtrarConAviso };

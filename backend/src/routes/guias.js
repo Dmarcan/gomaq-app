@@ -148,7 +148,6 @@ router.post('/:id/guias', verifyToken, requireRole('administrativo'), subidaPdf.
                 return res.status(r.status).json(r.cuerpo);
             }
         } catch (err) {
-            // Express 4 no atrapa el rechazo de un handler async: sin esto, un fallo del SELECT tumba el proceso
             console.error(err);
             return res.status(500).json({ error: 'Error al revisar la guía' });
         }

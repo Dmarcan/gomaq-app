@@ -193,5 +193,5 @@ const armarCorreoFactura = armarCorreoMarca;
 
 module.exports = {
     armarCorreoMarca, armarCorreoFactura, escaparHtml, correoDeContacto, formatearPesos, diaCorto, textoFotos, filasResumen, resumenDePayload,
-    LOGO_CID, NOMBRE_EMPRESA, COLOR_NARANJA, COLOR_OSCURO,
+    LOGO_CID,
 };

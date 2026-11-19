@@ -136,9 +136,6 @@ function evaluarCapturadaEn(capturadaEn, ahora = new Date()) {
 }
 
 module.exports = {
-    DECIMALES,
-    FACTOR_CAMINO,
-    VELOCIDAD_MEDIA_KMH,
     TOLERANCIA_FUTURO_MS,
     ANTIGUEDAD_MAXIMA_MS,
     validarCoordenadas,

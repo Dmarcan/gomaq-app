@@ -20,7 +20,7 @@ const diaIso = (instante) => (typeof instante === 'string' && /^\d{4}-\d{2}-\d{2
  * Gasto en repuestos de un equipo.
  *
  * Las lineas sin precio cargado no suman, pero se cuentan aparte: un total bajo porque nadie
- * puso los precios no es lo mismo que un equipo barato, y sin ese aviso el informe engaña.
+ * puso los precios no es lo mismo que un equipo barato, y sin ese aviso el resultado engaña.
  */
 function calcularGasto(lineas) {
     if (!Array.isArray(lineas)) return { total: 0, lineas_sin_precio: 0 };

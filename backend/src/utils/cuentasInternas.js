@@ -103,6 +103,6 @@ function validarCambioDeEstado(body, idObjetivo, idActor) {
 }
 
 module.exports = {
-    ROLES_INTERNOS, MIN_PASSWORD, MAX_PASSWORD_BYTES, MENSAJE_SOLO_GERENTE, rolesGestionablesPor,
+    ROLES_INTERNOS, MENSAJE_SOLO_GERENTE, rolesGestionablesPor,
     validarPassword, validarCambioDePassword, validarNuevaCuenta, validarNuevaInvitacion, validarCambioDeEstado,
 };

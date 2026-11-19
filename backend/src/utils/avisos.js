@@ -272,8 +272,8 @@ const SQL_AVISOS_PROBLEMAS = `(${SQL_AVISOS_EN_ERROR} OR ${SQL_AVISOS_ATRASADOS}
 
 module.exports = {
     SQL_AVISOS_PROBLEMAS, SQL_AVISOS_EN_ERROR, SQL_AVISOS_ATRASADOS, SQL_AVISOS_PENDIENTES_CON_ERROR,
-    TIPOS_AVISO, TIPOS_INTERNOS, MOTIVOS_AJUSTE_CON_AVISO,
-    TIPOS_CON_ENVIO, pushHabilitado, tieneProveedor, encolarNotificacion,
+    TIPOS_AVISO, TIPOS_INTERNOS,
+    TIPOS_CON_ENVIO, tieneProveedor, encolarNotificacion,
     encolarAMecanico, encolarADispositivos, encolarAGerentes, encolarAOficina, encolarAClientes,
     avisarAsignacion, avisarOtDisponible, avisarPorValorizar, avisarAsistenciaNueva, avisarAlCliente, avisarFacturaAnulada, avisarAjusteInventario,
 };

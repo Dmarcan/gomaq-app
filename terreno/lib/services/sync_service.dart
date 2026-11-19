@@ -38,8 +38,7 @@ class SyncService extends ChangeNotifier {
   bool _sesionExpirada = false;
   bool get sesionExpirada => _sesionExpirada;
 
-  /// Llamar tras un login exitoso: limpia el aviso de sesion expirada aunque la cola este vacia
-  /// (solo se limpiaba cuando una tarea sincronizaba con exito).
+  /// Llamar tras un login exitoso: limpia el aviso de sesion expirada aunque la cola este vacia.
   void reiniciarSesion() {
     if (_sesionExpirada) {
       _sesionExpirada = false;

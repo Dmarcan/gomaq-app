@@ -204,7 +204,7 @@ function validarCanal(canal) {
 }
 
 module.exports = {
-    CANALES, MAX_INTENTOS, VIGENCIA_MINUTOS,
-    vigenciaMinutos, generarCodigo, normalizarCodigo, hmacCodigo, hmacIguales, evaluarCanje, canjePermitido, estadoInvitacion,
-    correoDisponible, urlPanel, textoCodigo, asuntoCodigo, textoVence, validarConfirmacion, validarCanal,
+    CANALES, MAX_INTENTOS,
+    vigenciaMinutos, generarCodigo, normalizarCodigo, hmacCodigo, evaluarCanje, canjePermitido, estadoInvitacion,
+    correoDisponible, urlPanel, textoCodigo, asuntoCodigo, validarConfirmacion, validarCanal,
 };

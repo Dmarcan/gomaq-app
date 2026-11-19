@@ -69,17 +69,6 @@ void main() {
       expect(horaCorta(null), isNull);
     });
 
-    test('proximoPaso dice lo que viene y es nulo al terminar', () {
-      expect(proximoPaso(null), 'Técnico asignado');
-      expect(proximoPaso('pendiente'), 'Técnico asignado');
-      expect(proximoPaso('asignada'), 'Técnico aceptó');
-      expect(proximoPaso('aceptada'), 'Técnico en camino');
-      expect(proximoPaso('en_camino'), 'Trabajando en tu equipo');
-      expect(proximoPaso('en_terreno'), 'Finalizada');
-      expect(proximoPaso('en_reparacion'), 'Finalizada');
-      expect(proximoPaso('finalizada'), isNull);
-    });
-
     test('resumenPaso lleva el número de paso y la hora si la hay', () {
       // el reloj se inyecta y es la propia hora local de la fixture: el resultado no depende del día
       // ni de la zona horaria de quien corre la prueba
@@ -91,7 +80,6 @@ void main() {
 
     test('un estado desconocido dice solo En proceso y no tiene próximo paso', () {
       expect(resumenPaso({'estado': 'estado_nuevo'}), 'En proceso');
-      expect(proximoPaso('estado_nuevo'), isNull);
       expect(etiquetaParaCliente('estado_nuevo'), 'En proceso');
     });
 

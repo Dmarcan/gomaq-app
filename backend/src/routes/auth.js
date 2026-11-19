@@ -293,4 +293,3 @@ router.post('/cambiar-password', limiteLogin, verifyToken, async (req, res) => {
 });
 
 module.exports = router;
-module.exports.emitirToken = emitirToken;

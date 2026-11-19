@@ -78,4 +78,4 @@ function aplicarCambioAvisos(silenciadosActuales, cambios) {
     return { avisosSilenciados: [...silenciados].sort(), recibeMantencion };
 }
 
-module.exports = { CATALOGO, TIPO_MANTENCION, avisosDelRol, armarAvisos, validarCambioAvisos, aplicarCambioAvisos };
+module.exports = { CATALOGO, avisosDelRol, armarAvisos, validarCambioAvisos, aplicarCambioAvisos };

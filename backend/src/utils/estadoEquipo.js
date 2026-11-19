@@ -113,7 +113,7 @@ async function origenDeCliente(db, clienteId) {
 }
 
 module.exports = {
-    ESTADOS_EQUIPO, ESTADOS_CIERRE,
+    ESTADOS_EQUIPO,
     validarEstadoEquipoCierre, estadoTrasEntrada, estadoTrasCierre, origenPorEjecutivo,
     aplicarEntradaEquipo, aplicarCierreEquipo, origenDeCliente,
 };

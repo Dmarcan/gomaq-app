@@ -192,4 +192,4 @@ function motivoDescarte({ aviso, dispositivo, otSinAsignar = true }, ahora = new
     return null;
 }
 
-module.exports = { TIPOS_CON_PUSH, DESTINOS_PUSH, destinoPush, VIGENCIA_PUSH_MS, armarMensajePush, clasificarErrorFcm, motivoDescarte };
+module.exports = { TIPOS_CON_PUSH, DESTINOS_PUSH, destinoPush, armarMensajePush, clasificarErrorFcm, motivoDescarte };

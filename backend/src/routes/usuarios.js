@@ -60,8 +60,8 @@ router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (re
 });
 
 // crea una cuenta interna activa con una contrasena que escribe quien la crea.
-// RESPALDO por un ciclo: el panel ya invita (POST /api/usuarios/invitaciones) y la persona elige su
-// clave. Se mantiene para los APK antiguos del panel; quitarlo en el proximo ciclo.
+// Respaldo: lo normal es invitar (POST /api/usuarios/invitaciones) y que la persona elija su clave.
+// Se mantiene para los APK antiguos del panel.
 // Las cuentas de cliente se crean con el registro y se aprueban en Solicitudes.
 router.post('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     const v = validarNuevaCuenta(req.body);

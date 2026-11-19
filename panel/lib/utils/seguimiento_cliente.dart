@@ -74,14 +74,6 @@ String? horaConDia(DateTime? hora, {DateTime? ahora}) {
   return '$dia/$mes $corta';
 }
 
-/// Qué viene después del estado actual, o null si ya terminó o el estado no se conoce.
-String? proximoPaso(String? estado) {
-  final paso = pasoParaCliente(estado);
-  if (paso == null) return null;
-  final siguiente = paso + 1;
-  return siguiente < pasosParaCliente.length ? pasosParaCliente[siguiente] : null;
-}
-
 /// "Paso 3 de 6: Técnico en camino, desde las 10:42" (o "desde el 03/11 10:42" si es de otro día;
 /// sin la hora si el servidor no la tiene). Un estado desconocido dice solo "En proceso".
 String resumenPaso(Map<String, dynamic> orden, {DateTime? ahora}) {

@@ -7,7 +7,7 @@
 // Quedan fuera a proposito: facturable, valorizacion y lineas (solo entran para decidir el mensaje de
 // cobro, que no lleva montos), el detalle y el usuario de los eventos, el origen, las coordenadas, la
 // ETA, la ruta de las fotos en el bucket, la factura y la foto que el cliente adjunto al pedir asistencia.
-// La observacion final se muestra tal cual (decision de David).
+// La observacion final se muestra tal cual.
 
 const { cobroParaCliente } = require('./cobroCliente');
 

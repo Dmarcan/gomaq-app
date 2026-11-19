@@ -51,5 +51,5 @@ function rutaPerteneceAOrden(ruta, prefijo) {
 }
 
 module.exports = {
-    extensionSegura, sufijoUnico, rutaAdjuntoSolicitud, segmentoSeguro, rutaArchivo, rutaPerteneceAOrden,
+    rutaAdjuntoSolicitud, segmentoSeguro, rutaArchivo, rutaPerteneceAOrden,
 };

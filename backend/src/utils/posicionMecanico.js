@@ -138,4 +138,4 @@ async function limpiarViaje(db, ordenId) {
     );
 }
 
-module.exports = { guardarPosicion, actualizarEtaAproximada, actualizarEtaAjustada, limpiarViaje };
+module.exports = { guardarPosicion, limpiarViaje };

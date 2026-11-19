@@ -19,7 +19,7 @@ validarIdsEnRuta(router, ['id']);
 const num = (v) => (v === null || v === undefined ? null : Number(v));
 
 /**
- * Encola el aviso de mantencion proxima siguiendo el patron Outbox (informe 6.4.2): la
+ * Encola el aviso de mantencion proxima siguiendo el patron Outbox: la
  * notificacion se inserta en la MISMA transaccion que la lectura, para que no queden
  * desincronizadas si el proceso muere entre medio.
  *
@@ -213,9 +213,7 @@ router.get('/maquinaria/:id', verifyToken, requireRole('gerente', 'administrativ
 // agenda del mes: equipos arrendados a los que todavia no se
 // les toma el horometro este mes. Al registrar la lectura, el equipo sale solo de la lista.
 //
-// PENDIENTE DE CONFIRMAR CON GOMAQ: por ahora solo entran los equipos arrendados, porque son
-// los que acumulan horas de uso; falta confirmar si tambien quieren medir los que estan en
-// taller o en patio.
+// Solo entran los equipos arrendados (con cliente), porque son los que acumulan horas de uso.
 router.get('/pendientes', verifyToken, requireRole('gerente', 'administrativo', 'mecanico'), async (req, res) => {
     const result = await pool.query(
         `SELECT m.id, m.codigo, m.tipo, m.ubicacion, c.nombre AS cliente_nombre,

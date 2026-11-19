@@ -2,7 +2,7 @@
 //
 //   pendiente -> asignada -> aceptada -> en_camino -> en_terreno <-> en_reparacion -> finalizada
 //
-// aceptada y en_camino (migracion 018) son el viaje del mecanico: acepta el trabajo, sale hacia el
+// aceptada y en_camino son el viaje del mecanico: acepta el trabajo, sale hacia el
 // destino, y al llegar pulsa Iniciar (en_terreno). Un APK anterior sigue funcionando: puede pasar
 // de asignada directo a en_terreno.
 //
@@ -94,5 +94,5 @@ function evaluarCierre(estado) {
 }
 
 module.exports = {
-    ESTADOS, EN_CURSO_PANEL, parsearEstados, FINALIZADA, VIAJE, EN_CURSO, OCUPADO, estadoTrasAsignar, mecanicoPuedeEditar, puedeCambiarEstadoA, evaluarCambioEstado, evaluarCierre,
+    ESTADOS, EN_CURSO_PANEL, parsearEstados, EN_CURSO, OCUPADO, estadoTrasAsignar, mecanicoPuedeEditar, puedeCambiarEstadoA, evaluarCambioEstado, evaluarCierre,
 };

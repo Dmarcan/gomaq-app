@@ -20,4 +20,4 @@ function conLlegadaEstimada(fila, rol) {
     return copia;
 }
 
-module.exports = { SQL_ETA_LLEGADA_AT, ROLES_CON_LLEGADA, conLlegadaEstimada };
+module.exports = { SQL_ETA_LLEGADA_AT, conLlegadaEstimada };

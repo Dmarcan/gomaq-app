@@ -222,15 +222,11 @@ function avisosPrecarga(leido, vencimiento) {
 }
 
 module.exports = {
-    DIAS_PROXIMA,
     ESTADOS,
     FILTROS_ESTADO,
     SQL_HOY,
-    SQL_FACTURAS_POR_COBRAR,
     SQL_FACTURAS_VENCIDAS,
     SQL_FACTURAS_PROXIMAS,
-    SQL_FACTURAS_PAGADAS,
-    SQL_FACTURAS_ANULADAS,
     hoySantiago,
     estadoCobranza,
     diasMora,

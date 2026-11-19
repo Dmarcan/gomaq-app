@@ -39,7 +39,7 @@ function validarCambioConfiguracion(body) {
     return { valores };
 }
 
-// `incluir_dia_recepcion` quedo obsoleta (migracion 028): el dia de salida del equipo se decide con la
+// `incluir_dia_recepcion` esta obsoleta: el dia de salida del equipo se decide con la
 // hora de corte, igual que el del despacho. El PUT la sigue aceptando por compatibilidad con paneles
 // antiguos, pero no se lee ni se devuelve ni se guarda (el PUT la descarta sin tocar quien/cuando).
 const OBSOLETAS = new Set(['incluir_dia_recepcion']);

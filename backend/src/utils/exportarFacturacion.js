@@ -202,6 +202,6 @@ async function cargarFilasExportacion(db, { desde = null, hasta = null, clienteI
 }
 
 module.exports = {
-    NOMBRE_HOJA, TITULO, ENCABEZADOS, FILA_ENCABEZADOS, MAX_FILAS,
-    armarHoja, armarFila, cargarFilasExportacion, textoPeriodo, textoFolio, numeroInterno, montosFila,
+    NOMBRE_HOJA, ENCABEZADOS, MAX_FILAS,
+    armarHoja, armarFila, cargarFilasExportacion, textoPeriodo, textoFolio, numeroInterno,
 };

@@ -59,4 +59,4 @@ const ESTADOS_OT_CON_DETALLE = ['pendiente', 'asignada'];
 
 module.exports = {
     textoMotivo, textoDetalle, ESTADOS_OT_CON_DETALLE,
-    SQL_ASISTENCIA_ABIERTA, GRAVEDADES, validarGravedad, gravedadMayor, estadoPorGravedad };
+    SQL_ASISTENCIA_ABIERTA, validarGravedad, gravedadMayor, estadoPorGravedad };

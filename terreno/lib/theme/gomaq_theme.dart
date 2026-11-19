@@ -30,7 +30,7 @@ class GomaqColors {
   // saturados que en el panel web para mantener contraste sobre fondo oscuro.
   static const estadoPositivo = Color(0xFF4CAF6E); // finalizada
   static const estadoAdvertencia = Color(0xFFF59E0B); // en progreso
-  // mas claro que el del panel: sobre el fondo oscuro el rojo anterior daba 3,91:1 como texto
+  // mas claro que el del panel: sobre el fondo oscuro necesita mas contraste como texto
   static const estadoNegativo = Color(0xFFF07A6B); // error / fuera de servicio
   static const estadoNeutro = Color(0xFF9BA1A8); // asignada / pendiente
 

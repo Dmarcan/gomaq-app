@@ -153,6 +153,6 @@ async function enviarPushFcm({ cuenta, token, mensaje, signal, fetchFn = fetch, 
 }
 
 module.exports = {
-    enviarPushFcm, leerCuentaServicio, firmarJwt, armarCuerpoFcm, limpiarCacheToken, errorConfiguracion,
+    enviarPushFcm, leerCuentaServicio, firmarJwt, limpiarCacheToken, errorConfiguracion,
     URL_TOKEN, SCOPE_FCM,
 };

@@ -1,5 +1,5 @@
-// hora (24h) a partir de la cual el dia de despacho ya no cuenta como dia de arriendo: si salio a las
-// 10 de la manana se cobra ese dia, si salio a las 3 de la tarde no (corte exacto pendiente de confirmar).
+// Hora (24h) a partir de la cual el dia de despacho ya no cuenta como dia de arriendo: si salio a las
+// 10 de la manana se cobra ese dia, si salio a las 3 de la tarde no.
 // Es el valor por defecto: la configuracion vigente vive en la tabla `configuracion`.
 const HORA_CORTE = 13;
 

@@ -53,6 +53,6 @@ function estadoSesion(fila, ahora = new Date()) {
 }
 
 module.exports = {
-    PREFIJO_TOKEN, APPS, DURACION_ABSOLUTA_DIAS, INACTIVIDAD_MINUTOS, REFRESCO_USO_MINUTOS, MAX_SESIONES_ACTIVAS,
+    APPS, DURACION_ABSOLUTA_DIAS, INACTIVIDAD_MINUTOS, REFRESCO_USO_MINUTOS, MAX_SESIONES_ACTIVAS,
     generarToken, esTokenDeSesion, hashToken, normalizarApp, vencimientoAbsoluto, estadoSesion,
 };

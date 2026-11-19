@@ -9,8 +9,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 /** Tope de un monto en pesos: las columnas son NUMERIC(12,2), es decir, 10 digitos enteros. */
 const MAX_MONTO_PESOS = 9999999999;
 
-/** Largos maximos de los textos libres (las columnas VARCHAR(n) rechazan lo que se pase). */
-const MAX_TEXTO_CORTO = 150;
+/** Largo maximo de los textos libres. */
 const MAX_TEXTO_LARGO = 2000;
 
 /**
@@ -102,7 +101,7 @@ function fechaHoraInvalida(valor) {
 module.exports = {
     fechaHoraInvalida,
     validarCuerpo,
-    esIdDeRuta, validarIdsEnRuta, UUID,
-    MAX_MONTO_PESOS, MAX_TEXTO_CORTO, MAX_TEXTO_LARGO,
+    validarIdsEnRuta, UUID,
+    MAX_MONTO_PESOS,
     textoInvalido, esDiaValido, fechaDeQuery, esNumeroFinito,
 };

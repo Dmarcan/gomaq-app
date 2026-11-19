@@ -64,4 +64,3 @@ router.delete('/', verifyToken, limiteDispositivos, async (req, res) => {
 });
 
 module.exports = router;
-module.exports.MAX_DISPOSITIVOS_ACTIVOS = MAX_DISPOSITIVOS_ACTIVOS;

@@ -186,7 +186,7 @@ function sincronizadoTarde(ocurrioEn, registradoEn) {
 }
 
 module.exports = {
-    TIPOS_EVENTO, ORIGENES_EVENTO, MINUTOS_SINCRONIZADO_TARDE,
+    TIPOS_EVENTO, ORIGENES_EVENTO,
     TOLERANCIA_FUTURO_MS, decidirEventoDiagnostico, decidirEventoAsignacion, esMismoTecnico,
     esTipoValido, esHoraDudosa, leerUuidTarea, construirEvento, registrarEvento, dejarEvento, sincronizadoTarde,
 };

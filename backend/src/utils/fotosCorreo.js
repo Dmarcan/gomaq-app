@@ -127,6 +127,6 @@ function formatearMb(bytes) {
 }
 
 module.exports = {
-    MAX_FOTOS, MAX_BYTES_FOTOS, PASOS_REDUCCION,
+    MAX_FOTOS, MAX_BYTES_FOTOS,
     validarIdsFotos, leerFotosDeOrden, nombresAdjuntos, reducirFoto, prepararAdjuntosFotos, descargadorDeBucket, formatearMb,
 };

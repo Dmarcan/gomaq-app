@@ -2,9 +2,8 @@
 <!--
   Trafico sin cifrar solo para desarrollo local (emulador y localhost).
 
-  La app de produccion habla con Railway por HTTPS, asi que el resto del trafico obliga HTTPS:
-  el token de sesion ya no viaja en claro. Antes se permitia HTTP hacia el servidor local de
-  la oficina (192.168.1.132), que dejo de usarse al migrar a Railway.
+  La app de produccion habla con Railway por HTTPS, asi que el resto del trafico obliga HTTPS
+  y el token de sesion no viaja en claro.
 -->
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">

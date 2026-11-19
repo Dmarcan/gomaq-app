@@ -188,7 +188,7 @@ function respuestaPropuesta(a, config) {
 // vuelve a calcular la propuesta con el despacho bloqueado y rechaza lo que no calce (huecos y
 // solapes). Compatibilidad: solo con guia_recepcion_id (panel antiguo) factura todo lo que falta
 // hasta el fin del arriendo.
-// Opcionales (038): monto_neto, monto_traslado, traslado_entrega, traslado_retiro, fecha_emision y
+// Opcionales: monto_neto, monto_traslado, traslado_entrega, traslado_retiro, fecha_emision y
 // fecha_vencimiento. Si llegan las partes del traslado sin el total, el total es su suma; si llegan los
 // tres deben cuadrar. Un panel anterior que no los manda sigue funcionando igual.
 router.post('/arriendo', verifyToken, requireRole('administrativo'), subidaPdf.single('archivo'), async (req, res) => {
