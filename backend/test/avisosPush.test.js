@@ -137,7 +137,7 @@ test('avisarOtDisponible: una consulta para todos los libres y una fila por disp
     assert.equal(selects.length, 2, 'una por los datos de la OT y una por los mecanicos (sin N+1)');
     assert.match(selects[1].sql, /NOT EXISTS/);
     assert.match(selects[1].sql, /o\.mecanico_id = u\.id/);
-    assert.deepEqual(selects[1].params, [['aceptada', 'en_camino', 'en_terreno', 'en_reparacion']]);
+    assert.deepEqual(selects[1].params, [['aceptada', 'en_camino', 'en_terreno', 'en_reparacion'], 'ot_disponible']);
     const filas = c.inserts();
     assert.deepEqual(filas.map((f) => f.params[1]), ['21', '22']);
     assert.deepEqual(filas.map((f) => JSON.parse(f.params[2]).usuario_id), [5, 6]);
@@ -186,7 +186,7 @@ test('encolarAGerentes: una fila push por dispositivo del panel de gerentes acti
     assert.match(consulta.sql, /u\.estado_cuenta = 'activo'/);
     assert.match(consulta.sql, /u\.id <> \$3::int/, 'excluye a quien ejecuta');
     // factura anulada: app panel y solo gerente; quien ejecuta (4) se excluye
-    assert.deepEqual(consulta.params, ['panel', ['gerente'], 4, null, false]);
+    assert.deepEqual(consulta.params, ['panel', ['gerente'], 4, null, false, 'factura_anulada']);
 });
 
 test('encolarAOficina: ot_por_valorizar llega a gerentes y administrativos; factura anulada solo al gerente', async () => {
@@ -229,8 +229,8 @@ test('avisarPorValorizar y avisarFacturaAnulada usan el destino de cada tipo y e
         await avisarFacturaAnulada(c, { factura: { orden_trabajo_id: 12, folio: 'F-1' }, excluirUsuarioId: 4 });
     });
     assert.deepEqual(c.dispositivos().map((l) => l.params), [
-        ['panel', ['gerente', 'administrativo'], 4, null, false],
-        ['panel', ['gerente'], 4, null, false],
+        ['panel', ['gerente', 'administrativo'], 4, null, false, 'ot_por_valorizar'],
+        ['panel', ['gerente'], 4, null, false, 'factura_anulada'],
     ]);
     // la factura anulada no lleva monto ni motivo
     assert.deepEqual(Object.keys(payloadsDe(c)[1]).sort(), ['folio', 'orden_trabajo_id', 'tipo', 'usuario_id']);
@@ -240,7 +240,7 @@ test('avisarAsistenciaNueva: OT y equipo a la oficina, sin el texto libre de la 
     const c = clienteOficina([{ id: '5', usuario_id: 2 }, { id: '7', usuario_id: 3 }]);
     const n = await conFlag('1', () => avisarAsistenciaNueva(c, 12));
     assert.equal(n, 2);
-    assert.deepEqual(c.dispositivos()[0].params, ['panel', ['gerente', 'administrativo'], null, null, false]);
+    assert.deepEqual(c.dispositivos()[0].params, ['panel', ['gerente', 'administrativo'], null, null, false, 'asistencia_nueva']);
     const [primero] = payloadsDe(c);
     assert.deepEqual(primero, { tipo: 'asistencia_nueva', orden_trabajo_id: 12, maquinaria_codigo: 'EXC-04', usuario_id: 2 });
     assert.ok(!JSON.stringify(primero).includes('texto libre'));
@@ -253,7 +253,7 @@ test('encolarAClientes: solo usuarios cliente de la empresa pedida, de la app pa
     const n = await conFlag('1', () => encolarAClientes(c, 8, { tipo: 'ot_finalizada', orden_trabajo_id: 12 }));
     assert.equal(n, 1);
     const consulta = c.dispositivos()[0];
-    assert.deepEqual(consulta.params, ['panel', ['cliente'], null, 8, false]);
+    assert.deepEqual(consulta.params, ['panel', ['cliente'], null, 8, false, 'ot_finalizada']);
     assert.match(consulta.sql, /u\.cliente_id = \$4::int/);
     // sin la empresa no se encola a nadie (nunca "todos los clientes")
     const sin = clienteOficina([{ id: '8', usuario_id: 31 }]);

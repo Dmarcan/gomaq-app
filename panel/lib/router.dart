@@ -19,6 +19,7 @@ import 'screens/panel/clientes_screen.dart';
 import 'screens/panel/ordenes_screen.dart';
 import 'screens/panel/solicitudes_screen.dart';
 import 'screens/panel/notificaciones_screen.dart';
+import 'screens/panel/mi_perfil_screen.dart';
 import 'screens/panel/insumos_screen.dart';
 import 'screens/panel/horometro_screen.dart';
 import 'screens/panel/rentabilidad_screen.dart';
@@ -236,6 +237,8 @@ GoRouter construirRouter(AuthService auth) {
           ),
           // Cuentas por aprobar es la segunda pestaña de Clientes, con su propia entrada en el menú
           GoRoute(path: '/cuentas', builder: (_, _) => const ClientesScreen(pestanaInicial: 'cuentas')),
+          // los datos propios y los avisos que recibe cada usuario (RF-05 y RF-06); se abre desde el nombre del menú
+          GoRoute(path: '/perfil', builder: (_, _) => const MiPerfilScreen()),
           GoRoute(
             path: '/notificaciones',
             builder: (_, estado) => NotificacionesScreen(

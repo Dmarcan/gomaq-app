@@ -15,6 +15,7 @@ const { verifyToken, requireRole } = require('../middleware/auth');
 const { SQL_CUENTAS_POR_APROBAR } = require('../utils/pendientes');
 const { rutValido, MENSAJE_RUT_INVALIDO } = require('../utils/rut');
 const { encolarNotificacion } = require('../utils/avisos');
+const { armarAvisos, validarCambioAvisos, aplicarCambioAvisos } = require('../utils/avisosPerfil');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
@@ -532,42 +533,81 @@ router.post('/solicitudes/:id/rechazar', verifyToken, requireRole('administrativ
 // los datos propios del usuario autenticado.
 // Incluye lo que se le muestra al cliente en el aviso previo a la visita (HU-07), para que
 // el mecanico sepa exactamente que de su ficha sale de la empresa.
+const COLUMNAS_PERFIL = 'id, nombre, email, rol, rut, telefono_whatsapp, recibe_alertas_mantencion, avisos_silenciados';
+
+/** La respuesta del perfil: los datos propios y, aparte, la lista de avisos que su rol puede configurar. */
+function perfilParaRespuesta(fila) {
+    const { recibe_alertas_mantencion: _mantencion, avisos_silenciados: _silenciados, ...datos } = fila;
+    return { ...datos, avisos: armarAvisos(fila.rol, fila) };
+}
+
 router.get('/mi-perfil', verifyToken, async (req, res) => {
-    const result = await pool.query(
-        'SELECT id, nombre, email, rol, rut, telefono_whatsapp FROM usuarios WHERE id = $1',
-        [req.user.id]
-    );
+    const result = await pool.query(`SELECT ${COLUMNAS_PERFIL} FROM usuarios WHERE id = $1`, [req.user.id]);
     if (result.rows.length === 0) {
         return res.status(404).json({ error: 'Usuario no encontrado' });
     }
-    res.json(result.rows[0]);
+    res.json(perfilParaRespuesta(result.rows[0]));
 });
 
-// el usuario completa su RUT y telefono.
-// El RUT lo pide el bloque de firmas del talonario y se le muestra al cliente en el aviso.
+// el usuario completa o corrige sus datos de contacto y elige que avisos push recibe (RF-05 y RF-06).
+// El RUT lo pide el bloque de firmas del talonario y se le muestra al cliente en el aviso. El correo no se cambia
+// aqui: es el inicio de sesion. `avisos` es { tipo: true|false } solo con los avisos de su rol (utils/avisosPerfil.js).
 router.patch('/mi-perfil', verifyToken, async (req, res) => {
-    const { rut, telefono_whatsapp } = req.body;
-    const errCuerpo = validarCuerpo(req.body, { textos: { rut: 20, telefono_whatsapp: 30 } });
+    const { rut, telefono_whatsapp, nombre, avisos } = req.body;
+    const errCuerpo = validarCuerpo(req.body, { textos: { rut: 20, telefono_whatsapp: 30, nombre: 150 } });
     if (errCuerpo) return res.status(400).json({ error: errCuerpo });
-    if (rut === undefined && telefono_whatsapp === undefined) {
-        return res.status(400).json({ error: 'Indique rut y/o telefono_whatsapp' });
+    if ([rut, telefono_whatsapp, nombre, avisos].every((v) => v === undefined)) {
+        return res.status(400).json({ error: 'Indique rut, telefono_whatsapp, nombre y/o avisos' });
     }
     // un RUT con el digito verificador mal escrito se rechaza (vacio sigue valiendo: no cambia nada)
     if (typeof rut === 'string' && rut.trim() !== '' && !rutValido(rut)) {
         return res.status(400).json({ error: MENSAJE_RUT_INVALIDO });
     }
-    const result = await pool.query(
-        `UPDATE usuarios
-             SET rut = COALESCE($1, rut), telefono_whatsapp = COALESCE($2, telefono_whatsapp)
-             WHERE id = $3
-             RETURNING id, nombre, email, rol, rut, telefono_whatsapp`,
-        [
-            rut === undefined ? null : (String(rut).trim() || null),
-            telefono_whatsapp === undefined ? null : (String(telefono_whatsapp).trim() || null),
-            req.user.id,
-        ]
-    );
-    res.json(result.rows[0]);
+    if (nombre !== undefined && String(nombre).trim() === '') {
+        return res.status(400).json({ error: 'El nombre no puede quedar vacío' });
+    }
+    let cambioAvisos = null;
+    if (avisos !== undefined) {
+        const valido = validarCambioAvisos(req.user.rol, avisos);
+        if (valido.error) return res.status(400).json({ error: valido.error });
+        cambioAvisos = valido.cambios;
+    }
+    const client = await pool.connect();
+    try {
+        await client.query('BEGIN');
+        // se bloquea la fila: dos cambios de avisos a la vez no deben pisarse
+        const actual = await client.query('SELECT avisos_silenciados FROM usuarios WHERE id = $1 FOR UPDATE', [req.user.id]);
+        if (actual.rows.length === 0) {
+            await client.query('ROLLBACK');
+            return res.status(404).json({ error: 'Usuario no encontrado' });
+        }
+        const nuevos = cambioAvisos ? aplicarCambioAvisos(actual.rows[0].avisos_silenciados, cambioAvisos) : null;
+        const result = await client.query(
+            `UPDATE usuarios
+                 SET rut = COALESCE($1, rut),
+                     telefono_whatsapp = COALESCE($2, telefono_whatsapp),
+                     nombre = COALESCE($3, nombre),
+                     avisos_silenciados = COALESCE($4::text[], avisos_silenciados),
+                     recibe_alertas_mantencion = COALESCE($5::boolean, recibe_alertas_mantencion)
+                 WHERE id = $6
+                 RETURNING ${COLUMNAS_PERFIL}`,
+            [
+                rut === undefined ? null : (String(rut).trim() || null),
+                telefono_whatsapp === undefined ? null : (String(telefono_whatsapp).trim() || null),
+                nombre === undefined ? null : String(nombre).trim(),
+                nuevos ? nuevos.avisosSilenciados : null,
+                nuevos && nuevos.recibeMantencion !== undefined ? nuevos.recibeMantencion : null,
+                req.user.id,
+            ]
+        );
+        await client.query('COMMIT');
+        res.json(perfilParaRespuesta(result.rows[0]));
+    } catch (err) {
+        await client.query('ROLLBACK').catch(() => {});
+        throw err;
+    } finally {
+        client.release();
+    }
 });
 
 // quien recibe el aviso de mantencion proxima y por donde.

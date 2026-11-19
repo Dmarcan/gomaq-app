@@ -159,13 +159,29 @@ class _AdminDashboardScreenState extends State<AdminDashboardScreen> {
             child: Row(
               children: [
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(auth.nombre ?? '',
-                          style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
-                      Text(_etiquetaRol(auth.rol), style: const TextStyle(color: Colors.white70, fontSize: 12)),
-                    ],
+                  // el nombre y el rol abren "Mi perfil y mis avisos" (sin sumar otro icono a una barra ya apretada)
+                  child: Tooltip(
+                    message: 'Mi perfil y mis avisos',
+                    child: Semantics(
+                      button: true,
+                      label: 'Mi perfil y mis avisos, ${auth.nombre ?? ''}',
+                      excludeSemantics: true,
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(6),
+                        onTap: () => context.go('/perfil'),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(auth.nombre ?? '',
+                                  style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w600)),
+                              Text(_etiquetaRol(auth.rol), style: const TextStyle(color: Colors.white70, fontSize: 12)),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
                 const BotonAvisos(color: Colors.white70, tamano: 18),

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'api_client.dart';
@@ -58,6 +59,29 @@ class AuthService extends ChangeNotifier {
     }
     _verificandoSesion = false;
     notifyListeners();
+  }
+
+  /// El nombre cambió desde "Mi perfil y mis avisos": se actualiza aquí al instante y, en segundo plano, en el usuario
+  /// guardado, para que el menú lo muestre ya y no recién al volver a entrar. No espera al almacenamiento: si falla,
+  /// el nombre queda cambiado en esta sesión.
+  void actualizarNombre(String nombre) {
+    _nombre = nombre;
+    notifyListeners();
+    unawaited(_guardarNombre(nombre));
+  }
+
+  Future<void> _guardarNombre(String nombre) async {
+    try {
+      final guardado = await ApiClient.instance.leerUsuario();
+      if (guardado == null) return;
+      final usuario = jsonDecode(guardado);
+      if (usuario is Map) {
+        usuario['nombre'] = nombre;
+        await ApiClient.instance.guardarUsuario(jsonEncode(usuario));
+      }
+    } catch (_) {
+      // sin almacenamiento
+    }
   }
 
   Future<void> login(String email, String password) async {

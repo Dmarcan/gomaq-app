@@ -158,7 +158,7 @@ function clasificarErrorFcm({ status, cuerpo, reintentarEn = null }) {
  * Motivo por el que un aviso push ya no debe enviarse, o null si sigue vigente.
  * @param {object} e
  * @param {{tipo?:string, usuario_id?:number, created_at?:Date|string}} e.aviso
- * @param {object|null} e.dispositivo  {activo, usuario_id, estado_cuenta, sesion_id, sesion_revocada_at, sesion_expira_at} o null si no existe
+ * @param {object|null} e.dispositivo  {activo, usuario_id, estado_cuenta, avisos_silenciados, sesion_id, sesion_revocada_at, sesion_expira_at} o null si no existe
  * @param {boolean} [e.otSinAsignar]   solo para ot_disponible: la OT sigue pendiente y sin tecnico
  */
 function motivoDescarte({ aviso, dispositivo, otSinAsignar = true }, ahora = new Date()) {
@@ -168,6 +168,10 @@ function motivoDescarte({ aviso, dispositivo, otSinAsignar = true }, ahora = new
         return 'El dispositivo ahora es de otro usuario';
     }
     if (dispositivo.estado_cuenta !== 'activo') return 'La cuenta ya no esta activa';
+    // el usuario puede apagar el tipo (Mi perfil y mis avisos) despues de que el aviso se encolo
+    if (Array.isArray(dispositivo.avisos_silenciados) && dispositivo.avisos_silenciados.includes(aviso.tipo)) {
+        return 'El usuario silencio este aviso';
+    }
     // el destino se revisa de nuevo con los datos de ahora: la app, el rol y (avisos al cliente) la empresa
     const destino = destinoPush(aviso.tipo);
     if (!destino) return 'El tipo de aviso no tiene push';

@@ -223,6 +223,18 @@ El correo que recibe el cliente con su factura de reparación puede llevar, junt
 - **Worker:** un correo con fotos tiene un plazo de envío mayor (`NOTIF_TIMEOUT_FOTOS_MS`, 60 s por defecto; el resto sigue en `NOTIF_TIMEOUT_MS`) y el plazo de toma de una fila se calcula con ese valor.
 - **Dependencia nueva:** `sharp` 0.35.5 (Apache-2.0), sin scripts de instalación; trae binarios precompilados por plataforma (`@img/sharp-*`). Las dos imágenes (`Dockerfile` y `Dockerfile.worker`) son `node:22-bookworm-slim` (Linux glibc), donde usa el binario `linux-x64`. Verificado en producción el 19-11-2026: un correo con dos fotos y el PDF salió sin error desde `gomaq-worker`.
 
+### Mi perfil y mis avisos (RF-05 y RF-06)
+
+Pantalla `/perfil` del panel para administrativo y gerente, que se abre con el nombre del usuario en la parte baja del menú. Antes el interruptor de alertas de mantención solo se podía cambiar por la API (`PATCH /api/usuarios/:id/alertas`) y el panel no tenía ninguna pantalla de perfil propio.
+
+- **Mis datos:** nombre y teléfono (se corrigen y se guardan al pulsar "Guardar cambios"; un teléfono vacío no se envía, no se puede borrar). El correo se ve pero no se cambia desde aquí: es el inicio de sesión. El RUT sigue pudiéndose completar desde la app del mecánico.
+- **Mis avisos:** un interruptor por cada aviso push que le llega al rol del usuario. La lista sale de `DESTINOS_PUSH` (`utils/push.js`) con el título y la explicación de `utils/avisosPerfil.js`; un test falla si se agrega un tipo de aviso sin su texto. El correo de la factura al cliente no es un aviso push y no se configura aquí.
+- **API:** `GET /api/usuarios/mi-perfil` devuelve además `avisos` (`[{tipo, titulo, descripcion, activo}]`, solo los de su rol). `PATCH /api/usuarios/mi-perfil` acepta `nombre` y `avisos` (`{ tipo: true|false }`) además de `rut` y `telefono_whatsapp`; un tipo que no es de su rol, uno inventado o un valor que no es booleano responde 400 sin cambiar nada. La app del mecánico, que solo manda teléfono o RUT, sigue funcionando.
+- **Dónde se guarda (migración 049):** `usuarios.avisos_silenciados TEXT[]` (vacío = recibe todos). La mantención próxima sigue gobernada por `recibe_alertas_mantencion` (migración 012) y la pantalla la muestra como un interruptor más.
+- **Dónde se aplica:** al encolar (`utils/avisos.js`: `encolarAMecanico`, `encolarADispositivos` y `avisarOtDisponible` excluyen a quien silenció ese tipo) y otra vez justo antes de enviar (`motivoDescarte` cancela un aviso ya encolado que el usuario apagó después, con "El usuario silenció este aviso").
+- **Falta:** la app del mecánico y el portal del cliente no tienen esta pantalla (la API ya sirve para ambos).
+- **No verificado:** la pantalla contra el panel desplegado y la migración en producción.
+
 ### Reenviar el correo de una factura desde Notificaciones
 
 Cada fila de **correo de factura** (canal correo, tipo `factura_emitida`) de la pantalla Notificaciones tiene un botón **Reenviar** para el administrativo, además del que ya había en las facturas encontradas con Buscar.

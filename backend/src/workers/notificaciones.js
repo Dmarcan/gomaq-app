@@ -174,7 +174,7 @@ async function motivoDescartePush(fila, payload) {
     let dispositivo = null;
     if (Number.isInteger(id)) {
         const r = await pool.query(
-            `SELECT d.activo, d.app, d.usuario_id, d.sesion_id, u.rol::text AS rol, u.cliente_id, u.estado_cuenta, s.revocada_at AS sesion_revocada_at, s.expira_at AS sesion_expira_at
+            `SELECT d.activo, d.app, d.usuario_id, d.sesion_id, u.rol::text AS rol, u.cliente_id, u.estado_cuenta, u.avisos_silenciados, s.revocada_at AS sesion_revocada_at, s.expira_at AS sesion_expira_at
              FROM dispositivos_push d
              JOIN usuarios u ON u.id = d.usuario_id
              LEFT JOIN sesiones s ON s.id = d.sesion_id

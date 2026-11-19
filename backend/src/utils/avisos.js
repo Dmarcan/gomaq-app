@@ -70,8 +70,9 @@ async function encolarAMecanico(client, mecanicoId, payload) {
     const r = await client.query(
         `SELECT d.id FROM dispositivos_push d JOIN usuarios u ON u.id = d.usuario_id
          WHERE d.usuario_id = $1 AND d.activo AND d.app = 'terreno' AND u.rol = 'mecanico' AND u.estado_cuenta = 'activo'
+           AND NOT ($2::text = ANY(u.avisos_silenciados))
          ORDER BY d.id`,
-        [mecanicoId]
+        [mecanicoId, payload.tipo]
     );
     let encoladas = 0;
     for (const d of r.rows) {
@@ -109,8 +110,9 @@ async function encolarADispositivos(client, payload, { excluirUsuarioId = null, 
            AND ($3::int IS NULL OR u.id <> $3::int)
            AND ($4::int IS NULL OR u.cliente_id = $4::int)
            AND (NOT $5::boolean OR u.recibe_alertas_mantencion = true)
+           AND NOT ($6::text = ANY(u.avisos_silenciados))
          ORDER BY d.id`,
-        [destino.app, destino.roles, excluirUsuarioId, clienteId, soloAlertasMantencion]
+        [destino.app, destino.roles, excluirUsuarioId, clienteId, soloAlertasMantencion, tipo]
     );
     const vistos = new Set();
     let encoladas = 0;
@@ -182,8 +184,9 @@ async function avisarOtDisponible(client, ordenId) {
         `SELECT d.id, d.usuario_id FROM dispositivos_push d JOIN usuarios u ON u.id = d.usuario_id
          WHERE d.activo AND d.app = 'terreno' AND u.rol = 'mecanico' AND u.estado_cuenta = 'activo'
            AND NOT EXISTS (SELECT 1 FROM ordenes_trabajo o WHERE o.mecanico_id = u.id AND o.estado::text = ANY($1::text[]))
+           AND NOT ($2::text = ANY(u.avisos_silenciados))
          ORDER BY d.id`,
-        [OCUPADO]
+        [OCUPADO, TIPOS_AVISO.OT_DISPONIBLE]
     );
     let encoladas = 0;
     for (const d of r.rows) {
