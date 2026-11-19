@@ -201,6 +201,28 @@ test('sin foto_ids el correo se encola como siempre, sin el campo', async (t) =>
     assert.equal('foto_ids' in aviso.payload, false);
 });
 
+test('el aviso lleva las fechas de emision y vencimiento (para el resumen del correo), y sin ellas queda en null', async (t) => {
+    if (!requiereBase(t)) return;
+    const conFechas = await crearFacturaConFotos();
+    await pool.query(`UPDATE facturas SET fecha_emision = '2026-11-19', fecha_vencimiento = '2026-12-19' WHERE id = $1`, [conFechas.factura]);
+    const sinFechas = await crearFacturaConFotos();
+    for (const { factura } of [conFechas, sinFechas]) {
+        assert.equal((await llamar('POST', `/api/facturacion/${factura}/autorizar-envio`, tokens.administrativo, {})).status, 200);
+    }
+    const payloadDe = async (factura) => (await pool.query(
+        `SELECT payload FROM notificaciones_pendientes WHERE payload->>'tipo' = 'factura_emitida' AND payload->>'factura_id' = $1::text`, [factura]
+    )).rows[0].payload;
+    const a = await payloadDe(conFechas.factura);
+    assert.equal(a.fecha_emision, '2026-11-19');
+    assert.equal(a.fecha_vencimiento, '2026-12-19');
+    const b = await payloadDe(sinFechas.factura);
+    assert.equal(b.fecha_emision, null);
+    assert.equal(b.fecha_vencimiento, null);
+    // el asunto propuesto por el servidor ya viene con la orden de trabajo
+    const vista = await llamar('GET', `/api/facturacion/${conFechas.factura}/vista-previa`, tokens.gerente);
+    assert.match(vista.body.asunto, new RegExp(`^Factura folio .+ · Orden de trabajo #${conFechas.ot} · GOMAQ$`));
+});
+
 test('una factura que no existe responde 404 y no encola nada, con o sin fotos en la peticion', async (t) => {
     if (!requiereBase(t)) return;
     const inexistente = 987654321;

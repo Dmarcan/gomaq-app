@@ -15,10 +15,19 @@ test('la plantilla escapa el HTML del cuerpo y de la linea de contacto', () => {
     assert.match(c.texto, /Hola <script>/); // el texto plano va tal cual
 });
 
-test('el pie pide no responder y usa el contacto, con xxxx por defecto', () => {
-    assert.match(armarCorreoFactura({ asunto: 'A', cuerpo: 'C', contacto: 'ayuda@gomaq.cl' }).texto, /no responda a este correo.*ayuda@gomaq\.cl/);
-    assert.match(armarCorreoFactura({ asunto: 'A', cuerpo: 'C' }).texto, /escriba a xxxx\./);
-    assert.match(armarCorreoFactura({ asunto: 'A', cuerpo: 'C', contacto: '  ' }).html, /xxxx/);
+test('con contacto valido el pie invita a responder y el correo lleva reply_to', () => {
+    const c = armarCorreoFactura({ asunto: 'A', cuerpo: 'C', contacto: 'ayuda@gomaq.cl' });
+    assert.match(c.texto, /Puede responder a este correo o escribir a ayuda@gomaq\.cl\./);
+    assert.equal(c.replyTo, 'ayuda@gomaq.cl');
+});
+
+test('sin contacto valido no hay reply_to, el pie no inventa una direccion y no queda ningun xxxx', () => {
+    for (const contacto of [undefined, '', '  ', 'xxxx', 'no es un correo', 'a@b', 'a b@c.cl', '<a@b.cl>']) {
+        const c = armarCorreoFactura({ asunto: 'A', cuerpo: 'C', contacto });
+        assert.equal(c.replyTo, null, `contacto ${JSON.stringify(contacto)}`);
+        assert.match(c.texto, /no responda a este correo/);
+        assert.doesNotMatch(c.texto + c.html, /xxxx/);
+    }
 });
 
 test('escaparHtml tolera valores no texto', () => {

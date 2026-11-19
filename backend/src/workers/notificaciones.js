@@ -1,6 +1,6 @@
 const pool = require('../config/db');
 const { planificarReintento, plazoTomaSegundos, conTimeout } = require('../utils/reintentosNotificacion');
-const { armarCorreoFactura } = require('../utils/plantillaCorreoFactura');
+const { armarEnvioFactura, leerLogoCorreo } = require('../utils/envioFactura');
 const { enviarCorreoResend } = require('../services/correoResend');
 const { enviarPushFcm, leerCuentaServicio } = require('../services/fcm');
 const { armarMensajePush, motivoDescarte } = require('../utils/push');
@@ -121,13 +121,12 @@ async function enviarNotificacion(notificacion, signal) {
     const apiKey = process.env.RESEND_API_KEY;
     if (!apiKey) throw errorConfiguracion('Falta RESEND_API_KEY en el worker');
 
-    const correo = armarCorreoFactura({
-        asunto: payload.asunto,
-        cuerpo: payload.cuerpo,
-        contacto: process.env.CORREO_CONTACTO,
-    });
     const pdf = await adjuntarPdfFactura(payload.factura_id, signal);
     const fotos = await adjuntarFotosFactura(payload, signal);
+    // el HTML se arma despues de adjuntar: el resumen cuenta las fotos que de verdad van
+    const { correo, adjuntos } = armarEnvioFactura({
+        payload, pdf, fotos: fotos.adjuntos, logo: leerLogoCorreo(), contacto: process.env.CORREO_CONTACTO,
+    });
     await enviarCorreoResend({
         apiKey,
         desde: process.env.CORREO_REMITENTE || 'onboarding@resend.dev',
@@ -135,7 +134,8 @@ async function enviarNotificacion(notificacion, signal) {
         asunto: correo.asunto,
         texto: correo.texto,
         html: correo.html,
-        adjuntos: [...pdf, ...fotos.adjuntos],
+        adjuntos,
+        replyTo: correo.replyTo,
         claveIdempotencia: `gomaq-notif-${notificacion.id}`,
         signal,
     });

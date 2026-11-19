@@ -24,13 +24,18 @@ function textoPorDefecto(factura) {
     const desde = formatearDia(factura.periodo_desde);
     const hasta = formatearDia(factura.periodo_hasta);
     let concepto;
-    if (factura.orden_trabajo_id) concepto = `la orden de trabajo #${factura.orden_trabajo_id}`;
-    else if (factura.maquinaria_codigo) concepto = `el arriendo del equipo ${factura.maquinaria_codigo}`;
-    else concepto = 'su servicio';
+    let asuntoConcepto = '';
+    if (factura.orden_trabajo_id) {
+        concepto = `la orden de trabajo #${factura.orden_trabajo_id}`;
+        asuntoConcepto = ` · Orden de trabajo #${factura.orden_trabajo_id}`;
+    } else if (factura.maquinaria_codigo) {
+        concepto = `el arriendo del equipo ${factura.maquinaria_codigo}`;
+        asuntoConcepto = ` · Arriendo equipo ${factura.maquinaria_codigo}`;
+    } else concepto = 'su servicio';
     const periodo = desde && hasta ? `, por el período del ${desde} al ${hasta}` : '';
     const saludo = factura.cliente_nombre ? `Estimado/a ${factura.cliente_nombre}:` : 'Estimado/a cliente:';
     return {
-        asunto: `Factura folio ${folio} - GOMAQ Maquinarias`,
+        asunto: `Factura folio ${folio}${asuntoConcepto} · GOMAQ`,
         cuerpo: `${saludo}\n\nAdjuntamos la factura folio ${folio} correspondiente a ${concepto}${periodo}.`
             + '\n\nGOMAQ Maquinarias',
     };
@@ -108,6 +113,7 @@ async function cancelarCorreosPrevios(db, facturaId, motivo) {
 const CONSULTA_FACTURA = `
     SELECT f.id, f.folio, f.monto, f.orden_trabajo_id, f.maquinaria_id,
            to_char(f.periodo_desde, 'YYYY-MM-DD') AS periodo_desde, to_char(f.periodo_hasta, 'YYYY-MM-DD') AS periodo_hasta,
+           to_char(f.fecha_emision, 'YYYY-MM-DD') AS fecha_emision, to_char(f.fecha_vencimiento, 'YYYY-MM-DD') AS fecha_vencimiento,
            m.codigo AS maquinaria_codigo, ot.maquinaria_id AS ot_maquinaria_id,
            c.nombre AS cliente_nombre, c.email AS cliente_email
     FROM facturas f
@@ -259,6 +265,8 @@ async function encolarCorreoFactura(pool, { facturaId, ordenId = null, asunto, c
                 cliente_nombre: factura.cliente_nombre,
                 periodo_desde: factura.periodo_desde,
                 periodo_hasta: factura.periodo_hasta,
+                fecha_emision: factura.fecha_emision,
+                fecha_vencimiento: factura.fecha_vencimiento,
                 asunto: texto.asunto,
                 cuerpo: texto.cuerpo,
                 ...(fotoIds.length > 0 ? { foto_ids: fotoIds } : {}),

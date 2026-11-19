@@ -221,8 +221,18 @@ El correo que recibe el cliente con su factura de reparación puede llevar, junt
 - **Privacidad:** la re-codificación borra los metadatos EXIF, incluidas las coordenadas GPS que traiga la foto. En el correo van con nombres `antes-1.jpg`, `despues-1.jpg`; en el aviso (`notificaciones_pendientes.payload`) solo viajan los ids, y el worker lee únicamente fotos de la orden de esa factura.
 - **Fotos que faltan:** si al enviar una foto ya no existe, el correo sale sin ella y queda anotado en `ultimo_error` ("Enviado sin N foto(s)..."), visible en Notificaciones. Que las fotos no quepan en el tope al enviar es un error permanente.
 - **Worker:** un correo con fotos tiene un plazo de envío mayor (`NOTIF_TIMEOUT_FOTOS_MS`, 60 s por defecto; el resto sigue en `NOTIF_TIMEOUT_MS`) y el plazo de toma de una fila se calcula con ese valor.
-- **Dependencia nueva:** `sharp` 0.35.5 (Apache-2.0), sin scripts de instalación; trae binarios precompilados por plataforma (`@img/sharp-*`). Las dos imágenes (`Dockerfile` y `Dockerfile.worker`) son `node:22-bookworm-slim` (Linux glibc), donde usa el binario `linux-x64`. No verificado en Railway hasta desplegar.
-- **No verificado:** un correo real con fotos contra Resend y un cliente de correo. Las pruebas usan Supabase y el proveedor simulados.
+- **Dependencia nueva:** `sharp` 0.35.5 (Apache-2.0), sin scripts de instalación; trae binarios precompilados por plataforma (`@img/sharp-*`). Las dos imágenes (`Dockerfile` y `Dockerfile.worker`) son `node:22-bookworm-slim` (Linux glibc), donde usa el binario `linux-x64`. Verificado en producción el 19-11-2026: un correo con dos fotos y el PDF salió sin error desde `gomaq-worker`.
+
+### Diseño del correo de la factura
+
+`backend/src/utils/plantillaCorreoFactura.js` (HTML y texto plano) y `backend/src/utils/envioFactura.js` (adjuntos). Tablas de una columna con estilos en línea, que se ven igual en Gmail, Outlook y el celular (verificado a 375 px y en escritorio en un navegador; no en cada cliente de correo).
+
+- **Encabezado de marca:** franja oscura (`#1B1210`) con el logo de GOMAQ y una línea naranja (`#EA5B1F`). El logo va **incrustado** (adjunto de Resend con `content_id: logo-gomaq`, citado en el HTML como `cid:logo-gomaq`), así que no depende de ninguna URL pública. El archivo es `backend/src/assets/correo/logo_gomaq.png`, copia de `panel/assets/2.0x/logo_gomaq_sobre_oscuro.png` (si se cambia el logo del panel, hay que copiarlo aquí). Si el archivo no se puede leer, el correo sale igual con el nombre de la empresa en texto. Un cliente que bloquee imágenes ve el texto alternativo "GOMAQ Maquinarias".
+- **Tarjeta de resumen:** folio, monto total (en pesos con punto de miles), orden de trabajo con su equipo o arriendo del equipo con su período, fechas de emisión y vencimiento (solo en envíos nuevos: se guardan en el aviso al encolarlo) y las fotos que **de verdad** van adjuntas (se cuentan de los adjuntos al enviar, no de lo pedido). Una fila sin dato no se muestra. Nunca lleva valorización, costos ni datos del mecánico.
+- **Asunto por defecto:** `Factura folio N · Orden de trabajo #id · GOMAQ` (o `· Arriendo equipo CÓDIGO ·` en una factura de arriendo). El administrativo sigue pudiendo editar asunto y mensaje.
+- **Responder:** con `CORREO_CONTACTO` válido (una dirección sola, sin nombre ni comas) el correo lleva `reply_to` y el pie dice "Puede responder a este correo o escribir a ...". Las respuestas llegan **al buzón de GOMAQ**, no al sistema; ese buzón tiene que leerse. Sin un contacto válido no hay `reply_to` y el pie dice solo que no se responda (ya no aparece el `xxxx`).
+- **Nombre del remitente:** lo define la variable `CORREO_REMITENTE` (por ejemplo `GOMAQ Maquinarias <gomaq@avisos.example.com>`), no el código.
+- **No verificado:** el campo `reply_to` y el logo incrustado contra Resend y Gmail reales (las pruebas usan el proveedor simulado), y cómo muestra Gmail el logo incrustado (como imagen o como adjunto).
 
 ## Qué falta (en orden de importancia)
 

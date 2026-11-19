@@ -18,7 +18,7 @@ describe('formatearDia', () => {
 describe('textoPorDefecto', () => {
     test('factura de reparacion sin periodo', () => {
         const t = textoPorDefecto({ folio: 'F-10', orden_trabajo_id: 7, cliente_nombre: 'Acsa' });
-        assert.equal(t.asunto, 'Factura folio F-10 - GOMAQ Maquinarias');
+        assert.equal(t.asunto, 'Factura folio F-10 · Orden de trabajo #7 · GOMAQ');
         assert.match(t.cuerpo, /Estimado\/a Acsa:/);
         assert.match(t.cuerpo, /orden de trabajo #7/);
         assert.doesNotMatch(t.cuerpo, /período/);
@@ -28,6 +28,7 @@ describe('textoPorDefecto', () => {
         const t = textoPorDefecto({
             folio: 'F-11', maquinaria_codigo: 'GH-204', periodo_desde: '2026-09-02', periodo_hasta: '2026-10-05', cliente_nombre: null,
         });
+        assert.equal(t.asunto, 'Factura folio F-11 · Arriendo equipo GH-204 · GOMAQ');
         assert.match(t.cuerpo, /arriendo del equipo GH-204/);
         assert.match(t.cuerpo, /período del 02-09-2026 al 05-10-2026/);
         assert.match(t.cuerpo, /Estimado\/a cliente:/);
@@ -35,6 +36,7 @@ describe('textoPorDefecto', () => {
 
     test('sin orden ni equipo usa un concepto generico', () => {
         assert.match(textoPorDefecto({ folio: 'F-12' }).cuerpo, /su servicio/);
+        assert.equal(textoPorDefecto({ folio: 'F-12' }).asunto, 'Factura folio F-12 · GOMAQ');
     });
 });
 
