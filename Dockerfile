@@ -32,8 +32,16 @@ RUN flutter pub get --enforce-lockfile
 COPY comun/ comun/
 COPY panel/ panel/
 WORKDIR /app/panel
+# Configuracion publica de Firebase para el push web (no son secretos: viajan dentro del JS del panel). Railway
+# pasa las variables del servicio gomaq-app como argumentos de build; si falta alguna, el push web queda apagado
+# y el panel funciona igual (ver panel/lib/services/push_config.dart).
+ARG FIREBASE_API_KEY=
+ARG FIREBASE_APP_ID=
+ARG FIREBASE_MESSAGING_SENDER_ID=
+ARG FIREBASE_PROJECT_ID=
+ARG FIREBASE_VAPID_KEY=
 # URL vacia = rutas relativas: el panel llama a la API en su mismo origen
-RUN flutter build web --release --dart-define=GOMAQ_API_URL=
+RUN flutter build web --release --dart-define=GOMAQ_API_URL=     --dart-define=FIREBASE_API_KEY=${FIREBASE_API_KEY}     --dart-define=FIREBASE_APP_ID=${FIREBASE_APP_ID}     --dart-define=FIREBASE_MESSAGING_SENDER_ID=${FIREBASE_MESSAGING_SENDER_ID}     --dart-define=FIREBASE_PROJECT_ID=${FIREBASE_PROJECT_ID}     --dart-define=FIREBASE_VAPID_KEY=${FIREBASE_VAPID_KEY}
 
 # ---------- Etapa 2: backend ----------
 FROM node:22-bookworm-slim

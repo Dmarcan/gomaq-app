@@ -33,6 +33,14 @@ export default defineRailway(() => {
       RESEND_API_KEY: preserve(),
       CORREO_REMITENTE: preserve(),
       CORREO_CONTACTO: preserve(),
+      // push (FCM): flag que enciende el encolado de push, y la configuracion publica de Firebase que el Dockerfile
+      // usa como argumentos de build del panel web (no son secretos)
+      PUSH_HABILITADO: preserve(),
+      FIREBASE_API_KEY: preserve(),
+      FIREBASE_APP_ID: preserve(),
+      FIREBASE_MESSAGING_SENDER_ID: preserve(),
+      FIREBASE_PROJECT_ID: preserve(),
+      FIREBASE_VAPID_KEY: preserve(),
     },
   });
   // Worker de notificaciones: mismo repo, sin HTTP (sin healthcheck ni dominio) y siempre activo.
@@ -55,6 +63,8 @@ export default defineRailway(() => {
       SUPABASE_SERVICE_KEY: preserve(),
       CORREO_REMITENTE: preserve(),
       CORREO_CONTACTO: preserve(),
+      // cuenta de servicio de Firebase (JSON en base64) para enviar push: secreto, el valor vive solo en Railway
+      FCM_CUENTA_SERVICIO: preserve(),
     },
   });
 
