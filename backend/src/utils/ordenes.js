@@ -24,23 +24,6 @@ async function verificarDuenoOrden(ordenId, mecanicoId, { db = pool, bloquear = 
 /** Respuesta comun cuando el mecanico intenta modificar una OT ya cerrada. */
 const MENSAJE_OT_CERRADA = 'La orden ya está cerrada y no se puede modificar';
 
-/**
- * Canal y destinatario para avisarle a un cliente: WhatsApp si hay telefono, si no correo.
- * Devuelve null cuando no hay forma de contactarlo, y en ese caso simplemente no se encola
- * nada (la OT igual avanza: el aviso nunca bloquea el evento de negocio).
- *
- * Se usa desde /asignar (HU-07) y desde /finalizar.
- */
-async function contactoCliente(client, clienteId) {
-    if (!clienteId) return null;
-    const result = await client.query('SELECT telefono, email FROM clientes WHERE id = $1', [clienteId]);
-    const cliente = result.rows[0];
-    if (!cliente) return null;
-    if (cliente.telefono) return { canal: 'whatsapp', destinatario: cliente.telefono };
-    if (cliente.email) return { canal: 'email', destinatario: cliente.email };
-    return null;
-}
-
 // Predicados que comparten una lista y el numero que el dashboard muestra de ella: que el contador
 // y la lista cuenten lo mismo es lo que se prueba en test/escritura.test.js.
 /** Orden creada por la oficina o por un cliente que todavia no tiene mecanico (alias `ot`). */
@@ -53,6 +36,6 @@ const SQL_OT_LISTA_FACTURAR = `ot.facturable = true AND ot.valorizacion IS NOT N
     AND NOT EXISTS (SELECT 1 FROM facturas f WHERE f.orden_trabajo_id = ot.id)`;
 
 module.exports = {
-    verificarDuenoOrden, contactoCliente, MENSAJE_OT_CERRADA,
+    verificarDuenoOrden, MENSAJE_OT_CERRADA,
     SQL_OT_SIN_ASIGNAR, SQL_OT_POR_VALORIZAR, SQL_OT_LISTA_FACTURAR,
 };

@@ -16,10 +16,9 @@ const TIMEOUT_ENVIO_MS = Math.max(1000, Number(process.env.NOTIF_TIMEOUT_MS) || 
 // cada cuanto deja una linea de "sigo vivo" en el log cuando no hay nada que enviar
 const LATIDO_MS = 10 * 60 * 1000;
 
-// Envio real. Hay proveedor para el correo de factura (Resend, por API HTTP) y para el push de OT
-// (ot_asignada, ot_reasignada, ot_disponible) por FCM. WhatsApp y el resto de los avisos internos
-// (ot_por_valorizar, factura_anulada, ajuste_inventario, mantencion_proxima, etc.; ver utils/avisos.js) aun
-// no tienen proveedor ni plantilla: un tipo sin plantilla falla como error permanente, no manda un mensaje vacio.
+// Envio real. Hay proveedor para el correo de factura (Resend, por API HTTP) y para el push por FCM de los tipos
+// de utils/push.js (mecanico, gerencia, administrativo y cliente). WhatsApp no tiene proveedor ni plantilla: un
+// tipo sin plantilla falla como error permanente, no manda un mensaje vacio.
 // Push: FCM_CUENTA_SERVICIO (JSON de la cuenta de servicio en base64) solo en este servicio.
 // Configuracion: RESEND_API_KEY, CORREO_REMITENTE (en pruebas 'onboarding@resend.dev', que solo entrega
 // a la cuenta dueña de la clave) y CORREO_CONTACTO (correo al que escriben los clientes; el correo pide
@@ -112,14 +111,16 @@ function usarEnvio(fn) {
 // de camino, pasado este plazo otra instancia (o el mismo proceso al reiniciar) la retoma.
 const PLAZO_TOMA_SEGUNDOS = plazoTomaSegundos({ lote: LOTE, timeoutMs: TIMEOUT_ENVIO_MS });
 
-// Mira el dispositivo, su dueno, su sesion y (ot_disponible) la OT, y deja la decision a utils/push.js.
+// Mira el dispositivo (activo, app), su dueno (cuenta activa, rol, empresa), su sesion y (ot_disponible) la OT, y
+// deja la decision a utils/push.js: un tipo solo va a la app y a los roles de su destino (DESTINOS_PUSH), asi un
+// telefono de terreno no recibe avisos de gerencia ni del cliente, y el panel no recibe los del mecanico.
 // Devuelve el motivo para cancelar el aviso o null si sigue vigente.
 async function motivoDescartePush(fila, payload) {
     const id = Number(fila.destinatario);
     let dispositivo = null;
     if (Number.isInteger(id)) {
         const r = await pool.query(
-            `SELECT d.activo, d.usuario_id, d.sesion_id, u.estado_cuenta, s.revocada_at AS sesion_revocada_at, s.expira_at AS sesion_expira_at
+            `SELECT d.activo, d.app, d.usuario_id, d.sesion_id, u.rol::text AS rol, u.cliente_id, u.estado_cuenta, s.revocada_at AS sesion_revocada_at, s.expira_at AS sesion_expira_at
              FROM dispositivos_push d
              JOIN usuarios u ON u.id = d.usuario_id
              LEFT JOIN sesiones s ON s.id = d.sesion_id
@@ -134,7 +135,7 @@ async function motivoDescartePush(fila, payload) {
         otSinAsignar = ot.rows.length > 0;
     }
     return motivoDescarte({
-        aviso: { tipo: payload.tipo, usuario_id: payload.usuario_id, created_at: fila.created_at },
+        aviso: { tipo: payload.tipo, usuario_id: payload.usuario_id, cliente_id: payload.cliente_id, created_at: fila.created_at },
         dispositivo,
         otSinAsignar,
     });

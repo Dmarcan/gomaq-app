@@ -5343,7 +5343,7 @@ describe('bloque 5 (PR B): revision adversarial del correo de la factura', () =>
 describe('bloque 5 (parte C): avisos sin proveedor no se encolan', () => {
     // Desde la migracion 046 solo se encola lo que tiene envio real (el correo de factura, ver utils/avisos.js).
     // Estas pruebas conservan el recorrido de cada accion (estados y respuestas) y comprueban que no deja filas.
-    const TIPOS = ['ot_asignada', 'ot_reasignada', 'ot_disponible', 'ot_por_valorizar', 'factura_anulada', 'ajuste_inventario'];
+    const TIPOS = ['ot_asignada', 'ot_reasignada', 'ot_disponible', 'ot_por_valorizar', 'factura_anulada', 'ajuste_inventario', 'asistencia_nueva'];
     const SIN_PROVEEDOR = [...TIPOS, 'mecanico_asignado', 'ot_finalizada', 'cuenta_aprobada', 'mantencion_proxima'];
     const MARCA = { telefono: '+56911110000', telefonoDos: '+56922220000' };
     let inicio;
@@ -6970,8 +6970,8 @@ describe('push: dispositivos, avisos de OT y canal del worker', () => {
 
     const tokenFcm = () => `${crypto.randomUUID()}${crypto.randomUUID()}`.replace(/-/g, '');
 
-    async function llamar(metodo, ruta, token, cuerpo) {
-        const headers = { 'Content-Type': 'application/json' };
+    async function llamar(metodo, ruta, token, cuerpo, cabeceras = {}) {
+        const headers = { 'Content-Type': 'application/json', ...cabeceras };
         if (token) headers.Authorization = `Bearer ${token}`;
         const r = await fetch(`${base}${ruta}`, { method: metodo, headers, body: cuerpo === undefined ? undefined : JSON.stringify(cuerpo) });
         return leerRespuesta(r);
@@ -7346,4 +7346,361 @@ describe('push: dispositivos, avisos de OT y canal del worker', () => {
         assert.equal(fila.intentos, 0);
         assert.equal((await pool.query('SELECT activo FROM dispositivos_push WHERE id = $1', [d])).rows[0].activo, false);
     });
+    // ----- gerencia, administrativo y cliente (F3 y F4 del backend) -----
+
+    /** Cuenta de prueba de cualquier rol, con empresa si es cliente. Como crearUsuario, pero con `cliente_id` y nombre. */
+    async function crearUsuarioDe(rol, { clienteId = null, estado = 'activo', nombre = 'Prueba push' } = {}) {
+        const r = await pool.query(
+            `INSERT INTO usuarios (nombre, email, password_hash, rol, estado_cuenta, cliente_id)
+             VALUES ($1, $2, 'x', $3::rol_usuario, $4, $5) RETURNING id`,
+            [nombre, `push-${crypto.randomUUID()}@gomaq.test`, rol, estado, clienteId]
+        );
+        const id = r.rows[0].id;
+        datos.usuariosPush.push(id);
+        return { id, token: jwt.sign({ id, rol, cliente_id: clienteId }, process.env.JWT_SECRET, { expiresIn: '1h' }) };
+    }
+
+    /**
+     * Da un dispositivo del panel al gerente de la semilla (quien ejecuta la accion en las pruebas de exclusion) y lo
+     * borra al terminar: el usuario no es de la prueba, asi que su dispositivo no se limpia solo.
+     */
+    async function conGerenteDeSemilla(fn) {
+        const semilla = (await pool.query("SELECT id FROM usuarios WHERE email = 'admin@gomaq.test'")).rows[0].id;
+        const d = await crearDispositivo(semilla, 'panel');
+        try {
+            return await fn(d);
+        } finally {
+            await pool.query('DELETE FROM notificaciones_pendientes WHERE canal = $1 AND destinatario = $2', ['push', String(d)]);
+            await pool.query('DELETE FROM dispositivos_push WHERE id = $1', [d]);
+        }
+    }
+
+    /** Ids de los dispositivos que recibieron un aviso de una OT, solo de los `propios` (otras corridas pueden dejar los suyos). */
+    async function destinosPropios(ordenId, tipo, propios) {
+        const filas = await filasPush(ordenId, tipo);
+        const set = new Set(propios.map(Number));
+        return filas.map((f) => Number(f.destinatario)).filter((d) => set.has(d)).sort((x, y) => x - y);
+    }
+    const ordenados = (...ids) => ids.map(Number).sort((x, y) => x - y);
+
+    /** Los usuarios de oficina de una prueba, cada uno con su dispositivo del panel, y algunos que NO deben recibir. */
+    async function oficinaDePrueba() {
+        const g1 = await crearUsuarioDe('gerente');
+        const g2 = await crearUsuarioDe('gerente');
+        const adm = await crearUsuarioDe('administrativo');
+        const dG1 = await crearDispositivo(g1.id, 'panel');
+        const dG1b = await crearDispositivo(g1.id, 'panel');
+        const dG2 = await crearDispositivo(g2.id, 'panel');
+        const dAdm = await crearDispositivo(adm.id, 'panel');
+        // los que no reciben: cuenta inactiva, dispositivo apagado, dispositivo de la app terreno, mecanico y cliente
+        const inactivo = await crearUsuarioDe('administrativo', { estado: 'rechazado' });
+        const dInactivo = await crearDispositivo(inactivo.id, 'panel');
+        const apagado = await crearDispositivo(adm.id, 'panel');
+        await pool.query('UPDATE dispositivos_push SET activo = false WHERE id = $1', [apagado]);
+        const dTerreno = await crearDispositivo((await crearUsuarioDe('gerente')).id, 'terreno');
+        const dMecanico = await crearDispositivo((await crearUsuarioDe('mecanico')).id, 'panel');
+        const dCliente = await crearDispositivo((await crearUsuarioDe('cliente', { clienteId: await algunCliente() })).id, 'panel');
+        return {
+            g1, g2, adm, dG1, dG1b, dG2, dAdm,
+            reciben: [dG1, dG1b, dG2, dAdm],
+            recibenGerentes: [dG1, dG1b, dG2],
+            noReciben: [dInactivo, apagado, dTerreno, dMecanico, dCliente],
+        };
+    }
+
+    test('ot_por_valorizar: con el flag apagado no se encola nada; con el flag llega a gerentes y administrativos', async (t) => {
+        if (!requiereBase(t)) return;
+        const of = await oficinaDePrueba();
+        const cerrarConRepuesto = async () => {
+            const ot = await crearOt('en_reparacion');
+            await agregarLinea(ot, { facturable: 'si', precio_unitario: 1000 });
+            const r = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/finalizar`, 'mecanico', { observacion_final: 'listo' });
+            assert.equal(r.status, 200, JSON.stringify(r.body));
+            return ot;
+        };
+        const sinFlag = await cerrarConRepuesto();
+        assert.deepEqual(await filasPush(sinFlag, 'ot_por_valorizar'), []);
+
+        const ot = await conPush(cerrarConRepuesto);
+        assert.deepEqual(await destinosPropios(ot, 'ot_por_valorizar', [...of.reciben, ...of.noReciben]), ordenados(...of.reciben));
+        const filas = await filasPush(ot, 'ot_por_valorizar');
+        assert.ok(filas.every((f) => f.payload.usuario_id), 'cada fila lleva su usuario');
+        // el reintento del cierre (ya aplicado) no repite el aviso
+        const antes = filas.length;
+        await conPush(() => pedir('PATCH', `/api/ordenes-trabajo/${ot}/finalizar`, 'mecanico', { observacion_final: 'listo' }));
+        assert.equal((await filasPush(ot, 'ot_por_valorizar')).length, antes);
+    });
+
+    test('factura_anulada: solo a gerentes (no al administrativo) y no a quien la anula', async (t) => {
+        if (!requiereBase(t)) return;
+        const of = await oficinaDePrueba();
+        const ot = await crearOt();
+        await facturarDirecto(ot, `T-${crypto.randomUUID().slice(0, 8)}`);
+        const factura = (await pool.query('SELECT id FROM facturas WHERE orden_trabajo_id = $1', [ot])).rows[0];
+        // la anula el gerente de la semilla: sus dispositivos quedan fuera, los demas gerentes reciben
+        await conGerenteDeSemilla(async (dEjecuta) => {
+            const resp = await conPush(() => pedir('POST', `/api/ordenes-trabajo/${ot}/factura/${factura.id}/anular`, 'gerente',
+                { ...MOTIVO_VALIDO }, { 'Idempotency-Key': crypto.randomUUID() }));
+            assert.equal(resp.status, 200, JSON.stringify(resp.body));
+            assert.deepEqual(await destinosPropios(ot, 'factura_anulada', [...of.reciben, ...of.noReciben, dEjecuta]), ordenados(...of.recibenGerentes));
+        });
+        const [fila] = await filasPush(ot, 'factura_anulada');
+        assert.deepEqual(Object.keys(fila.payload).sort(), ['folio', 'orden_trabajo_id', 'tipo', 'usuario_id'], 'sin monto ni motivo');
+    });
+
+    test('factura_anulada con el flag apagado no encola nada', async (t) => {
+        if (!requiereBase(t)) return;
+        await oficinaDePrueba();
+        const ot = await crearOt();
+        await facturarDirecto(ot, `T-${crypto.randomUUID().slice(0, 8)}`);
+        const factura = (await pool.query('SELECT id FROM facturas WHERE orden_trabajo_id = $1', [ot])).rows[0];
+        const r = await pedir('POST', `/api/ordenes-trabajo/${ot}/factura/${factura.id}/anular`, 'administrativo', { ...MOTIVO_VALIDO }, { 'Idempotency-Key': crypto.randomUUID() });
+        assert.equal(r.status, 200);
+        assert.deepEqual(await filasPush(ot, 'factura_anulada'), []);
+    });
+
+    test('ajuste_inventario por perdida: a todos los gerentes con dispositivo y no al administrativo que registra el conteo', async (t) => {
+        if (!requiereBase(t)) return;
+        const of = await oficinaDePrueba();
+        const ubic = await pool.query("INSERT INTO ubicaciones_stock (nombre, tipo) VALUES ('Aviso push F3', 'bodega') RETURNING id");
+        datos.ubicaciones.push(ubic.rows[0].id);
+        const insumo = await pool.query("INSERT INTO insumos (nombre, unidad_medida) VALUES ('Insumo push F3', 'un') RETURNING id");
+        datos.insumos.push(insumo.rows[0].id);
+        await pool.query('INSERT INTO stock_ubicacion (ubicacion_id, insumo_id, cantidad) VALUES ($1, $2, 10)', [ubic.rows[0].id, insumo.rows[0].id]);
+        const contar = (contada, esperada) => pedir('POST', '/api/insumos/ajuste', 'administrativo', {
+            ubicacion_id: ubic.rows[0].id, insumo_id: insumo.rows[0].id, cantidad_contada: contada, cantidad_esperada: esperada,
+            motivo_codigo: 'perdida_robo', uuid_cliente: crypto.randomUUID(),
+        });
+        const delInsumo = async () => (await pool.query(
+            `SELECT destinatario FROM notificaciones_pendientes WHERE canal = 'push' AND payload->>'tipo' = 'ajuste_inventario'
+               AND payload->>'insumo_nombre' = 'Insumo push F3' AND created_at >= $1 ORDER BY id`, [inicio])).rows.map((f) => Number(f.destinatario));
+        assert.equal((await contar(8, 10)).status, 201, 'sin flag');
+        assert.deepEqual(await delInsumo(), []);
+        // el conteo solo lo registra el administrativo: el aviso es de gerencia y no le llega a el
+        const r = await conPush(() => contar(5, 8));
+        assert.equal(r.status, 201, JSON.stringify(r.body));
+        const propios = new Set([...of.reciben, ...of.noReciben].map(Number));
+        assert.deepEqual((await delInsumo()).filter((d) => propios.has(d)).sort((x, y) => x - y), ordenados(...of.recibenGerentes));
+    });
+
+    test('mantencion_proxima: a los dispositivos de quienes tienen el aviso encendido; solo se marca si se encolo algo', async (t) => {
+        if (!requiereBase(t)) return;
+        const { encolarAvisoMantencion } = require('../src/routes/horometro');
+        const quiere = await crearUsuarioDe('gerente');
+        const quiereAdm = await crearUsuarioDe('administrativo');
+        const noQuiere = await crearUsuarioDe('administrativo');
+        const mecanicoConAviso = await crearUsuarioDe('mecanico');
+        const dQuiere = await crearDispositivo(quiere.id, 'panel');
+        const dQuiereAdm = await crearDispositivo(quiereAdm.id, 'panel');
+        await crearDispositivo(noQuiere.id, 'panel');
+        await crearDispositivo(mecanicoConAviso.id, 'panel');
+        await pool.query('UPDATE usuarios SET recibe_alertas_mantencion = true WHERE id = ANY($1)', [[quiere.id, quiereAdm.id, mecanicoConAviso.id]]);
+        const equipo = await crearEquipo(null);
+        const maquinaria = { id: equipo.id, codigo: equipo.codigo, intervalo_mantencion_horas: 250 };
+        const estado = { horas_usadas: 240, horas_restantes: 10, vencida: false };
+        const enviada = async () => (await pool.query('SELECT alerta_mantencion_enviada AS e FROM maquinarias WHERE id = $1', [equipo.id])).rows[0].e;
+        const filas = async () => (await pool.query(
+            `SELECT destinatario FROM notificaciones_pendientes WHERE canal = 'push' AND payload->>'tipo' = 'mantencion_proxima'
+               AND (payload->>'maquinaria_id')::int = $1 ORDER BY id`, [equipo.id])).rows.map((f) => Number(f.destinatario));
+
+        assert.equal(await encolarAvisoMantencion(pool, maquinaria, estado), 0, 'sin flag');
+        assert.deepEqual(await filas(), []);
+        assert.equal(await enviada(), false, 'sin encolar no se marca como enviada');
+
+        assert.equal(await conPush(() => encolarAvisoMantencion(pool, maquinaria, estado)), 2);
+        assert.deepEqual((await filas()).sort((x, y) => x - y), ordenados(dQuiere, dQuiereAdm), 'ni el que no lo quiere ni el mecanico');
+        assert.equal(await enviada(), true);
+    });
+
+    test('asistencia_nueva: la asistencia del cliente avisa a gerentes y administrativos, sin texto libre; sin flag, a nadie', async (t) => {
+        if (!requiereBase(t)) return;
+        const of = await oficinaDePrueba();
+        const clienteId = await crearClienteDePrueba('Cliente asistencia push');
+        const tokenCliente = (await crearUsuarioDe('cliente', { clienteId })).token;
+        const pedirAsistencia = async (equipoId) => {
+            const r = await llamar('POST', '/api/solicitudes', tokenCliente,
+                { maquinaria_id: equipoId, descripcion: 'Texto libre reservado del cliente', gravedad: 'fuera_de_servicio' });
+            assert.equal(r.status, 201, JSON.stringify(r.body));
+            datos.solicitudes.push(r.body.id);
+            datos.ordenes.push(r.body.orden_trabajo_id);
+            return r.body.orden_trabajo_id;
+        };
+        const sinFlag = await pedirAsistencia((await crearEquipo(clienteId)).id);
+        assert.deepEqual(await filasPush(sinFlag, 'asistencia_nueva'), []);
+
+        const ot = await conPush(async () => pedirAsistencia((await crearEquipo(clienteId)).id));
+        assert.deepEqual(await destinosPropios(ot, 'asistencia_nueva', [...of.reciben, ...of.noReciben]), ordenados(...of.reciben));
+        const [fila] = await filasPush(ot, 'asistencia_nueva');
+        assert.deepEqual(Object.keys(fila.payload).sort(), ['maquinaria_codigo', 'orden_trabajo_id', 'tipo', 'usuario_id']);
+        assert.ok(!JSON.stringify(fila.payload).includes('reservado') && !JSON.stringify(fila.payload).includes('fuera_de_servicio'));
+    });
+
+    /** Dos empresas con sus usuarios cliente y dispositivos del panel. */
+    async function empresasDePrueba() {
+        const clienteA = await crearClienteDePrueba('Empresa A push');
+        const clienteB = await crearClienteDePrueba('Empresa B push');
+        const a1 = await crearUsuarioDe('cliente', { clienteId: clienteA });
+        const a2 = await crearUsuarioDe('cliente', { clienteId: clienteA });
+        const aInactivo = await crearUsuarioDe('cliente', { clienteId: clienteA, estado: 'rechazado' });
+        const b1 = await crearUsuarioDe('cliente', { clienteId: clienteB });
+        const dA1 = await crearDispositivo(a1.id, 'panel');
+        const dA2 = await crearDispositivo(a2.id, 'panel');
+        const dA2b = await crearDispositivo(a2.id, 'panel');
+        const dAInactivo = await crearDispositivo(aInactivo.id, 'panel');
+        const dB1 = await crearDispositivo(b1.id, 'panel');
+        // un administrativo y un cliente sin dispositivo no cuentan
+        await crearUsuarioDe('cliente', { clienteId: clienteA });
+        const dOficina = await crearDispositivo((await crearUsuarioDe('administrativo')).id, 'panel');
+        return { clienteA, clienteB, deA: [dA1, dA2, dA2b], noReciben: [dAInactivo, dB1, dOficina] };
+    }
+
+    test('mecanico_asignado y ot_finalizada: push solo a los usuarios de LA empresa de la orden, nunca de otra', async (t) => {
+        if (!requiereBase(t)) return;
+        const e = await empresasDePrueba();
+        const equipoA = await crearEquipo(e.clienteA);
+        const equipoSinFlag = await crearEquipo(e.clienteA);
+
+        // sin flag: asignar y cerrar no encolan nada
+        const otSinFlag = await crearOt('pendiente', null, equipoSinFlag.id);
+        assert.equal((await pedir('PATCH', `/api/ordenes-trabajo/${otSinFlag}/asignar`, 'administrativo', { mecanico_id: datos.mecanicoId })).status, 200);
+        assert.deepEqual(await filasPush(otSinFlag, 'mecanico_asignado'), []);
+
+        const ot = await crearOt('pendiente', null, equipoA.id);
+        await conPush(async () => {
+            const asignada = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/asignar`, 'administrativo', { mecanico_id: datos.mecanicoId });
+            assert.equal(asignada.status, 200, JSON.stringify(asignada.body));
+            await pool.query("UPDATE ordenes_trabajo SET estado = 'en_reparacion' WHERE id = $1", [ot]);
+            const cerrada = await pedir('PATCH', `/api/ordenes-trabajo/${ot}/finalizar`, 'mecanico', { observacion_final: 'observacion reservada del cierre' });
+            assert.equal(cerrada.status, 200, JSON.stringify(cerrada.body));
+        });
+        const todos = [...e.deA, ...e.noReciben];
+        assert.deepEqual(await destinosPropios(ot, 'mecanico_asignado', todos), ordenados(...e.deA));
+        assert.deepEqual(await destinosPropios(ot, 'ot_finalizada', todos), ordenados(...e.deA));
+        // el payload encolado es minimo: ni el RUT, vehiculo o nombre del mecanico ni la observacion final
+        for (const tipo of ['mecanico_asignado', 'ot_finalizada']) {
+            for (const f of await filasPush(ot, tipo)) {
+                assert.deepEqual(Object.keys(f.payload).sort(), ['cliente_id', 'maquinaria_codigo', 'orden_trabajo_id', 'tipo', 'usuario_id'], tipo);
+                assert.equal(f.payload.cliente_id, e.clienteA);
+            }
+        }
+    });
+
+    test('mecanico_asignado: un cliente sin dispositivo, o un equipo sin cliente, no encola nada', async (t) => {
+        if (!requiereBase(t)) return;
+        const sinDispositivo = await crearClienteDePrueba('Empresa sin telefono push');
+        await crearUsuarioDe('cliente', { clienteId: sinDispositivo });
+        await empresasDePrueba();
+        const otSin = await crearOt('pendiente', null, (await crearEquipo(sinDispositivo)).id);
+        const otInterna = await crearOt('pendiente', null, (await crearEquipo(null)).id);
+        await conPush(async () => {
+            assert.equal((await pedir('PATCH', `/api/ordenes-trabajo/${otSin}/asignar`, 'administrativo', { mecanico_id: datos.mecanicoId })).status, 200);
+            assert.equal((await pedir('PATCH', `/api/ordenes-trabajo/${otInterna}/asignar`, 'administrativo', { mecanico_id: datos.mecanicoId })).status, 200);
+        });
+        assert.deepEqual(await filasPush(otSin, 'mecanico_asignado'), []);
+        assert.deepEqual(await filasPush(otInterna, 'mecanico_asignado'), [], 'una OT interna no avisa a ninguna empresa');
+    });
+
+    test('canal push del worker: revalida app, rol y empresa antes de enviar los avisos de gerencia y de cliente', async (t) => {
+        if (!requiereBase(t)) return;
+        let enviados = 0;
+        usarEnvio(async () => { enviados += 1; });
+        const encolar = async (payload, dispositivoId) => (await pool.query(
+            `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ('push', $1, $2) RETURNING *`,
+            [String(dispositivoId), JSON.stringify(payload)])).rows[0];
+        const estadoDe = async (n) => (await pool.query('SELECT estado, ultimo_error FROM notificaciones_pendientes WHERE id = $1', [n.id])).rows[0];
+        try {
+            const ot = await crearOt('asignada', datos.mecanicoId);
+            const clienteId = await crearClienteDePrueba('Empresa worker push');
+            const otraEmpresa = await crearClienteDePrueba('Otra empresa worker push');
+            const adm = await crearUsuarioDe('administrativo');
+            const dAdm = await crearDispositivo(adm.id, 'panel');
+            const cli = await crearUsuarioDe('cliente', { clienteId });
+            const dCli = await crearDispositivo(cli.id, 'panel');
+
+            // vigentes: oficina en el panel y cliente de su empresa
+            const ok1 = await encolar({ tipo: 'ot_por_valorizar', orden_trabajo_id: ot, usuario_id: adm.id }, dAdm);
+            const ok2 = await encolar({ tipo: 'ot_finalizada', orden_trabajo_id: ot, usuario_id: cli.id, cliente_id: clienteId }, dCli);
+            await procesarUna(ok1);
+            await procesarUna(ok2);
+            assert.equal((await estadoDe(ok1)).estado, 'enviado');
+            assert.equal((await estadoDe(ok2)).estado, 'enviado');
+            assert.equal(enviados, 2);
+
+            // el aviso de gerencia en un telefono de la app terreno
+            const gerente = await crearUsuarioDe('gerente');
+            const dTerreno = await crearDispositivo(gerente.id, 'terreno');
+            const enTerreno = await encolar({ tipo: 'factura_anulada', orden_trabajo_id: ot, usuario_id: gerente.id }, dTerreno);
+            await procesarUna(enTerreno);
+            assert.equal((await estadoDe(enTerreno)).estado, 'cancelado');
+            assert.match((await estadoDe(enTerreno)).ultimo_error, /otra app/);
+
+            // el administrativo no recibe lo reservado al gerente
+            const soloGerente = await encolar({ tipo: 'ajuste_inventario', usuario_id: adm.id }, dAdm);
+            await procesarUna(soloGerente);
+            assert.equal((await estadoDe(soloGerente)).estado, 'cancelado');
+            assert.match((await estadoDe(soloGerente)).ultimo_error, /rol/);
+
+            // el rol cambio despues de encolar el aviso al cliente
+            await pool.query("UPDATE usuarios SET rol = 'administrativo' WHERE id = $1", [cli.id]);
+            const cambioRol = await encolar({ tipo: 'ot_finalizada', orden_trabajo_id: ot, usuario_id: cli.id, cliente_id: clienteId }, dCli);
+            await procesarUna(cambioRol);
+            assert.equal((await estadoDe(cambioRol)).estado, 'cancelado');
+            await pool.query("UPDATE usuarios SET rol = 'cliente' WHERE id = $1", [cli.id]);
+
+            // el usuario paso a otra empresa
+            await pool.query('UPDATE usuarios SET cliente_id = $2 WHERE id = $1', [cli.id, otraEmpresa]);
+            const otraEmp = await encolar({ tipo: 'mecanico_asignado', orden_trabajo_id: ot, usuario_id: cli.id, cliente_id: clienteId }, dCli);
+            await procesarUna(otraEmp);
+            assert.equal((await estadoDe(otraEmp)).estado, 'cancelado');
+            assert.match((await estadoDe(otraEmp)).ultimo_error, /empresa/);
+
+            // cuenta inactiva
+            await pool.query("UPDATE usuarios SET estado_cuenta = 'rechazado' WHERE id = $1", [adm.id]);
+            const inactiva = await encolar({ tipo: 'ot_por_valorizar', orden_trabajo_id: ot, usuario_id: adm.id }, dAdm);
+            await procesarUna(inactiva);
+            assert.equal((await estadoDe(inactiva)).estado, 'cancelado');
+            assert.equal(enviados, 2, 'solo los dos vigentes salieron');
+        } finally {
+            usarEnvio(null);
+        }
+    });
+
+    test('GET /notificaciones: el push muestra nombre y rol del usuario (no el token) y se filtra por canal', async (t) => {
+        if (!requiereBase(t)) return;
+        const adm = await crearUsuarioDe('administrativo', { nombre: 'Ana Prueba Push' });
+        const d = await crearDispositivo(adm.id, 'panel');
+        const token = (await pool.query('SELECT token FROM dispositivos_push WHERE id = $1', [d])).rows[0].token;
+        const push = (await pool.query(
+            `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ('push', $1, $2) RETURNING id`,
+            [String(d), JSON.stringify({ tipo: 'ot_por_valorizar', orden_trabajo_id: 1, usuario_id: adm.id })])).rows[0].id;
+        const raro = (await pool.query(
+            `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ('push', '999999', $1) RETURNING id`,
+            [JSON.stringify({ tipo: 'ot_por_valorizar', usuario_id: 'no-es-numero' })])).rows[0].id;
+        const correo = (await pool.query(
+            `INSERT INTO notificaciones_pendientes (canal, destinatario, payload) VALUES ('email', 'x@gomaq.test', $1) RETURNING id`,
+            [JSON.stringify({ tipo: 'factura_emitida' })])).rows[0].id;
+        try {
+            const r = await pedir('GET', '/api/notificaciones?canal=push', 'gerente');
+            assert.equal(r.status, 200);
+            assert.ok(r.body.every((n) => n.canal === 'push'), 'solo push');
+            const fila = r.body.find((n) => n.id === push);
+            assert.equal(fila.usuario_nombre, 'Ana Prueba Push');
+            assert.equal(fila.usuario_rol, 'administrativo');
+            assert.ok(!JSON.stringify(r.body).includes(token), 'el token del dispositivo no se expone');
+            const sinUsuario = r.body.find((n) => n.id === raro);
+            assert.equal(sinUsuario.usuario_nombre, null, 'un usuario_id no numerico no rompe la lista');
+
+            const mixta = await pedir('GET', '/api/notificaciones', 'administrativo');
+            assert.equal(mixta.status, 200);
+            assert.ok(mixta.body.some((n) => n.id === correo && n.usuario_nombre === null), 'el correo no trae usuario');
+            const soloCorreo = await pedir('GET', '/api/notificaciones?canal=email', 'administrativo');
+            assert.ok(soloCorreo.body.length > 0 && soloCorreo.body.every((n) => n.canal === 'email'));
+            assert.ok(!soloCorreo.body.some((n) => n.id === push));
+            assert.equal((await pedir('GET', '/api/notificaciones?canal=sms', 'administrativo')).status, 400);
+            assert.equal((await pedir('GET', '/api/notificaciones?canal=push', 'mecanico')).status, 403);
+        } finally {
+            await pool.query('DELETE FROM notificaciones_pendientes WHERE id = ANY($1)', [[push, raro, correo]]);
+        }
+    });
+
 });

@@ -59,7 +59,7 @@ bool avisoCoincide(Map n, String texto) {
   final t = _plano(texto.trim());
   if (t.isEmpty) return true;
   final p = payloadAviso(n);
-  return [p['folio'], p['cliente_nombre'], n['destinatario']].any((v) => _plano(v).contains(t));
+  return [p['folio'], p['cliente_nombre'], n['destinatario'], n['usuario_nombre']].any((v) => _plano(v).contains(t));
 }
 
 /// Busca facturas emitidas por folio o cliente: `GET /api/facturacion/emitidas?q=...`. Devuelve las filas.
@@ -68,11 +68,39 @@ typedef BuscarFacturas = Future<List<Map<String, dynamic>>> Function(String q);
 /// Reenvía el correo de una factura: `POST /api/facturacion/:id/autorizar-envio`.
 typedef ReenviarCorreo = Future<void> Function(int facturaId);
 
-/// Carga los avisos (`soloProblemas` pide la vista filtrada del dashboard).
-typedef CargarAvisos = Future<dynamic> Function({required bool soloProblemas});
+/// Carga los avisos (`soloProblemas` pide la vista filtrada del dashboard; `canal` es 'push', 'email' o
+/// 'whatsapp' y solo aplica a la lista completa).
+typedef CargarAvisos = Future<dynamic> Function({required bool soloProblemas, String? canal});
 
-Future<dynamic> _cargarAvisosPorDefecto({required bool soloProblemas}) =>
-    ApiClient.instance.get(soloProblemas ? '/api/notificaciones?problemas=1' : '/api/notificaciones');
+Future<dynamic> _cargarAvisosPorDefecto({required bool soloProblemas, String? canal}) =>
+    ApiClient.instance.get(soloProblemas
+        ? '/api/notificaciones?problemas=1'
+        : canal == null
+            ? '/api/notificaciones'
+            : '/api/notificaciones?canal=$canal');
+
+/// Canales que se pueden filtrar: valor del servidor y texto de la pantalla.
+const canalesAviso = <String, String>{'push': 'Push', 'email': 'Correo', 'whatsapp': 'WhatsApp'};
+
+/// Rol del usuario con su nombre de pantalla (el servidor devuelve el valor interno).
+String rolAviso(Object? rol) => switch ('$rol') {
+      'administrativo' => 'administrativo',
+      'gerente' => 'gerente',
+      'mecanico' => 'mecánico',
+      'cliente' => 'cliente',
+      _ => '$rol',
+    };
+
+/// A quién va el aviso. Un push guarda el id de un dispositivo, que no sirve para leer: se muestra el nombre y
+/// el rol del usuario (el servidor los une; nunca llega el token del dispositivo).
+String destinoAviso(Map n) {
+  if (n['canal'] == 'push') {
+    final nombre = n['usuario_nombre'];
+    if (nombre == null) return 'dispositivo sin usuario';
+    return '$nombre (${rolAviso(n['usuario_rol'])})';
+  }
+  return '${n['destinatario']}';
+}
 
 Future<List<Map<String, dynamic>>> _buscarFacturasPorDefecto(String q) async {
   final consulta = Uri(queryParameters: {'estado': 'todas', 'q': q, 'limit': '10'}).query;
@@ -112,6 +140,7 @@ class _NotificacionesScreenState extends State<NotificacionesScreen> {
   bool _cargando = true;
   String? _error;
   bool _soloProblemas = false;
+  String? _canal;
   int _totalProblemas = 0;
   final _busquedaCtrl = TextEditingController();
   String _texto = '';
@@ -205,7 +234,7 @@ class _NotificacionesScreenState extends State<NotificacionesScreen> {
       _error = null;
     });
     try {
-      final data = await widget.cargarAvisos(soloProblemas: _soloProblemas);
+      final data = await widget.cargarAvisos(soloProblemas: _soloProblemas, canal: _soloProblemas ? null : _canal);
       if (!mounted) return;
       setState(() {
         if (_soloProblemas) {
@@ -346,6 +375,38 @@ class _NotificacionesScreenState extends State<NotificacionesScreen> {
     );
   }
 
+  /// Chips para ver un solo canal; el estado seleccionado lo anuncia el propio chip.
+  Widget _filtroCanal() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: Wrap(
+        spacing: 8,
+        runSpacing: 4,
+        children: [
+          ChoiceChip(
+            key: const ValueKey('canal-todos'),
+            label: const Text('Todos los canales'),
+            selected: _canal == null,
+            onSelected: (_) => _elegirCanal(null),
+          ),
+          for (final c in canalesAviso.entries)
+            ChoiceChip(
+              key: ValueKey('canal-${c.key}'),
+              label: Text(c.value),
+              selected: _canal == c.key,
+              onSelected: (_) => _elegirCanal(c.key),
+            ),
+        ],
+      ),
+    );
+  }
+
+  void _elegirCanal(String? canal) {
+    if (_canal == canal) return;
+    setState(() => _canal = canal);
+    _cargar();
+  }
+
   Widget _avisos() {
     final visibles = _visibles;
     if (_cargando) return const Padding(padding: EdgeInsets.symmetric(vertical: 40), child: Center(child: CircularProgressIndicator()));
@@ -355,7 +416,13 @@ class _NotificacionesScreenState extends State<NotificacionesScreen> {
     if (_notificaciones.isEmpty) {
       return Padding(
         padding: const EdgeInsets.symmetric(vertical: 40),
-        child: Center(child: Text(_soloProblemas ? 'No hay avisos con problemas' : 'No hay notificaciones registradas')),
+        child: Center(
+          child: Text(_soloProblemas
+              ? 'No hay avisos con problemas'
+              : _canal != null
+                  ? 'No hay notificaciones de ese canal'
+                  : 'No hay notificaciones registradas'),
+        ),
       );
     }
     return Column(
@@ -397,7 +464,7 @@ class _NotificacionesScreenState extends State<NotificacionesScreen> {
   String _titulo(Map n) {
     final p = payloadAviso(n);
     final factura = p['folio'] != null ? 'Factura ${p['folio']}${p['cliente_nombre'] != null ? ' (${p['cliente_nombre']})' : ''}: ' : '';
-    return '$factura${n['canal']} -> ${n['destinatario']}';
+    return '$factura${canalesAviso[n['canal']] ?? n['canal']} -> ${destinoAviso(n)}';
   }
 
   @override
@@ -408,7 +475,7 @@ class _NotificacionesScreenState extends State<NotificacionesScreen> {
         child: ListView(
           padding: const EdgeInsets.all(16),
           physics: const AlwaysScrollableScrollPhysics(),
-          children: [_cabeceraBusqueda(), _avisos()],
+          children: [_cabeceraBusqueda(), if (!_soloProblemas) _filtroCanal(), _avisos()],
         ),
       ),
     );

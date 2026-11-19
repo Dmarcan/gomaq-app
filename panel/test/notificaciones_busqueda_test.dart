@@ -18,7 +18,7 @@ class _Falso {
   final busquedas = <String>[];
   Object? errorAlReenviar;
 
-  Future<dynamic> avisos({required bool soloProblemas}) async => [
+  Future<dynamic> avisos({required bool soloProblemas, String? canal}) async => [
         _aviso(1, '1501', 'Constructora Ficticia Ltda'),
         _aviso(2, '1502', 'Transportes Imaginarios SpA', destinatario: 'otro@imaginarios.test'),
       ];
@@ -127,5 +127,43 @@ void main() {
     await t.tap(find.byTooltip('Buscar'));
     await t.pumpAndSettle();
     expect(t.takeException(), isNull);
+  });
+
+  testWidgets('un push muestra el nombre y el rol del usuario, no el id del dispositivo', (t) async {
+    final canales = <String?>[];
+    Future<dynamic> avisos({required bool soloProblemas, String? canal}) async {
+      canales.add(canal);
+      return [
+        {
+          'id': 5,
+          'canal': 'push',
+          'destinatario': '31',
+          'estado': 'enviado',
+          'intentos': 1,
+          'usuario_nombre': 'Ana Ficticia',
+          'usuario_rol': 'administrativo',
+          'payload': {'tipo': 'ot_por_valorizar', 'orden_trabajo_id': 7},
+        },
+      ];
+    }
+
+    await t.pumpWidget(MaterialApp(
+      home: NotificacionesScreen(puedeReenviar: false, cargarAvisos: avisos),
+    ));
+    await t.pumpAndSettle();
+    expect(find.text('Push -> Ana Ficticia (administrativo)'), findsOneWidget);
+    expect(find.textContaining('31'), findsNothing);
+    // se puede buscar por el nombre del usuario
+    await t.enterText(find.byType(TextField), 'ana');
+    await t.pumpAndSettle();
+    expect(find.textContaining('Ana Ficticia'), findsWidgets);
+    await t.enterText(find.byType(TextField), '');
+    // el chip de canal vuelve a pedir la lista solo de ese canal
+    await t.tap(find.byKey(const ValueKey('canal-push')));
+    await t.pumpAndSettle();
+    expect(canales, [null, 'push']);
+    await t.tap(find.byKey(const ValueKey('canal-todos')));
+    await t.pumpAndSettle();
+    expect(canales, [null, 'push', null]);
   });
 }

@@ -5,7 +5,7 @@ const { validarIdsEnRuta, validarCuerpo, fechaHoraInvalida } = require('../utils
 const MAX_ELEMENTOS_CHECKLIST = 100;
 const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
-const { verificarDuenoOrden, contactoCliente, MENSAJE_OT_CERRADA, SQL_OT_SIN_ASIGNAR } = require('../utils/ordenes');
+const { verificarDuenoOrden, MENSAJE_OT_CERRADA, SQL_OT_SIN_ASIGNAR } = require('../utils/ordenes');
 const { cobroParaCliente } = require('../utils/cobroCliente');
 const { armarDetalleOtCliente } = require('../utils/detalleOtCliente');
 const { estadoTrasAsignar, evaluarCambioEstado, evaluarCierre, parsearEstados, EN_CURSO_PANEL, ESTADOS } = require('../utils/estadosOt');
@@ -18,7 +18,7 @@ const { montoEnteroONulo } = require('../utils/auditoriaLinea');
 const {
     dejarEvento, leerUuidTarea, sincronizadoTarde, decidirEventoDiagnostico, decidirEventoAsignacion, esMismoTecnico,
 } = require('../utils/eventosOt');
-const { avisarAsignacion, avisarOtDisponible, avisarPorValorizar, encolarNotificacion } = require('../utils/avisos');
+const { avisarAsignacion, avisarOtDisponible, avisarPorValorizar, avisarAlCliente } = require('../utils/avisos');
 
 const {
     validarEstadoEquipoCierre, aplicarEntradaEquipo, aplicarCierreEquipo, origenDeCliente,
@@ -402,29 +402,14 @@ router.get('/:id', verifyToken, requireRole('gerente', 'administrativo', 'mecani
 });
 
 /**
- * Avisa al cliente quien va a intervenir su equipo. HU-07 promete avisar "quien llega a reparar su
- * equipo Y CON QUE VEHICULO": el vehiculo y el RUT permiten que porteria reconozca el furgon y
- * valide al tecnico al ingresar a la planta. Lo usan /asignar (la oficina elige al mecanico) y
- * /tomar (el mecanico la toma). Si no hay forma de contactar al cliente no encola nada.
+ * Avisa al cliente que su equipo tiene tecnico asignado. Lo usan /asignar (la oficina elige al mecanico) y
+ * /tomar (el mecanico la toma). Va por push a los usuarios con cuenta de cliente de ESA empresa (rol cliente y
+ * cliente_id de la orden) que tengan un dispositivo del panel; el mensaje es solo "Tu equipo tiene tecnico
+ * asignado" y "OT #id, equipo codigo": el nombre, el RUT y el vehiculo del mecanico no salen en el push (la
+ * identificacion para porteria, HU-07, queda en el detalle de la orden del portal). Sin flag no hace nada.
  */
-async function encolarAvisoAsignacion(client, orden, mecanico) {
-    const contacto = await contactoCliente(client, orden.cliente_id);
-    if (!contacto) return;
-    const vehiculo = await client.query(
-        'SELECT marca, modelo, patente FROM vehiculos WHERE usuario_id = $1 AND activo = true',
-        [mecanico.id]
-    );
-    await encolarNotificacion(client, {
-        canal: contacto.canal, destinatario: contacto.destinatario,
-        payload: {
-            tipo: 'mecanico_asignado',
-            orden_trabajo_id: orden.id,
-            maquinaria_codigo: orden.maquinaria_codigo,
-            mecanico_nombre: mecanico.nombre,
-            mecanico_rut: mecanico.rut,
-            vehiculo: vehiculo.rows[0] || null,
-        },
-    });
+async function encolarAvisoAsignacion(client, orden) {
+    await avisarAlCliente(client, { tipo: 'mecanico_asignado', ordenId: orden.id, clienteId: orden.cliente_id });
 }
 
 // el mecanico toma una orden que nadie tiene asignada.
@@ -473,7 +458,7 @@ router.patch('/:id/tomar', verifyToken, requireRole('mecanico'), async (req, res
         }
         const mecanico = await client.query('SELECT id, nombre, rut FROM usuarios WHERE id = $1', [req.user.id]);
         await fijarDestinoOt(client, tomada.rows[0].id);
-        await encolarAvisoAsignacion(client, tomada.rows[0], mecanico.rows[0]);
+        await encolarAvisoAsignacion(client, tomada.rows[0]);
         await dejarEvento(client, {
             ordenId: tomada.rows[0].id, tipo: 'toma', origen: 'terreno',
             estadoAnterior: 'pendiente', estadoNuevo: 'asignada', usuario: req.user,
@@ -567,7 +552,7 @@ router.patch('/:id/asignar', verifyToken, requireRole('administrativo'), async (
         // otra persona) y el destino se vuelve a fijar con los datos de hoy
         await limpiarViaje(client, orden.id);
         await fijarDestinoOt(client, orden.id);
-        await encolarAvisoAsignacion(client, orden, mecanico.rows[0]);
+        await encolarAvisoAsignacion(client, orden);
         // aviso interno al mecanico nuevo y, si habia otro, al anterior ("ya no vayas"). Solo llega aca
         // si el tecnico cambio: el doble clic salio arriba sin encolar nada
         await avisarAsignacion(client, { ordenId: orden.id, nuevoId: mecanico_id, anteriorId: actual.rows[0].mecanico_id });
@@ -956,22 +941,10 @@ router.patch('/:id/finalizar', verifyToken, requireRole('mecanico'), async (req,
         }
 
         // Aviso de cierre al cliente, mismo patron Outbox que /asignar: la notificacion se
-        // inserta en la misma transaccion que cierra la OT. HU-07 avisa quien va a atender el equipo;
-        // esto avisa que quedo listo.
+        // inserta en la misma transaccion que cierra la OT. Es push a los usuarios cliente de la empresa de la
+        // orden, solo con "Tu orden de trabajo finalizo" y el numero de OT (sin la observacion final).
         const orden = result.rows[0];
-        const contactoCierre = await contactoCliente(client, orden.cliente_id);
-        if (contactoCierre) {
-            const maquinaria = await client.query('SELECT codigo FROM maquinarias WHERE id = $1', [orden.maquinaria_id]);
-            await encolarNotificacion(client, {
-                canal: contactoCierre.canal, destinatario: contactoCierre.destinatario,
-                payload: {
-                    tipo: 'ot_finalizada',
-                    orden_trabajo_id: orden.id,
-                    maquinaria_codigo: maquinaria.rows[0] ? maquinaria.rows[0].codigo : null,
-                    observacion_final: orden.observacion_final,
-                },
-            });
-        }
+        await avisarAlCliente(client, { tipo: 'ot_finalizada', ordenId: orden.id, clienteId: orden.cliente_id });
 
         // una orden con repuestos facturables queda esperando que el gerente apruebe el monto. El reintento
         // de un cierre ya aplicado salio antes (yaFinalizada) y no llega aca

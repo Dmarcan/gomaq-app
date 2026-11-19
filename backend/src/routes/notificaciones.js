@@ -9,20 +9,38 @@ const { envolver } = require('../utils/paginacion');
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
 
+const CANALES = ['email', 'whatsapp', 'push'];
+
+// Las filas del canal push llevan en `destinatario` el id de un dispositivo, que no dice nada a quien lee la
+// lista: se agregan el nombre y el rol del usuario del aviso (payload.usuario_id) como usuario_nombre y
+// usuario_rol. Nunca se une ni se devuelve el token del dispositivo. El CASE evita castear un id no numerico.
+// `filas` es la consulta ya filtrada y acotada (con su alias `n`); el orden va afuera, sobre el resultado.
+const conUsuario = (filas, orden) => `SELECT n.*, u.nombre AS usuario_nombre, u.rol::text AS usuario_rol
+    FROM (${filas}) n
+    LEFT JOIN usuarios u ON n.canal = 'push'
+        AND u.id = CASE WHEN n.payload->>'usuario_id' ~ '^[0-9]{1,9}$' THEN (n.payload->>'usuario_id')::int END
+    ORDER BY ${orden}`;
+
 router.get('/', verifyToken, requireRole('administrativo', 'gerente'), async (req, res) => {
     // ?problemas=1: solo los avisos que cuenta el dashboard (mismo predicado), hasta 200
     if (req.query.problemas === '1') {
         // responde { items, total, hay_mas }: `total` es el numero real del dashboard (sin el tope de 200 filas)
         const [problemas, total] = await Promise.all([
             pool.query(
-                `SELECT * FROM notificaciones_pendientes WHERE ${SQL_AVISOS_PROBLEMAS} ORDER BY created_at DESC, id DESC LIMIT 200`,
+                conUsuario(`SELECT * FROM notificaciones_pendientes WHERE ${SQL_AVISOS_PROBLEMAS} ORDER BY created_at DESC, id DESC LIMIT 200`,
+                    'n.created_at DESC, n.id DESC'),
                 [TIPOS_INTERNOS]),
             pool.query(`SELECT COUNT(*)::int AS n FROM notificaciones_pendientes WHERE ${SQL_AVISOS_PROBLEMAS}`, [TIPOS_INTERNOS]),
         ]);
         return res.json(envolver(problemas.rows, total.rows[0].n, { limit: 200, offset: 0 }));
     }
+    // ?canal=push|email|whatsapp: solo ese canal (sin el parametro, todos). Los ultimos 100 de ese canal.
+    const canal = req.query.canal === undefined || req.query.canal === '' ? null : req.query.canal;
+    if (canal !== null && !CANALES.includes(canal)) return res.status(400).json({ error: 'Canal inválido' });
     const result = await pool.query(
-        'SELECT * FROM notificaciones_pendientes ORDER BY created_at DESC LIMIT 100'
+        conUsuario(`SELECT * FROM notificaciones_pendientes WHERE ($1::text IS NULL OR canal = $1::text) ORDER BY created_at DESC LIMIT 100`,
+            'n.created_at DESC'),
+        [canal]
     );
     res.json(result.rows);
 });

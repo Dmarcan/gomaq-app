@@ -9,7 +9,7 @@ const pool = require('../config/db');
 const { verifyToken, requireRole } = require('../middleware/auth');
 const { calcularEstadoMantencion, requiereAviso, HORAS_AVISO_MANTENCION, cargarAlertasMantencion } = require('../utils/mantencion');
 const { leerUuidCliente, buscarPorUuid, esUuidDuplicado } = require('../utils/idempotencia');
-const { encolarNotificacion } = require('../utils/avisos');
+const { encolarADispositivos } = require('../utils/avisos');
 
 const router = express.Router();
 validarIdsEnRuta(router, ['id']);
@@ -26,17 +26,11 @@ const num = (v) => (v === null || v === undefined ? null : Number(v));
  * Se manda una sola vez por ciclo (marca alerta_mantencion_enviada, que se apaga al
  * reiniciar el contador): si no, cada lectura nueva sobre el umbral repetiria el mensaje.
  *
- * Destinatarios: los usuarios internos con el switch encendido desde el panel. El envio real
- * todavia no existe (el worker es un stub), asi que estas filas quedaran en error tras los
- * reintentos hasta que se configure WhatsApp Cloud API / SMTP.
+ * Destinatarios: los usuarios internos (gerente y administrativo) activos con el switch encendido desde el
+ * panel, por push a sus dispositivos del panel (una fila por dispositivo). Sin el flag PUSH_HABILITADO, sin
+ * switch o sin dispositivos no se encola nada y el equipo no se marca: avisara cuando haya a quien.
  */
 async function encolarAvisoMantencion(client, maquinaria, estado) {
-    const destinatarios = await client.query(
-        `SELECT email, telefono_whatsapp FROM usuarios
-         WHERE recibe_alertas_mantencion = true AND estado_cuenta = 'activo'`
-    );
-    if (destinatarios.rows.length === 0) return 0;
-
     const payload = {
         tipo: 'mantencion_proxima',
         maquinaria_id: maquinaria.id,
@@ -47,13 +41,9 @@ async function encolarAvisoMantencion(client, maquinaria, estado) {
         vencida: estado.vencida,
     };
 
-    let encoladas = 0;
-    for (const usuario of destinatarios.rows) {
-        if (usuario.email) encoladas += await encolarNotificacion(client, { canal: 'email', destinatario: usuario.email, payload });
-        if (usuario.telefono_whatsapp) encoladas += await encolarNotificacion(client, { canal: 'whatsapp', destinatario: usuario.telefono_whatsapp, payload });
-    }
+    const encoladas = await encolarADispositivos(client, payload, { soloAlertasMantencion: true });
 
-    // sin proveedor no se encola nada: no se marca como enviada, para que avise cuando exista uno
+    // si no se encolo nada no se marca como enviada: asi avisa cuando exista un destinatario con dispositivo
     if (encoladas > 0) await client.query('UPDATE maquinarias SET alerta_mantencion_enviada = true WHERE id = $1', [maquinaria.id]);
     return encoladas;
 }

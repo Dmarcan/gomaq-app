@@ -26,7 +26,7 @@ const notificacion = (extra = {}) => ({
 });
 
 test('enviarPush: un tipo sin plantilla es error permanente', async () => {
-    await assert.rejects(enviarPush(notificacion({ payload: { tipo: 'ot_por_valorizar', orden_trabajo_id: 5 } })), (e) => e.permanente === true);
+    await assert.rejects(enviarPush(notificacion({ payload: { tipo: 'cuenta_aprobada', orden_trabajo_id: 5 } })), (e) => e.permanente === true);
 });
 
 test('enviarPush: un destinatario que no es id de dispositivo es error permanente', async () => {
@@ -79,7 +79,7 @@ function respuestaSana(sql) {
         return { rows: [{ estado: 'pendiente', canal: 'push', destinatario: '31', created_at: new Date(ahora - 60000), payload: notificacion().payload }] };
     }
     if (/FROM dispositivos_push d/.test(sql)) {
-        return { rows: [{ activo: true, usuario_id: 4, sesion_id: null, estado_cuenta: 'activo', sesion_revocada_at: null, sesion_expira_at: null }] };
+        return { rows: [{ activo: true, app: 'terreno', rol: 'mecanico', cliente_id: null, usuario_id: 4, sesion_id: null, estado_cuenta: 'activo', sesion_revocada_at: null, sesion_expira_at: null }] };
     }
     return { rows: [], rowCount: 1 };
 }

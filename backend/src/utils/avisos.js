@@ -1,4 +1,4 @@
-// Avisos internos (mecanico y gerente) por el patron Outbox: la fila de notificaciones_pendientes se
+// Avisos internos (mecanico, gerencia y administrativo) y al cliente por el patron Outbox: la fila de notificaciones_pendientes se
 // inserta con el `client` de la MISMA transaccion del evento, asi que si el evento se revierte el
 // aviso tampoco queda. El envio real lo hace el worker; ver encolarNotificacion: sin proveedor no se encola.
 //
@@ -7,7 +7,7 @@
 // aplicado (reintento de finalizar, Idempotency-Key de anular, uuid del ajuste, mismo tecnico).
 
 const { OCUPADO } = require('./estadosOt');
-const { TIPOS_CON_PUSH } = require('./push');
+const { TIPOS_CON_PUSH, destinoPush } = require('./push');
 
 const TIPOS_AVISO = Object.freeze({
     OT_ASIGNADA: 'ot_asignada',
@@ -16,6 +16,7 @@ const TIPOS_AVISO = Object.freeze({
     OT_POR_VALORIZAR: 'ot_por_valorizar',
     FACTURA_ANULADA: 'factura_anulada',
     AJUSTE_INVENTARIO: 'ajuste_inventario',
+    ASISTENCIA_NUEVA: 'asistencia_nueva',
 });
 
 // Tipos de aviso interno (para el personal, no para el cliente). El contador de "notificaciones en error"
@@ -28,7 +29,7 @@ const MOTIVOS_AJUSTE_CON_AVISO = Object.freeze(['perdida_robo', 'danio_merma']);
 
 // Porton unico de la cola de salida: solo se encolan los avisos que tienen proveedor real.
 //  - correo: solo el de factura (Resend).
-//  - push (FCM): ot_asignada, ot_reasignada y ot_disponible, y SOLO si PUSH_HABILITADO=1 en la API. El flag se
+//  - push (FCM): los tipos de utils/push.js (DESTINOS_PUSH: mecanico, gerencia, administrativo y cliente), y SOLO si PUSH_HABILITADO=1 en la API. El flag se
 //    activa despues de que el worker nuevo (con el canal push) este arriba: un worker antiguo marcaria 'push'
 //    como error permanente. Apagarlo es la vuelta atras. Se lee en cada llamada, no al cargar el modulo.
 // Un aviso sin proveedor no se encola: terminaria en error y ensuciaria el panel con "Avisos con problemas".
@@ -65,7 +66,7 @@ function insertar(client, canal, destinatario, payload) {
  * encola nada. Devuelve cuantas filas encolo.
  */
 async function encolarAMecanico(client, mecanicoId, payload) {
-    if (!mecanicoId || !tieneProveedor('push', payload && payload.tipo)) return 0;
+    if (!mecanicoId || !tieneProveedor('push', payload && payload.tipo) || !tipoDeRoles(payload, ['mecanico'])) return 0;
     const r = await client.query(
         `SELECT d.id FROM dispositivos_push d JOIN usuarios u ON u.id = d.usuario_id
          WHERE d.usuario_id = $1 AND d.activo AND d.app = 'terreno' AND u.rol = 'mecanico' AND u.estado_cuenta = 'activo'
@@ -79,23 +80,74 @@ async function encolarAMecanico(client, mecanicoId, payload) {
     return encoladas;
 }
 
+const ROLES_OFICINA = Object.freeze(['gerente', 'administrativo']);
+
+/** true si el tipo del aviso es de esos roles (todos los roles de su destino caen dentro de `permitidos`). */
+function tipoDeRoles(payload, permitidos) {
+    const destino = destinoPush(payload && payload.tipo);
+    return Boolean(destino) && destino.roles.every((r) => permitidos.includes(r));
+}
+
 /**
- * Aviso a todos los gerentes activos: un correo y un WhatsApp por cada uno que tenga el dato,
- * igual que encolarAvisoMantencion. Si el gerente es quien ejecuta la accion (`excluirUsuarioId`) no se
- * avisa a si mismo. Devuelve cuantas filas encolo.
+ * Push a los usuarios activos que corresponden al tipo (utils/push.js, DESTINOS_PUSH: app y roles) y tienen un
+ * dispositivo activo de esa app: una fila por dispositivo, con el id del dispositivo en `destinatario` y el
+ * usuario en el payload. Una sola consulta (sin N+1); un dispositivo sale una vez aunque aparezca repetido.
+ * Con el flag apagado o un tipo sin push no consulta ni encola. Opciones:
+ *  - excluirUsuarioId: quien ejecuta la accion no se avisa a si mismo.
+ *  - clienteId: solo usuarios de esa empresa (avisos al cliente; sin el dato no se encola a nadie).
+ *  - soloAlertasMantencion: solo quienes encendieron `recibe_alertas_mantencion`.
+ * Devuelve cuantas filas encolo.
  */
-async function encolarAGerentes(client, payload, { excluirUsuarioId = null } = {}) {
+async function encolarADispositivos(client, payload, { excluirUsuarioId = null, clienteId = null, soloAlertasMantencion = false } = {}) {
+    const tipo = payload && payload.tipo;
+    const destino = destinoPush(tipo);
+    if (!destino || !tieneProveedor('push', tipo)) return 0;
+    if (destino.roles.includes('cliente') && !clienteId) return 0;
     const r = await client.query(
-        `SELECT email, telefono_whatsapp FROM usuarios
-         WHERE rol = 'gerente' AND estado_cuenta = 'activo' AND ($1::int IS NULL OR id <> $1::int) ORDER BY id`,
-        [excluirUsuarioId]
+        `SELECT d.id, d.usuario_id FROM dispositivos_push d JOIN usuarios u ON u.id = d.usuario_id
+         WHERE d.activo AND d.app = $1 AND u.rol::text = ANY($2::text[]) AND u.estado_cuenta = 'activo'
+           AND ($3::int IS NULL OR u.id <> $3::int)
+           AND ($4::int IS NULL OR u.cliente_id = $4::int)
+           AND (NOT $5::boolean OR u.recibe_alertas_mantencion = true)
+         ORDER BY d.id`,
+        [destino.app, destino.roles, excluirUsuarioId, clienteId, soloAlertasMantencion]
     );
+    const vistos = new Set();
     let encoladas = 0;
-    for (const gerente of r.rows) {
-        if (gerente.email) encoladas += await insertar(client, 'email', gerente.email, payload);
-        if (gerente.telefono_whatsapp) encoladas += await insertar(client, 'whatsapp', gerente.telefono_whatsapp, payload);
+    for (const d of r.rows) {
+        if (vistos.has(String(d.id))) continue;
+        vistos.add(String(d.id));
+        encoladas += await insertar(client, 'push', String(d.id), { ...payload, usuario_id: Number(d.usuario_id) });
     }
     return encoladas;
+}
+
+/**
+ * Aviso push a los gerentes activos (los tipos que el destino reserva a gerencia: factura anulada y ajuste de
+ * inventario; para los que tambien ve el administrativo, encolarAOficina). Si el gerente es quien ejecuta la
+ * accion (`excluirUsuarioId`) no se avisa a si mismo. Ya no hay correo ni WhatsApp: no tienen proveedor.
+ */
+async function encolarAGerentes(client, payload, { excluirUsuarioId = null } = {}) {
+    if (!tipoDeRoles(payload, ROLES_OFICINA)) return 0;
+    return encolarADispositivos(client, payload, { excluirUsuarioId });
+}
+
+/**
+ * Aviso push a la oficina: gerentes y administrativos activos (los roles los fija el destino del tipo; un usuario
+ * tiene un solo rol, asi que nadie recibe dos veces). Misma regla de exclusion que encolarAGerentes.
+ */
+async function encolarAOficina(client, payload, { excluirUsuarioId = null } = {}) {
+    if (!tipoDeRoles(payload, ROLES_OFICINA)) return 0;
+    return encolarADispositivos(client, payload, { excluirUsuarioId });
+}
+
+/**
+ * Aviso push a los usuarios con cuenta de cliente de UNA empresa (rol 'cliente' y cliente_id = `clienteId`).
+ * Nunca a otra empresa ni al telefono de contacto de la ficha del cliente.
+ */
+async function encolarAClientes(client, clienteId, payload) {
+    if (!tipoDeRoles(payload, ['cliente'])) return 0;
+    return encolarADispositivos(client, payload, { clienteId });
 }
 
 /** Codigo del equipo y motivo de una OT, para el texto del aviso. */
@@ -143,7 +195,31 @@ async function avisarOtDisponible(client, ordenId) {
 /** Una OT termino su trabajo (o perdio su valorizacion) y espera que el gerente apruebe el monto. */
 async function avisarPorValorizar(client, ordenId, causa, { excluirUsuarioId = null } = {}) {
     const datos = await datosOrden(client, ordenId);
-    return encolarAGerentes(client, { tipo: TIPOS_AVISO.OT_POR_VALORIZAR, ...datos, causa }, { excluirUsuarioId });
+    return encolarAOficina(client, { tipo: TIPOS_AVISO.OT_POR_VALORIZAR, ...datos, causa }, { excluirUsuarioId });
+}
+
+/** Un cliente pidio asistencia y la OT nacio sola: aviso a gerentes y administrativos. Sin texto libre ni gravedad. */
+async function avisarAsistenciaNueva(client, ordenId) {
+    if (!tieneProveedor('push', TIPOS_AVISO.ASISTENCIA_NUEVA)) return 0;
+    const datos = await datosOrden(client, ordenId);
+    return encolarAOficina(client, {
+        tipo: TIPOS_AVISO.ASISTENCIA_NUEVA,
+        orden_trabajo_id: datos.orden_trabajo_id,
+        maquinaria_codigo: datos.maquinaria_codigo,
+    });
+}
+
+/**
+ * Aviso push al cliente: su equipo tiene tecnico (`mecanico_asignado`) o su orden termino (`ot_finalizada`).
+ * El payload es minimo a proposito: ni el RUT, vehiculo o nombre del mecanico ni la observacion final se
+ * guardan en la cola de push. `cliente_id` lo vuelve a revisar el worker antes de enviar.
+ */
+async function avisarAlCliente(client, { tipo, ordenId, clienteId }) {
+    if (!clienteId || !tipoDeRoles({ tipo }, ['cliente']) || !tieneProveedor('push', tipo)) return 0;
+    const datos = await datosOrden(client, ordenId);
+    return encolarAClientes(client, clienteId, {
+        tipo, orden_trabajo_id: datos.orden_trabajo_id, maquinaria_codigo: datos.maquinaria_codigo, cliente_id: Number(clienteId),
+    });
 }
 
 /**
@@ -189,6 +265,6 @@ module.exports = {
     SQL_AVISOS_PROBLEMAS, SQL_AVISOS_EN_ERROR, SQL_AVISOS_ATRASADOS,
     TIPOS_AVISO, TIPOS_INTERNOS, MOTIVOS_AJUSTE_CON_AVISO,
     TIPOS_CON_ENVIO, pushHabilitado, tieneProveedor, encolarNotificacion,
-    encolarAMecanico, encolarAGerentes,
-    avisarAsignacion, avisarOtDisponible, avisarPorValorizar, avisarFacturaAnulada, avisarAjusteInventario,
+    encolarAMecanico, encolarADispositivos, encolarAGerentes, encolarAOficina, encolarAClientes,
+    avisarAsignacion, avisarOtDisponible, avisarPorValorizar, avisarAsistenciaNueva, avisarAlCliente, avisarFacturaAnulada, avisarAjusteInventario,
 };
