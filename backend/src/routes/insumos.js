@@ -134,15 +134,13 @@ router.patch('/:id', verifyToken, requireRole('administrativo'), async (req, res
 });
 
 router.get('/mi-furgon', verifyToken, requireRole('mecanico'), async (req, res) => {
-    let client;
     try {
-        client = await pool.connect();
-        const furgon = await furgonDe(client, req.user.id);
+        const furgon = await furgonDe(pool, req.user.id);
         if (!furgon) {
             // no es error: puede que todavia no le hayan asignado vehiculo
             return res.json({ ubicacion_id: null, items: [] });
         }
-        const result = await client.query(
+        const result = await pool.query(
             `SELECT su.insumo_id, su.cantidad, i.nombre, i.unidad_medida
              FROM stock_ubicacion su
              JOIN insumos i ON i.id = su.insumo_id
@@ -157,8 +155,6 @@ router.get('/mi-furgon', verifyToken, requireRole('mecanico'), async (req, res) 
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Error al consultar el stock de tu furgón' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -179,10 +175,9 @@ router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrati
     if (!uuidValido) {
         return res.status(400).json({ error: 'uuid_cliente no es un UUID valido' });
     }
-    let client;
     // la transferencia ya hecha con ese uuid, como respuesta de un reintento
-    const respuestaPrevia = async () => {
-        const previo = await buscarPorUuid(client, 'movimientos_insumo', uuid);
+    const respuestaPrevia = async (db) => {
+        const previo = await buscarPorUuid(db, 'movimientos_insumo', uuid);
         if (!previo) return null;
         if (previo.usuario_id !== req.user.id) {
             return { status: 409, body: { error: 'uuid_cliente ya fue usado por otra operacion' } };
@@ -193,96 +188,92 @@ router.post('/transferencia', verifyToken, requireRole('mecanico', 'administrati
         };
     };
     try {
-        client = await pool.connect();
-        const previa = uuid ? await respuestaPrevia() : null;
+        const previa = uuid ? await respuestaPrevia(pool) : null;
         if (previa) return res.status(previa.status).json(previa.body);
-
-        await client.query('BEGIN');
-        const bodega = await bodegaCentral(client);
-        // un mecanico siempre carga a SU furgon: aceptar un destino del cuerpo le permitiria
-        // cargarle stock al furgon de otro. Solo el administrativo puede indicar destino.
-        if (req.user.rol === 'administrativo' && req.body.ubicacion_destino_id !== undefined && req.body.ubicacion_destino_id !== null
-            && !idDeCuerpoValido(req.body.ubicacion_destino_id)) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'ubicacion_destino_id debe ser un número válido' });
-        }
-        const destino = req.user.rol === 'administrativo' && req.body.ubicacion_destino_id
-            ? req.body.ubicacion_destino_id
-            : await furgonDe(client, req.user.id);
-        if (!destino) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'No tienes un furgón asignado' });
-        }
-
-        // el destino debe ser un furgon activo: una clave foranea invalida daria 500
-        if (req.user.rol === 'administrativo' && req.body.ubicacion_destino_id) {
-            const ubi = await client.query(
-                'SELECT tipo, activa FROM ubicaciones_stock WHERE id = $1', [destino]);
-            if (ubi.rows.length === 0 || ubi.rows[0].activa !== true || ubi.rows[0].tipo !== 'furgon') {
-                await client.query('ROLLBACK');
-                return res.status(400).json({ error: 'El destino debe ser un furgón activo' });
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            const bodega = await bodegaCentral(client);
+            // un mecanico siempre carga a SU furgon: aceptar un destino del cuerpo le permitiria
+            // cargarle stock al furgon de otro. Solo el administrativo puede indicar destino.
+            if (req.user.rol === 'administrativo' && req.body.ubicacion_destino_id !== undefined && req.body.ubicacion_destino_id !== null
+                && !idDeCuerpoValido(req.body.ubicacion_destino_id)) {
+                await deshacer();
+                return res.status(400).json({ error: 'ubicacion_destino_id debe ser un número válido' });
             }
-        }
-        // motivo opcional: el panel lo manda al traspasar para cuadrar un descuadre
-        const motivo = req.body.motivo_codigo === undefined || req.body.motivo_codigo === null || req.body.motivo_codigo === ''
-            ? null : req.body.motivo_codigo;
-        if (motivo !== null && !validarMotivoAjuste(motivo).valido) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'Elige un motivo de la lista' });
-        }
-
-        // el insumo se bloquea antes que su stock (mismo orden que moverStock)
-        await client.query('SELECT 1 FROM insumos WHERE id = $1 FOR NO KEY UPDATE', [insumo_id]);
-        // reintento simultaneo con el mismo uuid: el segundo esperaba este candado mientras el primero
-        // guardaba; con el candado tomado vuelve a mirar si el uuid existe, antes de validar contra
-        // una bodega que ya cambio (daria 400 por "no hay stock" a una carga que si se hizo)
-        if (uuid) {
-            const repetida = await respuestaPrevia();
-            if (repetida) {
-                await client.query('ROLLBACK');
-                return res.status(repetida.status).json(repetida.body);
+            const destino = req.user.rol === 'administrativo' && req.body.ubicacion_destino_id
+                ? req.body.ubicacion_destino_id
+                : await furgonDe(client, req.user.id);
+            if (!destino) {
+                await deshacer();
+                return res.status(400).json({ error: 'No tienes un furgón asignado' });
             }
-        }
-        // FOR UPDATE: dos mecanicos cargando el mismo repuesto a la vez no pueden pasarse del stock
-        const existencia = await client.query(
-            'SELECT cantidad FROM stock_ubicacion WHERE ubicacion_id = $1 AND insumo_id = $2 FOR UPDATE',
-            [bodega, insumo_id]
-        );
-        const disponible = existencia.rows[0] ? Number(existencia.rows[0].cantidad) : 0;
 
-        const validacion = validarTransferencia({
-            cantidad,
-            disponibleOrigen: disponible,
-            origenId: bodega,
-            destinoId: destino,
+            // el destino debe ser un furgon activo: una clave foranea invalida daria 500
+            if (req.user.rol === 'administrativo' && req.body.ubicacion_destino_id) {
+                const ubi = await client.query(
+                    'SELECT tipo, activa FROM ubicaciones_stock WHERE id = $1', [destino]);
+                if (ubi.rows.length === 0 || ubi.rows[0].activa !== true || ubi.rows[0].tipo !== 'furgon') {
+                    await deshacer();
+                    return res.status(400).json({ error: 'El destino debe ser un furgón activo' });
+                }
+            }
+            // motivo opcional: el panel lo manda al traspasar para cuadrar un descuadre
+            const motivo = req.body.motivo_codigo === undefined || req.body.motivo_codigo === null || req.body.motivo_codigo === ''
+                ? null : req.body.motivo_codigo;
+            if (motivo !== null && !validarMotivoAjuste(motivo).valido) {
+                await deshacer();
+                return res.status(400).json({ error: 'Elige un motivo de la lista' });
+            }
+
+            // el insumo se bloquea antes que su stock (mismo orden que moverStock)
+            await client.query('SELECT 1 FROM insumos WHERE id = $1 FOR NO KEY UPDATE', [insumo_id]);
+            // reintento simultaneo con el mismo uuid: el segundo esperaba este candado mientras el primero
+            // guardaba; con el candado tomado vuelve a mirar si el uuid existe, antes de validar contra
+            // una bodega que ya cambio (daria 400 por "no hay stock" a una carga que si se hizo)
+            if (uuid) {
+                const repetida = await respuestaPrevia(client);
+                if (repetida) {
+                    await deshacer();
+                    return res.status(repetida.status).json(repetida.body);
+                }
+            }
+            // FOR UPDATE: dos mecanicos cargando el mismo repuesto a la vez no pueden pasarse del stock
+            const existencia = await client.query(
+                'SELECT cantidad FROM stock_ubicacion WHERE ubicacion_id = $1 AND insumo_id = $2 FOR UPDATE',
+                [bodega, insumo_id]
+            );
+            const disponible = existencia.rows[0] ? Number(existencia.rows[0].cantidad) : 0;
+
+            const validacion = validarTransferencia({
+                cantidad,
+                disponibleOrigen: disponible,
+                origenId: bodega,
+                destinoId: destino,
+            });
+            if (!validacion.valida) {
+                await deshacer();
+                return res.status(400).json({ error: validacion.error });
+            }
+
+            await moverStock(client, { ubicacionId: bodega, insumoId: insumo_id, delta: -cantidad });
+            await moverStock(client, { ubicacionId: destino, insumoId: insumo_id, delta: cantidad });
+            await client.query(
+                `INSERT INTO movimientos_insumo
+                    (insumo_id, cantidad, tipo, usuario_id, ubicacion_origen_id, ubicacion_destino_id, descripcion, uuid_cliente, motivo_codigo, created_at)
+                 VALUES ($1, $2, 'salida', $3, $4, $5, 'Carga de furgon desde bodega', $6, $7, clock_timestamp())`,
+                [insumo_id, cantidad, req.user.id, bodega, destino, uuid, motivo]
+            );
+
+            await confirmar();
+            res.status(201).json({ ok: true, ubicacion_destino_id: destino, cantidad: Number(cantidad) });
         });
-        if (!validacion.valida) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ error: validacion.error });
-        }
-
-        await moverStock(client, { ubicacionId: bodega, insumoId: insumo_id, delta: -cantidad });
-        await moverStock(client, { ubicacionId: destino, insumoId: insumo_id, delta: cantidad });
-        await client.query(
-            `INSERT INTO movimientos_insumo
-                (insumo_id, cantidad, tipo, usuario_id, ubicacion_origen_id, ubicacion_destino_id, descripcion, uuid_cliente, motivo_codigo, created_at)
-             VALUES ($1, $2, 'salida', $3, $4, $5, 'Carga de furgon desde bodega', $6, $7, clock_timestamp())`,
-            [insumo_id, cantidad, req.user.id, bodega, destino, uuid, motivo]
-        );
-
-        await client.query('COMMIT');
-        res.status(201).json({ ok: true, ubicacion_destino_id: destino, cantidad: Number(cantidad) });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         // dos reintentos simultaneos: el segundo choca con el UNIQUE, y eso significa "ya estaba hecho"
         if (esUuidDuplicado(err)) {
-            const previa = await respuestaPrevia();
+            const previa = await respuestaPrevia(pool);
             if (previa) return res.status(previa.status).json(previa.body);
         }
         console.error(err);
         res.status(500).json({ error: 'Error al cargar el furgón' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -383,9 +374,8 @@ router.post('/ajuste', verifyToken, requireRole('administrativo'), async (req, r
         return res.status(400).json({ error: 'La nota no puede pasar de 500 caracteres' });
     }
 
-    let client;
-    const respuestaPrevia = async () => {
-        const previo = await buscarPorUuid(client, 'movimientos_insumo', uuid);
+    const respuestaPrevia = async (db) => {
+        const previo = await buscarPorUuid(db, 'movimientos_insumo', uuid);
         if (!previo) return null;
         // solo es "el mismo conteo" si coincide el usuario, el tipo, el insumo y la ubicacion
         const ubicacionPrevia = previo.ubicacion_destino_id || previo.ubicacion_origen_id;
@@ -396,76 +386,72 @@ router.post('/ajuste', verifyToken, requireRole('administrativo'), async (req, r
         return { status: 200, body: { ok: true, ya_registrada: true, movimiento_id: previo.id } };
     };
     try {
-        client = await pool.connect();
         // el reintento se resuelve ANTES de comparar la cantidad esperada: la repeticion de un
         // conteo ya hecho vera un stock distinto y recibiria un 409 que no corresponde
-        const previa = await respuestaPrevia();
+        const previa = await respuestaPrevia(pool);
         if (previa) return res.status(previa.status).json(previa.body);
-
-        await client.query('BEGIN');
-        const ubi = await client.query('SELECT id, activa FROM ubicaciones_stock WHERE id = $1', [ubicacion_id]);
-        if (ubi.rows.length === 0 || ubi.rows[0].activa !== true) {
-            await client.query('ROLLBACK');
-            return res.status(400).json({ error: 'La ubicación no existe o está inactiva' });
-        }
-        const insumo = await client.query('SELECT id FROM insumos WHERE id = $1 FOR NO KEY UPDATE', [insumo_id]);
-        if (insumo.rows.length === 0) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Insumo no encontrado' });
-        }
-        await client.query(
-            `INSERT INTO stock_ubicacion (ubicacion_id, insumo_id, cantidad) VALUES ($1, $2, 0)
-             ON CONFLICT (ubicacion_id, insumo_id) DO NOTHING`, [ubicacion_id, insumo_id]);
-        const existencia = await client.query(
-            'SELECT cantidad FROM stock_ubicacion WHERE ubicacion_id = $1 AND insumo_id = $2 FOR UPDATE', [ubicacion_id, insumo_id]);
-        // dos reintentos simultaneos: el segundo esperaba el candado mientras el primero guardaba; con el
-        // candado ya tomado vuelve a mirar si el uuid existe, antes de comparar con un stock que ya cambio
-        const repetida = await respuestaPrevia();
-        if (repetida) {
-            await client.query('ROLLBACK');
-            return res.status(repetida.status).json(repetida.body);
-        }
-        const calculo = calcularAjuste({
-            contada: cantidad_contada, sistema: existencia.rows[0].cantidad, esperada: cantidad_esperada,
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            const ubi = await client.query('SELECT id, activa FROM ubicaciones_stock WHERE id = $1', [ubicacion_id]);
+            if (ubi.rows.length === 0 || ubi.rows[0].activa !== true) {
+                await deshacer();
+                return res.status(400).json({ error: 'La ubicación no existe o está inactiva' });
+            }
+            const insumo = await client.query('SELECT id FROM insumos WHERE id = $1 FOR NO KEY UPDATE', [insumo_id]);
+            if (insumo.rows.length === 0) {
+                await deshacer();
+                return res.status(404).json({ error: 'Insumo no encontrado' });
+            }
+            await client.query(
+                `INSERT INTO stock_ubicacion (ubicacion_id, insumo_id, cantidad) VALUES ($1, $2, 0)
+                 ON CONFLICT (ubicacion_id, insumo_id) DO NOTHING`, [ubicacion_id, insumo_id]);
+            const existencia = await client.query(
+                'SELECT cantidad FROM stock_ubicacion WHERE ubicacion_id = $1 AND insumo_id = $2 FOR UPDATE', [ubicacion_id, insumo_id]);
+            // dos reintentos simultaneos: el segundo esperaba el candado mientras el primero guardaba; con el
+            // candado ya tomado vuelve a mirar si el uuid existe, antes de comparar con un stock que ya cambio
+            const repetida = await respuestaPrevia(client);
+            if (repetida) {
+                await deshacer();
+                return res.status(repetida.status).json(repetida.body);
+            }
+            const calculo = calcularAjuste({
+                contada: cantidad_contada, sistema: existencia.rows[0].cantidad, esperada: cantidad_esperada,
+            });
+            if (!calculo.ok) {
+                await deshacer();
+                return res.status(calculo.status).json({ error: calculo.error });
+            }
+            // contar lo mismo que dice el sistema tambien se registra: queda un movimiento de cantidad 0 (con su
+            // motivo y su uuid) que deja constancia del conteo y hace idempotente el reintento. No mueve stock.
+            if (calculo.delta !== 0) {
+                await moverStock(client, { ubicacionId: ubicacion_id, insumoId: insumo_id, delta: calculo.delta });
+            }
+            const mov = await client.query(
+                `INSERT INTO movimientos_insumo
+                    (insumo_id, cantidad, tipo, usuario_id, ubicacion_origen_id, ubicacion_destino_id, descripcion, uuid_cliente, motivo_codigo, created_at)
+                 VALUES ($1, $2, 'ajuste', $3, $4, $5, $6, $7, $8, clock_timestamp()) RETURNING id`,
+                [insumo_id, Math.abs(calculo.delta), req.user.id,
+                    calculo.delta < 0 ? ubicacion_id : null,
+                    // con delta 0 la ubicacion va como destino: asi el reintento puede comprobar que es el mismo conteo
+                    calculo.delta >= 0 ? ubicacion_id : null,
+                    nota || null, uuid, motivo_codigo]
+            );
+            // perdida o merma (diferencia negativa): el gerente lo revisa. Un conteo normal, uno que suma stock o uno sin
+            // diferencia no avisa. El reintento salio antes (respuestaPrevia) y no llega aca
+            await avisarAjusteInventario(client, {
+                insumoId: insumo_id, ubicacionId: ubicacion_id, delta: calculo.delta,
+                motivoCodigo: motivo_codigo, usuarioId: req.user.id,
+            });
+            await confirmar();
+            if (calculo.delta === 0) return res.json({ ok: true, sin_cambios: true, delta: 0, movimiento_id: mov.rows[0].id });
+            res.status(201).json({ ok: true, delta: calculo.delta, movimiento_id: mov.rows[0].id });
         });
-        if (!calculo.ok) {
-            await client.query('ROLLBACK');
-            return res.status(calculo.status).json({ error: calculo.error });
-        }
-        // contar lo mismo que dice el sistema tambien se registra: queda un movimiento de cantidad 0 (con su
-        // motivo y su uuid) que deja constancia del conteo y hace idempotente el reintento. No mueve stock.
-        if (calculo.delta !== 0) {
-            await moverStock(client, { ubicacionId: ubicacion_id, insumoId: insumo_id, delta: calculo.delta });
-        }
-        const mov = await client.query(
-            `INSERT INTO movimientos_insumo
-                (insumo_id, cantidad, tipo, usuario_id, ubicacion_origen_id, ubicacion_destino_id, descripcion, uuid_cliente, motivo_codigo, created_at)
-             VALUES ($1, $2, 'ajuste', $3, $4, $5, $6, $7, $8, clock_timestamp()) RETURNING id`,
-            [insumo_id, Math.abs(calculo.delta), req.user.id,
-                calculo.delta < 0 ? ubicacion_id : null,
-                // con delta 0 la ubicacion va como destino: asi el reintento puede comprobar que es el mismo conteo
-                calculo.delta >= 0 ? ubicacion_id : null,
-                nota || null, uuid, motivo_codigo]
-        );
-        // perdida o merma (diferencia negativa): el gerente lo revisa. Un conteo normal, uno que suma stock o uno sin
-        // diferencia no avisa. El reintento salio antes (respuestaPrevia) y no llega aca
-        await avisarAjusteInventario(client, {
-            insumoId: insumo_id, ubicacionId: ubicacion_id, delta: calculo.delta,
-            motivoCodigo: motivo_codigo, usuarioId: req.user.id,
-        });
-        await client.query('COMMIT');
-        if (calculo.delta === 0) return res.json({ ok: true, sin_cambios: true, delta: 0, movimiento_id: mov.rows[0].id });
-        res.status(201).json({ ok: true, delta: calculo.delta, movimiento_id: mov.rows[0].id });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         if (esUuidDuplicado(err)) {
-            const previa = await respuestaPrevia();
+            const previa = await respuestaPrevia(pool);
             if (previa) return res.status(previa.status).json(previa.body);
         }
         console.error(err);
         res.status(500).json({ error: 'Error al registrar el conteo' });
-    } finally {
-        if (client) client.release();
     }
 });
 
@@ -761,119 +747,115 @@ router.post('/orden/:ordenId', verifyToken, requireRole('mecanico', 'administrat
     const yaRegistrada = await buscarPorUuid(pool, 'movimientos_insumo', uuid);
     if (yaRegistrada) return responderExistente(yaRegistrada);
 
-    let client = null;
     try {
-        client = await pool.connect();
-        await client.query('BEGIN');
-        const orden = await bloquearOrden(client, req.params.ordenId);
-        if (!orden) {
-            await client.query('ROLLBACK');
-            return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
-        }
-        // lo que se reviso arriba sin bloqueo se confirma con la OT bloqueada: entre una cosa y la
-        // otra se pudo cerrar o reasignar
-        if (req.user.rol === 'mecanico') {
-            if (orden.mecanico_id !== req.user.id) {
-                await client.query('ROLLBACK');
-                return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
+        return await conTransaccion(pool, async (client, { confirmar, deshacer }) => {
+            const orden = await bloquearOrden(client, req.params.ordenId);
+            if (!orden) {
+                await deshacer();
+                return res.status(404).json({ error: 'Orden de trabajo no encontrada' });
             }
-            if (orden.estado === 'finalizada') {
-                await client.query('ROLLBACK');
-                return res.status(409).json({ error: MENSAJE_OT_CERRADA });
+            // lo que se reviso arriba sin bloqueo se confirma con la OT bloqueada: entre una cosa y la
+            // otra se pudo cerrar o reasignar
+            if (req.user.rol === 'mecanico') {
+                if (orden.mecanico_id !== req.user.id) {
+                    await deshacer();
+                    return res.status(403).json({ error: 'Esta orden está asignada a otro técnico' });
+                }
+                if (orden.estado === 'finalizada') {
+                    await deshacer();
+                    return res.status(409).json({ error: MENSAJE_OT_CERRADA });
+                }
             }
-        }
-        // dos reintentos de la misma tarea: el segundo espera el bloqueo y encuentra la linea
-        const yaGuardada = await buscarPorUuid(client, 'movimientos_insumo', uuid);
-        if (yaGuardada) {
-            // con el cliente de la transaccion: el bloqueo de la OT sigue tomado mientras se lee
-            const cuerpo = await cuerpoExistente(client, yaGuardada);
-            await client.query('ROLLBACK');
-            return res.status(200).json(cuerpo);
-        }
-        const compuertas = evaluarCompuertas({
-            estado: orden.estado, facturaFolio: orden.factura_folio,
-            motivoCodigo: req.body.motivo_codigo, motivo: req.body.motivo,
-        });
-        if (!compuertas.ok) {
-            await client.query('ROLLBACK');
-            return res.status(compuertas.status).json({ error: compuertas.error });
-        }
+            // dos reintentos de la misma tarea: el segundo espera el bloqueo y encuentra la linea
+            const yaGuardada = await buscarPorUuid(client, 'movimientos_insumo', uuid);
+            if (yaGuardada) {
+                // con el cliente de la transaccion: el bloqueo de la OT sigue tomado mientras se lee
+                const cuerpo = await cuerpoExistente(client, yaGuardada);
+                await deshacer();
+                return res.status(200).json(cuerpo);
+            }
+            const compuertas = evaluarCompuertas({
+                estado: orden.estado, facturaFolio: orden.factura_folio,
+                motivoCodigo: req.body.motivo_codigo, motivo: req.body.motivo,
+            });
+            if (!compuertas.ok) {
+                await deshacer();
+                return res.status(compuertas.status).json({ error: compuertas.error });
+            }
 
-        // El repuesto sale de donde estaba fisicamente: del furgon si lo registra el mecanico,
-        // de la bodega si lo registra el administrativo. Se permite dejar el furgon en negativo
-        // (ver utils/stock.js): la pieza ya se instalo y el descuadre queda visible para bodega.
-        let ubicacionOrigen = null;
-        let nombreInsumo = null;
-        if (insumo_id) {
-            const insumoResult = await client.query('SELECT id, nombre FROM insumos WHERE id = $1', [insumo_id]);
-            if (insumoResult.rows.length === 0) {
-                await client.query('ROLLBACK');
-                return res.status(404).json({ error: 'Insumo no encontrado' });
+            // El repuesto sale de donde estaba fisicamente: del furgon si lo registra el mecanico,
+            // de la bodega si lo registra el administrativo. Se permite dejar el furgon en negativo
+            // (ver utils/stock.js): la pieza ya se instalo y el descuadre queda visible para bodega.
+            let ubicacionOrigen = null;
+            let nombreInsumo = null;
+            if (insumo_id) {
+                const insumoResult = await client.query('SELECT id, nombre FROM insumos WHERE id = $1', [insumo_id]);
+                if (insumoResult.rows.length === 0) {
+                    await deshacer();
+                    return res.status(404).json({ error: 'Insumo no encontrado' });
+                }
+                nombreInsumo = insumoResult.rows[0].nombre;
+                ubicacionOrigen = req.user.rol === 'mecanico'
+                    ? await furgonDe(client, req.user.id)
+                    : await bodegaCentral(client);
+                if (ubicacionOrigen) {
+                    await moverStock(client, { ubicacionId: ubicacionOrigen, insumoId: insumo_id, delta: -cantidad });
+                }
+                // sin furgon asignado el consumo igual se registra: la OT no puede quedar bloqueada
+                // porque a un mecanico todavia no le hayan cargado su vehiculo en el sistema
             }
-            nombreInsumo = insumoResult.rows[0].nombre;
-            ubicacionOrigen = req.user.rol === 'mecanico'
-                ? await furgonDe(client, req.user.id)
-                : await bodegaCentral(client);
-            if (ubicacionOrigen) {
-                await moverStock(client, { ubicacionId: ubicacionOrigen, insumoId: insumo_id, delta: -cantidad });
-            }
-            // sin furgon asignado el consumo igual se registra: la OT no puede quedar bloqueada
-            // porque a un mecanico todavia no le hayan cargado su vehiculo en el sistema
-        }
-        const antes = orden.valorizacion === null ? [] : await lineasVigentes(client, orden.id);
-        const movimiento = await client.query(
-            `INSERT INTO movimientos_insumo
-                (insumo_id, orden_trabajo_id, cantidad, tipo, usuario_id, descripcion, precio_unitario, facturable,
-                 ubicacion_origen_id, uuid_cliente)
-             VALUES ($1, $2, $3, 'salida', $4, $5, $6, COALESCE($7::estado_facturable_linea, 'pendiente'), $8, $9)
-             RETURNING *`,
-            [
-                insumo_id || null,
-                req.params.ordenId,
-                cantidad,
-                req.user.id,
-                descripcion && descripcion.trim() ? descripcion.trim() : null,
-                precio_unitario === undefined || precio_unitario === null || precio_unitario === '' ? null : precio_unitario,
-                facturable || null,
-                ubicacionOrigen,
-                uuid,
-            ]
-        );
-        const linea = movimiento.rows[0];
-        const facturableOt = await recalcularFacturableOt(client, req.params.ordenId);
-        await dejarEvento(client, {
-            ordenId: orden.id, tipo: 'linea_agregada', origen: origenDelCambio(req), usuario: req.user,
-            uuidCliente: uuid,
-            detalle: detalleDeLinea({
-                lineaId: linea.id,
-                insumo: nombreInsumo || linea.descripcion,
-                campo: 'linea',
-                antes: null,
-                despues: {
-                    cantidad: Number(linea.cantidad),
-                    precio_unitario: linea.precio_unitario === null ? null : Number(linea.precio_unitario),
-                    facturable: linea.facturable,
-                },
-                compuertas,
-            }),
+            const antes = orden.valorizacion === null ? [] : await lineasVigentes(client, orden.id);
+            const movimiento = await client.query(
+                `INSERT INTO movimientos_insumo
+                    (insumo_id, orden_trabajo_id, cantidad, tipo, usuario_id, descripcion, precio_unitario, facturable,
+                     ubicacion_origen_id, uuid_cliente)
+                 VALUES ($1, $2, $3, 'salida', $4, $5, $6, COALESCE($7::estado_facturable_linea, 'pendiente'), $8, $9)
+                 RETURNING *`,
+                [
+                    insumo_id || null,
+                    req.params.ordenId,
+                    cantidad,
+                    req.user.id,
+                    descripcion && descripcion.trim() ? descripcion.trim() : null,
+                    precio_unitario === undefined || precio_unitario === null || precio_unitario === '' ? null : precio_unitario,
+                    facturable || null,
+                    ubicacionOrigen,
+                    uuid,
+                ]
+            );
+            const linea = movimiento.rows[0];
+            const facturableOt = await recalcularFacturableOt(client, req.params.ordenId);
+            await dejarEvento(client, {
+                ordenId: orden.id, tipo: 'linea_agregada', origen: origenDelCambio(req), usuario: req.user,
+                uuidCliente: uuid,
+                detalle: detalleDeLinea({
+                    lineaId: linea.id,
+                    insumo: nombreInsumo || linea.descripcion,
+                    campo: 'linea',
+                    antes: null,
+                    despues: {
+                        cantidad: Number(linea.cantidad),
+                        precio_unitario: linea.precio_unitario === null ? null : Number(linea.precio_unitario),
+                        facturable: linea.facturable,
+                    },
+                    compuertas,
+                }),
+            });
+            await anularValorizacionSiCorresponde(client, req, orden, antes, {
+                tipoCambio: 'linea_agregada', lineaId: linea.id, compuertas, facturableOt,
+            });
+            await avisarSiPasoAPorValorizar(client, req, orden, facturableOt);
+            await confirmar();
+            res.status(201).json({ ...linea, orden_facturable: facturableOt });
         });
-        await anularValorizacionSiCorresponde(client, req, orden, antes, {
-            tipoCambio: 'linea_agregada', lineaId: linea.id, compuertas, facturableOt,
-        });
-        await avisarSiPasoAPorValorizar(client, req, orden, facturableOt);
-        await client.query('COMMIT');
-        res.status(201).json({ ...linea, orden_facturable: facturableOt });
     } catch (err) {
-        if (client) await client.query('ROLLBACK').catch(() => {});
         if (esUuidDuplicado(err)) {
             // otro reintento de la misma tarea gano la carrera; el ROLLBACK ya devolvio el stock
-            const existente = await buscarPorUuid(client, 'movimientos_insumo', uuid);
-            if (existente) return responderExistente(existente, client);
+            const existente = await buscarPorUuid(pool, 'movimientos_insumo', uuid);
+            if (existente) return responderExistente(existente, pool);
         }
         console.error(err);
         res.status(500).json({ error: 'Error al registrar la línea de repuesto' });
-    } finally {
-        if (client) client.release();
     }
 });
 
