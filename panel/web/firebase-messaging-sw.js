@@ -8,7 +8,9 @@
  * getToken(vapidKey).
  *
  * Formato esperado del mensaje (FCM HTTP v1 hacia web): { notification: { title, body, tag }, data: {
- * tipo, orden_trabajo_id } }. Sin verificar contra FCM real todavia (ver README).
+ * tipo, orden_trabajo_id } }. Verificado contra FCM real el 19-11-2026: un mensaje enviado desde el worker
+ * (services/fcm.js) llego a Brave y se mostro como notificacion del sistema (titulo, cuerpo y origen del
+ * sitio) con el panel cerrado. Sin verificar todavia: tocar la notificacion para abrir la OT, y Safari/iOS.
  */
 'use strict';
 
