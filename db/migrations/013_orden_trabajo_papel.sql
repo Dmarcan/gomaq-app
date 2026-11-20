@@ -3,7 +3,7 @@
 -- del mecanico todavia no tenia: tipo de servicio, checklist de sistemas intervenidos, tramos
 -- de trabajo, repuestos con facturable por linea, y observaciones iniciales/finales separadas.
 --
--- Queda deliberadamente fuera, pendiente de confirmar con GOMAQ: el campo "LLAMADO", el
+-- Queda deliberadamente fuera del alcance de esta migracion: el campo "LLAMADO", el
 -- checkbox "TRABAJO REALIZADO" de la cabecera, y las columnas NORMALES / EXTRAS de horas.
 
 CREATE TYPE tipo_servicio_ot AS ENUM (

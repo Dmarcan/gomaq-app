@@ -188,8 +188,8 @@ venta.
   (sirve para corregir y para cargar mantenciones anteriores al sistema).
 - **Agenda mensual** (pantalla Horómetro, pestaña "Por medir"): lista los equipos arrendados sin lectura en el
   mes en curso. Como el aviso se evalúa al registrar una lectura, un equipo del que nadie toma el horómetro no
-  alerta; para ese caso está la agenda. Sin confirmar con la empresa si también deben medirse los equipos en
-  taller o en patio.
+  alerta; para ese caso está la agenda. La agenda solo considera los equipos arrendados: medir también los
+  equipos que están en taller o en patio queda fuera del alcance actual.
 
 ## 5. Costo real por equipo
 
