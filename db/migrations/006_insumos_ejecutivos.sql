@@ -1,5 +1,5 @@
 -- Migracion 006: consumo de insumos con descuento de stock, y atribucion de arriendos por ejecutivo
--- (entrevista la administrativa: hoy no hay descuento de stock por insumo usado en una OT, ni forma de saber
+-- (entrevista con la empresa: hoy no hay descuento de stock por insumo usado en una OT, ni forma de saber
 -- que porcentaje de lo arrendado corresponde a cada ejecutivo en terreno)
 
 CREATE TYPE tipo_movimiento_insumo AS ENUM ('salida', 'ingreso');

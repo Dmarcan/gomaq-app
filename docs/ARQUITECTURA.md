@@ -42,12 +42,11 @@ flowchart LR
   (gestión) y cliente (portal de seguimiento).
 - **App del mecánico** (`terreno/`): Flutter, solo Android, offline-first.
 - **Código compartido** (`comun/`): paquete Dart con el cliente HTTP (`ClienteApi`), el formato de fechas y
-  montos (es_CL) y las cuentas de demostración.
+  montos (es_CL).
 - **Worker** (`backend/scripts/worker.js`): envía los avisos pendientes. Mismo código que la API, proceso aparte.
 - **Base de datos** (`db/`): `schema.sql` más migraciones numeradas que aplica `backend/scripts/migrar.js`.
 
-Decisiones de estructura del front-end (workspace de Dart, por qué `terreno/` va aparte):
-[docs/tecnica/PLAN_ARQUITECTURA_FRONTEND.md](tecnica/PLAN_ARQUITECTURA_FRONTEND.md).
+`panel/` y `comun/` forman un workspace de Dart; `terreno/` va aparte porque tiene su propio `pubspec.lock`.
 
 ## 2. Backend
 
@@ -389,21 +388,20 @@ rechazadas, sesiones y códigos de cuenta (30 días cada uno) (`src/utils/retenc
 
 ## 12. Cuentas de demostración
 
-El código incluye, y la base desplegada puede tener cargadas, tres cuentas de demostración deliberadas (administrativo, mecánico y
-cliente de la empresa `Empresa Demo GOMAQ`), con botones de inicio rápido en el login del panel y de terreno.
-Sus credenciales están en `comun/lib/usuarios_demo.dart` y `backend/scripts/usuarios-demo.js`, y por eso son
-conocidas por quien lea el repositorio.
-
-**Antes de usar el sistema con datos reales hay que borrarlas:**
+`backend/scripts/usuarios-demo.js` crea tres cuentas de demostración (administrativo, mecánico y cliente de la
+empresa `Empresa Demo GOMAQ`). Las contraseñas no están en el repositorio: el script las lee de las variables de
+entorno `GOMAQ_DEMO_CLAVE_ADMINISTRATIVO`, `GOMAQ_DEMO_CLAVE_MECANICO` y `GOMAQ_DEMO_CLAVE_CLIENTE` (mínimo 8
+caracteres) y falla con un mensaje claro si falta alguna. El login del panel y de terreno no tiene botones de
+inicio rápido.
 
 ```bash
+GOMAQ_DEMO_CLAVE_ADMINISTRATIVO=... GOMAQ_DEMO_CLAVE_MECANICO=... GOMAQ_DEMO_CLAVE_CLIENTE=...   node scripts/usuarios-demo.js crear
 railway ssh --service gomaq-worker "node scripts/usuarios-demo.js borrar"
 ```
 
-El comando elimina los tres usuarios y la empresa de demostración (falla si la empresa ya tiene datos
-asociados, para no borrar nada real). Después se retiran `comun/lib/usuarios_demo.dart`,
-`backend/scripts/usuarios-demo.js` y los botones de inicio rápido de `login_screen.dart` del panel y de
-terreno. Para volver a crearlas: `node scripts/usuarios-demo.js crear`.
+`borrar` elimina los tres usuarios y la empresa de demostración (falla si la empresa ya tiene datos asociados,
+para no borrar nada real) y no necesita las contraseñas. Antes de usar el sistema con datos reales, las cuentas
+demo que se hayan creado deben borrarse.
 
 Los datos de demostración del panel (clientes, equipos, facturas, órdenes marcados con `[DEMO]`) son otra
 cosa: `node scripts/cargar_demo.js` los carga y `--borrar` los quita.

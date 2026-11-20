@@ -10,9 +10,6 @@ raíz (con `panel/`); `terreno/` lo usa por `path`.
   cada app le entrega el token, los timeouts y qué hacer ante un 401. Los errores de red salen sin envolver:
   la cola de `terreno/` los clasifica por tipo.
 - `lib/formato.dart`: `Formato`, fechas y montos en es_CL.
-- `lib/usuarios_demo.dart`: credenciales de las cuentas de demostración para los botones de inicio rápido del
-  panel y de terreno. Se cambian junto con `backend/scripts/usuarios-demo.js` y se eliminan antes de usar
-  datos reales (ver [../docs/DESPLIEGUE.md](../docs/DESPLIEGUE.md), sección 7).
 
 ## Probar
 

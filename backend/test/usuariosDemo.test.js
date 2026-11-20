@@ -1,22 +1,24 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('node:fs');
-const path = require('node:path');
+const { USUARIOS, leerClaves } = require('../scripts/usuarios-demo');
 
-// Las credenciales de prueba viven en dos lugares (el script que crea los usuarios y las apps
-// Flutter que las usan en el inicio rapido). Si se desincronizan, el boton falla con "credenciales
-// incorrectas" y cuesta entender por que.
-test('las credenciales demo del script coinciden con las de comun/lib/usuarios_demo.dart', () => {
-    const dart = fs.readFileSync(path.join(__dirname, '../../comun/lib/usuarios_demo.dart'), 'utf8');
-    const { USUARIOS } = require('../scripts/usuarios-demo');
-    const enDart = [...dart.matchAll(/UsuarioDemo\('[^']*', '([^']+)', '([^']+)'\)/g)]
-        .map(([, email, clave]) => ({ email, clave }));
-    assert.equal(enDart.length, USUARIOS.length);
-    for (const u of USUARIOS) {
-        assert.ok(
-            enDart.some((d) => d.email === u.email && d.clave === u.clave),
-            `${u.email} no coincide con comun/lib/usuarios_demo.dart`
-        );
-        assert.ok(u.clave.length >= 8, 'la contrasena debe cumplir el minimo del sistema');
-    }
+// Las contrasenas demo no viven en el repositorio: el script las lee del entorno y debe fallar
+// con un mensaje claro si faltan.
+const entornoCompleto = () => Object.fromEntries(USUARIOS.map((u, i) => [u.variable, `clave-de-prueba-${i}`]));
+
+test('leerClaves devuelve la clave de cada usuario desde el entorno', () => {
+    const claves = leerClaves(entornoCompleto());
+    for (const [i, u] of USUARIOS.entries()) assert.equal(claves[u.email], `clave-de-prueba-${i}`);
+});
+
+test('leerClaves falla nombrando las variables que faltan', () => {
+    const env = entornoCompleto();
+    delete env.GOMAQ_DEMO_CLAVE_MECANICO;
+    assert.throws(() => leerClaves(env), /GOMAQ_DEMO_CLAVE_MECANICO/);
+    assert.throws(() => leerClaves({}), /GOMAQ_DEMO_CLAVE_ADMINISTRATIVO/);
+});
+
+test('leerClaves rechaza claves de menos de 8 caracteres', () => {
+    const env = { ...entornoCompleto(), GOMAQ_DEMO_CLAVE_CLIENTE: 'corta' };
+    assert.throws(() => leerClaves(env), /GOMAQ_DEMO_CLAVE_CLIENTE/);
 });

@@ -83,7 +83,7 @@ describe('calcularRentabilidad', () => {
         assert.strictEqual(r.sale_a_perdida, false);
     });
 
-    test('equipo que sale a perdida: el caso que el jefe de taller quiere detectar', () => {
+    test('equipo que sale a perdida: el caso que la empresa quiere detectar', () => {
         const r = calcularRentabilidad({
             lineas: [linea(3, 120000)],
             facturas: [{ monto: 249900 }],

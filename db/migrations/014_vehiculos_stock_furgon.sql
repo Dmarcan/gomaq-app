@@ -1,6 +1,6 @@
 -- Migracion 014: vehiculos del personal y stock por ubicacion (furgon de cada mecanico)
 --
--- Entrevista el jefe de taller del 21 de julio de 2026, punto 3: "cada uno tiene un furgon asignado",
+-- Entrevista con la empresa del 21 de julio de 2026, punto 3: "cada uno tiene un furgon asignado",
 -- no rotan entre mecanicos, y cada furgon lleva su propio stock de repuestos. Ademas existe
 -- un furgon exclusivo de compras que no sale a terreno: por eso `vehiculos.usuario_id` es
 -- nullable y solo los furgones con mecanico asignado tienen ubicacion de stock.

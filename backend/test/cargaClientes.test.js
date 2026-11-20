@@ -71,7 +71,7 @@ test('plazoConstante: solo si todas las facturas tuvieron el mismo plazo', () =>
     assert.equal(plazoConstante(undefined), null);
 });
 
-test('la lista de ejecutivos a crear no incluye a Carlos ni a el jefe de taller', () => {
+test('la lista de ejecutivos a crear no incluye a personas que no son ejecutivos', () => {
     assert.deepEqual(EJECUTIVOS_A_CREAR, ['Freddy', 'Alejandra', 'Wenceslao', 'Oscar']);
     assert.equal(normalizarNombre('  ÁÉ  Íó '), 'ae io');
 });

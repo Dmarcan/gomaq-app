@@ -193,8 +193,10 @@ Todos aceptan `--simular` (cargas) y son idempotentes. Detalle de cada uno en el
 
 ### Cuentas de demostración
 
-Existen cuentas de demostración deliberadas, con botones de inicio rápido en el login del panel y de terreno
-(ver [ARQUITECTURA.md](ARQUITECTURA.md), sección 12). Antes de usar datos reales:
+`backend/scripts/usuarios-demo.js` crea cuentas de demostración con contraseñas entregadas por variables de
+entorno (`GOMAQ_DEMO_CLAVE_ADMINISTRATIVO`, `GOMAQ_DEMO_CLAVE_MECANICO`, `GOMAQ_DEMO_CLAVE_CLIENTE`); no hay
+contraseñas en el repositorio (ver [ARQUITECTURA.md](ARQUITECTURA.md), sección 12). Antes de usar datos reales,
+borrarlas:
 
 ```bash
 railway ssh --service gomaq-worker "node scripts/usuarios-demo.js borrar"

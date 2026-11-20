@@ -1,6 +1,6 @@
 # GOMAQ
 
-[![Tests](https://github.com/Dmarcan/gomaq/actions/workflows/tests.yml/badge.svg)](https://github.com/Dmarcan/gomaq/actions/workflows/tests.yml)
+[![Tests](https://github.com/Dmarcan/gomaq-app/actions/workflows/tests.yml/badge.svg)](https://github.com/Dmarcan/gomaq-app/actions/workflows/tests.yml)
 
 Sistema de gestión y comunicación centralizado para una empresa de arriendo de maquinaria. Digitaliza la
 flota, las guías de despacho, las órdenes de trabajo (OT) de los mecánicos en terreno, el inventario de
@@ -70,9 +70,17 @@ consola).
 
 ### Cuentas de demostración (deliberadas)
 
-El login del panel y de terreno tiene botones de inicio rápido con cuentas de demostración
-(`backend/scripts/usuarios-demo.js`, `comun/lib/usuarios_demo.dart`). Son conocidas por quien lea el repositorio
-y deben borrarse antes de usar datos reales. Ver [docs/DESPLIEGUE.md](docs/DESPLIEGUE.md), sección 7.
+El script `backend/scripts/usuarios-demo.js` crea (o borra) tres usuarios de demostración (administrativo,
+mecánico y cliente) y una empresa de prueba. Las contraseñas no están en el repositorio: se entregan por
+variables de entorno al crear los usuarios.
+
+```bash
+cd backend
+GOMAQ_DEMO_CLAVE_ADMINISTRATIVO=... GOMAQ_DEMO_CLAVE_MECANICO=... GOMAQ_DEMO_CLAVE_CLIENTE=...   node scripts/usuarios-demo.js crear     # mínimo 8 caracteres cada una; falla con un mensaje si falta alguna
+node scripts/usuarios-demo.js borrar
+```
+
+El login del panel y de terreno no tiene botones de inicio rápido. Ver [docs/DESPLIEGUE.md](docs/DESPLIEGUE.md), sección 7.
 
 ## Variables de entorno
 
@@ -107,9 +115,9 @@ pruebas omitidas. Estrategia y niveles en [backend/README.md](backend/README.md)
 backend/   API Express, worker de avisos, scripts de operación y pruebas (node:test)
 panel/     Flutter: panel de administrativo y gerente, portal del cliente (web y Android)
 terreno/   Flutter: app del mecánico, Android, offline-first (SQLite + cola de sincronización)
-comun/     Paquete Dart compartido: cliente HTTP, formato es_CL, cuentas de demostración
+comun/     Paquete Dart compartido: cliente HTTP, formato es_CL
 db/        schema.sql, migraciones numeradas, semilla de pruebas y datos de carga
-docs/      MANUAL_USUARIO.md (uso por rol), ARQUITECTURA.md, DESPLIEGUE.md y documentos técnicos (auditorías, plan de pruebas)
+docs/      MANUAL_USUARIO.md (uso por rol), ARQUITECTURA.md y DESPLIEGUE.md
 .github/   Workflows de CI (tests.yml, mobile.yml)
 .railway/  Infraestructura de Railway como código (railway.ts)
 Dockerfile, Dockerfile.worker   Imágenes de gomaq-app (API + panel) y de gomaq-worker
@@ -128,8 +136,6 @@ aplican al arrancar. Detalle, variables y operación en [docs/DESPLIEGUE.md](doc
 - [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md): diseño, roles, flujo de la OT, horómetro, costo por equipo, stock del furgón, cola offline, avisos.
 - [docs/DESPLIEGUE.md](docs/DESPLIEGUE.md): Railway, variables, migraciones, worker, APK, operación.
 - [backend/README.md](backend/README.md), [panel/README.md](panel/README.md), [terreno/README.md](terreno/README.md), [comun/README.md](comun/README.md), [db/README.md](db/README.md).
-- [docs/tecnica/PLAN_ARQUITECTURA_FRONTEND.md](docs/tecnica/PLAN_ARQUITECTURA_FRONTEND.md), [docs/tecnica/PLAN_PRUEBAS_E2E.md](docs/tecnica/PLAN_PRUEBAS_E2E.md).
-- Auditorías: [general](docs/tecnica/AUDITORIA.md), [seguridad y concurrencia](docs/tecnica/AUDITORIA_SEGURIDAD_CONCURRENCIA.md), [accesibilidad](docs/tecnica/AUDITORIA_ACCESIBILIDAD.md).
 
 ## Licencia
 

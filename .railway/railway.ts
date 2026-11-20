@@ -1,7 +1,7 @@
 import { defineRailway, github, postgres, preserve, project, service, volume } from "railway/iac";
 
 export default defineRailway(() => {
-  const gomaq = github("Dmarcan/gomaq", { checkSuites: true });
+  const gomaq = github("Dmarcan/gomaq-app", { checkSuites: true });
 
   const Postgres = postgres("Postgres", { region: "us-east4-eqdc4a" });
   Postgres.networking = { privateNetworkEndpoint: "postgres" };

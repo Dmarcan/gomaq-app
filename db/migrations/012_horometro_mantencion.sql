@@ -1,5 +1,5 @@
 -- Migracion 012: horometro por equipo y mantencion preventiva
--- (entrevista el jefe de taller/la administrativa del 20-21 julio 2026, punto 6: hoy el horometro se lleva a mano
+-- (entrevista con la empresa del 20-21 julio 2026, punto 6: hoy el horometro se lleva a mano
 -- en Excel por grua, cliente y mes, para calcular cuando toca la preventiva de las 350 h)
 
 CREATE TYPE origen_lectura_horometro AS ENUM ('movil', 'panel', 'guia');
@@ -12,7 +12,7 @@ CREATE TABLE lecturas_horometro (
     -- o la deteccion automatica del PDF de la guia de entrega (trae "HOROMETRO: 1156")
     origen origen_lectura_horometro NOT NULL,
     -- snapshot del cliente que tenia el equipo cuando se tomo la lectura. Permite el historial
-    -- "donde estuvo y cuanto se uso en cada lugar" que pidio el jefe de taller, sin depender de
+    -- "donde estuvo y cuanto se uso en cada lugar" que pidio la empresa, sin depender de
     -- maquinarias.cliente_id, que se pone en NULL al recibir el equipo de vuelta
     cliente_id INTEGER REFERENCES clientes(id),
     orden_trabajo_id INTEGER REFERENCES ordenes_trabajo(id),
@@ -25,7 +25,7 @@ CREATE TABLE lecturas_horometro (
 
 CREATE INDEX idx_lecturas_horometro_maquinaria ON lecturas_horometro(maquinaria_id, fecha DESC);
 
--- 350 h es el intervalo que GOMAQ usa hoy para toda la flota (entrevista el jefe de taller, punto 4).
+-- 350 h es el intervalo que GOMAQ usa hoy para toda la flota (entrevista con la empresa, punto 4).
 -- Se guarda por equipo y no como constante para poder ajustarlo a uno solo sin migrar.
 ALTER TABLE maquinarias ADD COLUMN intervalo_mantencion_horas NUMERIC(10,1) NOT NULL DEFAULT 350;
 

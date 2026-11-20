@@ -3,4 +3,3 @@ library;
 
 export 'cliente_api.dart';
 export 'formato.dart';
-export 'usuarios_demo.dart';

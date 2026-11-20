@@ -1,6 +1,6 @@
 -- Migracion 028: el ultimo dia de un arriendo se decide con la hora de corte, guardado en la guia.
 --
--- Regla (David, 5 de noviembre de 2026): el equipo que sale del cliente (recepcion, o despacho del
+-- Regla (del dueño del proyecto, 5 de noviembre de 2026): el equipo que sale del cliente (recepcion, o despacho del
 -- mismo equipo a otro cliente) cobra ese dia solo si sale desde la hora de corte (hora_corte_despacho,
 -- 13 por defecto); si sale antes, el ultimo dia cobrado es el anterior. Es la contraparte de la regla
 -- del despacho, de modo que el dia de un cambio de cliente se cobra a uno solo. La opcion

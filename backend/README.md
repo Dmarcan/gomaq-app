@@ -67,7 +67,7 @@ Cada uno documenta su uso en el encabezado. En Railway se corren dentro del cont
 | `create-user.js` | Crea un usuario; la contraseña se pide por consola |
 | `cargar_clientes.js`, `cargar_equipos.js` | Cargas iniciales de clientes y equipos desde `db/datos/` (`--simular` no guarda) |
 | `cargar_demo.js` | Datos de demostración marcados `[DEMO]` (`--borrar` los quita) |
-| `usuarios-demo.js` | `crear` o `borrar` las cuentas de demostración |
+| `usuarios-demo.js` | `crear` (claves por variables `GOMAQ_DEMO_CLAVE_*`) o `borrar` las cuentas de demostración |
 | `retencion.js` | Borra datos personales vencidos (simulación salvo `--ejecutar`) |
 | `probar_migraciones_con_datos.js` | Prueba migraciones sobre una base con filas (CI) |
 

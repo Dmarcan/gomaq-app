@@ -14,7 +14,7 @@ CREATE TYPE tipo_servicio_ot AS ENUM (
 -- Lo marca el mecanico en terreno, que es quien sabe de que se trato la visita.
 ALTER TABLE ordenes_trabajo ADD COLUMN tipo_servicio tipo_servicio_ot;
 
--- El papel separa "OBSERVACIONES INICIALES" de "OBSERVACIONES FINALES" (entrevista el jefe de taller,
+-- El papel separa "OBSERVACIONES INICIALES" de "OBSERVACIONES FINALES" (entrevista con la empresa,
 -- punto 5). La columna `diagnostico` que ya existe es la inicial - se conserva con ese
 -- significado porque el portal del cliente y el panel ya la leen - y esta es la final.
 ALTER TABLE ordenes_trabajo ADD COLUMN observacion_final TEXT;
@@ -102,7 +102,7 @@ CREATE INDEX idx_tramos_trabajo_orden ON tramos_trabajo(orden_trabajo_id, inicio
 -- ---------------------------------------------------------------------------
 CREATE TYPE estado_facturable_linea AS ENUM ('si', 'no', 'pendiente');
 
--- El papel tiene tres casillas por linea (SI / NO / ?). El '?' es el caso que describio el jefe de taller:
+-- El papel tiene tres casillas por linea (SI / NO / ?). El '?' es el caso que describio la empresa:
 -- clientes antiguos donde se decide despues si se cobra o no. Nace en 'pendiente' para que esa
 -- decision sea explicita y no un olvido.
 ALTER TABLE movimientos_insumo

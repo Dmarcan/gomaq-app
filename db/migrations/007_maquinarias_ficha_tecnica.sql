@@ -1,6 +1,6 @@
 -- Migracion 007: ficha tecnica de maquinarias (foto, marca/modelo, numeros de identificacion, categoria)
 -- GOMAQ maneja hoy 3 categorias de equipo: grua horquilla, alzahombre y transpaleta electrica,
--- cada una con distintos datos de identificacion relevantes (entrevista la administrativa + practica de la industria:
+-- cada una con distintos datos de identificacion relevantes (entrevista con la empresa + practica de la industria:
 -- la factura de compra siempre trae marca/modelo/anio/combustible/N. chasis/N. motor para sacar la patente;
 -- el mastil de una grua horquilla se cambia aparte y tiene su propio N. de serie; las plataformas se
 -- identifican por altura maxima de trabajo, no por capacidad de carga)

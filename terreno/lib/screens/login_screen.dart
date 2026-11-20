@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart' show TextInput;
-import 'package:gomaq_comun/gomaq_comun.dart'
-    show UsuarioDemo, usuarioDemoMecanico;
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
 import '../services/api_client.dart';
@@ -48,14 +46,6 @@ class _LoginScreenState extends State<LoginScreen> {
     } finally {
       if (mounted) setState(() => _cargando = false);
     }
-  }
-
-  // Inicio rapido de pruebas: rellena las credenciales del mecanico demo y entra. Ver
-  // comun/lib/usuarios_demo.dart (quitar antes de usar el sistema con datos reales).
-  Future<void> _inicioRapido(UsuarioDemo usuario) {
-    _emailCtrl.text = usuario.email;
-    _passwordCtrl.text = usuario.clave;
-    return _iniciarSesion();
   }
 
   @override
@@ -182,21 +172,6 @@ class _LoginScreenState extends State<LoginScreen> {
                               ),
                             )
                           : const Text('Ingresar'),
-                    ),
-                  ),
-                  const Divider(height: 32),
-                  Text(
-                    'Inicio rápido (solo pruebas)',
-                    style: TextStyle(fontSize: 12, color: Colors.grey.shade700),
-                  ),
-                  const SizedBox(height: 8),
-                  SizedBox(
-                    width: double.infinity,
-                    child: OutlinedButton(
-                      onPressed: _cargando
-                          ? null
-                          : () => _inicioRapido(usuarioDemoMecanico),
-                      child: Text(usuarioDemoMecanico.rotulo),
                     ),
                   ),
                 ],

@@ -55,4 +55,3 @@ web/                         index.html, manifest y service worker de push
 - El APK release se firma con la llave de `android/key.properties` si existe (plantilla: `android/key.properties.example`;
   la llave la genera quien publica y no se sube al repo); sin ese archivo usa la clave de depuración, válida solo
   para instalar a mano. Detalle en [../docs/DESPLIEGUE.md](../docs/DESPLIEGUE.md), sección 6.
-- Decisiones de arquitectura: [../docs/tecnica/PLAN_ARQUITECTURA_FRONTEND.md](../docs/tecnica/PLAN_ARQUITECTURA_FRONTEND.md).

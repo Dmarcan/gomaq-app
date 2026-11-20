@@ -1,24 +1,39 @@
-// Crea o borra los usuarios de prueba que usan los botones de inicio rapido del panel y de terreno.
+// Crea o borra usuarios de demostracion (administrativo, mecanico y cliente) para probar el sistema.
 //
 //   node scripts/usuarios-demo.js crear
 //   node scripts/usuarios-demo.js borrar
 //
-// SOLO PARA PRUEBAS: las credenciales estan en el repositorio. Las mismas viven en
-// comun/lib/usuarios_demo.dart; si se cambian, cambiarlas en los dos lados. Es idempotente:
-// `crear` repetido deja las contrasenas al dia sin duplicar. `borrar` elimina los tres usuarios y
-// la empresa de prueba (falla si la empresa ya tiene datos asociados, para no borrar nada real).
+// Las contrasenas NO estan en el repositorio: se leen de variables de entorno (minimo 8 caracteres)
+//   GOMAQ_DEMO_CLAVE_ADMINISTRATIVO, GOMAQ_DEMO_CLAVE_MECANICO, GOMAQ_DEMO_CLAVE_CLIENTE
+// `crear` las exige; `borrar` no las necesita. Es idempotente: `crear` repetido deja las
+// contrasenas al dia sin duplicar. `borrar` elimina los tres usuarios y la empresa de prueba
+// (falla si la empresa ya tiene datos asociados, para no borrar nada real).
 require('dotenv').config();
 const bcrypt = require('bcryptjs');
 const pool = require('../src/config/db');
 
 const EMPRESA_DEMO = 'Empresa Demo GOMAQ';
 const USUARIOS = [
-    { nombre: 'Usuario Demo Administrativo', email: 'demo.admin@gomaq.demo', rol: 'administrativo', clave: 'clave-demo-retirada' },
-    { nombre: 'Usuario Demo Mecánico', email: 'demo.mecanico@gomaq.demo', rol: 'mecanico', clave: 'clave-demo-retirada' },
-    { nombre: 'Usuario Demo Cliente', email: 'demo.cliente@gomaq.demo', rol: 'cliente', clave: 'clave-demo-retirada' },
+    { nombre: 'Usuario Demo Administrativo', email: 'demo.admin@gomaq.demo', rol: 'administrativo', variable: 'GOMAQ_DEMO_CLAVE_ADMINISTRATIVO' },
+    { nombre: 'Usuario Demo Mecánico', email: 'demo.mecanico@gomaq.demo', rol: 'mecanico', variable: 'GOMAQ_DEMO_CLAVE_MECANICO' },
+    { nombre: 'Usuario Demo Cliente', email: 'demo.cliente@gomaq.demo', rol: 'cliente', variable: 'GOMAQ_DEMO_CLAVE_CLIENTE' },
 ];
 
+// Lee las claves del entorno; falla con un mensaje claro si falta alguna o es demasiado corta.
+function leerClaves(env = process.env) {
+    const faltan = USUARIOS.filter((u) => !env[u.variable]).map((u) => u.variable);
+    if (faltan.length) {
+        throw new Error(`Faltan variables de entorno con las contrasenas demo: ${faltan.join(', ')}`);
+    }
+    const cortas = USUARIOS.filter((u) => env[u.variable].length < 8).map((u) => u.variable);
+    if (cortas.length) {
+        throw new Error(`Las contrasenas demo deben tener al menos 8 caracteres: ${cortas.join(', ')}`);
+    }
+    return Object.fromEntries(USUARIOS.map((u) => [u.email, env[u.variable]]));
+}
+
 async function crear() {
+    const claves = leerClaves();
     let empresa = (await pool.query('SELECT id FROM clientes WHERE nombre = $1', [EMPRESA_DEMO])).rows[0];
     if (!empresa) {
         empresa = (await pool.query(
@@ -27,7 +42,7 @@ async function crear() {
         )).rows[0];
     }
     for (const u of USUARIOS) {
-        const hash = await bcrypt.hash(u.clave, 10);
+        const hash = await bcrypt.hash(claves[u.email], 10);
         const clienteId = u.rol === 'cliente' ? empresa.id : null;
         await pool.query(
             `INSERT INTO usuarios (nombre, email, password_hash, rol, cliente_id)
@@ -88,4 +103,4 @@ async function main() {
 
 if (require.main === module) main();
 
-module.exports = { USUARIOS };
+module.exports = { USUARIOS, leerClaves };

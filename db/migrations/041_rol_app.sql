@@ -7,8 +7,8 @@
 --     migracion 020 queda reforzado, la via de purga ya no sirve con este rol);
 --   * solo lectura en `schema_migraciones`.
 --
--- Esta migracion NO cambia nada que ya funcione: crea el rol sin login. David le pone la clave y
--- cambia la variable DATABASE_URL de `gomaq-app` y `gomaq-worker` cuando quiera (ver ESTADO.md);
+-- Esta migracion NO cambia nada que ya funcione: crea el rol sin login. El administrador le pone la clave y
+-- cambia la variable DATABASE_URL de `gomaq-app` y `gomaq-worker` cuando quiera;
 -- las migraciones y los scripts de carga o borrado siguen usando el dueno por DATABASE_URL_MIGRACION.
 DO $$
 BEGIN
