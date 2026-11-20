@@ -109,7 +109,7 @@ panel/     Flutter: panel de administrativo y gerente, portal del cliente (web y
 terreno/   Flutter: app del mecánico, Android, offline-first (SQLite + cola de sincronización)
 comun/     Paquete Dart compartido: cliente HTTP, formato es_CL, cuentas de demostración
 db/        schema.sql, migraciones numeradas, semilla de pruebas y datos de carga
-docs/      ARQUITECTURA.md, DESPLIEGUE.md y documentos técnicos (auditorías, plan de pruebas)
+docs/      MANUAL_USUARIO.md (uso por rol), ARQUITECTURA.md, DESPLIEGUE.md y documentos técnicos (auditorías, plan de pruebas)
 .github/   Workflows de CI (tests.yml, mobile.yml)
 .railway/  Infraestructura de Railway como código (railway.ts)
 Dockerfile, Dockerfile.worker   Imágenes de gomaq-app (API + panel) y de gomaq-worker
