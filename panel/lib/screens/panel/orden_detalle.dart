@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:file_picker/file_picker.dart';
 import 'package:go_router/go_router.dart';
 import 'package:provider/provider.dart';
 import '../../services/api_client.dart';
@@ -10,6 +9,7 @@ import '../../utils/formato.dart';
 import '../../utils/historial_ot.dart';
 import '../../utils/motivo_cambio.dart';
 import '../../utils/numeros.dart';
+import '../../utils/selector_pdf.dart';
 import '../../utils/unidades.dart';
 import '../../services/auth_service.dart';
 import '../../theme/gomaq_theme.dart';
@@ -466,9 +466,8 @@ class DetalleOrdenState extends State<DetalleOrden> {
       setState(() => _errorFolio = 'Escribe el folio de la factura.');
       return;
     }
-    final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
-    if (resultado == null || resultado.files.single.bytes == null) return;
-    final archivo = resultado.files.single;
+    final archivo = await elegirPdf();
+    if (archivo == null) return;
 
     setState(() => _cargandoAccion = true);
     try {

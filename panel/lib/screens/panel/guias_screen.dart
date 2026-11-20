@@ -8,13 +8,13 @@ import '../../utils/efecto_guia.dart';
 import '../../utils/enlaces.dart';
 import '../../utils/formato.dart';
 import '../../utils/motivo_cambio.dart' show nuevoUuid;
+import '../../utils/selector_pdf.dart';
 import '../../widgets/confirmar_horometro.dart';
 import '../../widgets/estado_vacio.dart';
 import '../../widgets/selector_dia_arriendo.dart';
 import '../../widgets/zona_arrastre_pdf.dart';
 
 /// Mismo tope que aplica el backend (middleware/upload.js).
-const _maxArchivoBytes = 10 * 1024 * 1024;
 
 class GuiasScreen extends StatefulWidget {
   const GuiasScreen({super.key});
@@ -190,16 +190,16 @@ class _GuiasScreenState extends State<GuiasScreen> {
   }
 
   Future<void> _elegirArchivo() async {
-    final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
-    if (resultado == null || resultado.files.single.bytes == null) return;
-    await _recibirArchivo(resultado.files.single);
+    final archivo = await elegirPdf();
+    if (archivo == null) return;
+    await _recibirArchivo(archivo);
   }
 
   /// Camino comun del clic (selector) y del arrastre: valida el tamano y arma la guia.
   Future<void> _recibirArchivo(PlatformFile archivo) async {
     if (archivo.bytes == null) return;
     // el backend rechaza sobre 10 MB; avisar aca evita subir el archivo entero para nada
-    if (archivo.bytes!.length > _maxArchivoBytes) {
+    if (archivo.bytes!.length > maxBytesPdf) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('El PDF supera los 10 MB')),
@@ -308,9 +308,9 @@ class _GuiasScreenState extends State<GuiasScreen> {
   }
 
   Future<void> _adjuntarDocumento(Map<String, dynamic> guia) async {
-    final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
-    if (resultado == null || resultado.files.single.bytes == null) return;
-    if (resultado.files.single.bytes!.length > _maxArchivoBytes) {
+    final archivo = await elegirPdf();
+    if (archivo == null) return;
+    if (archivo.bytes!.length > maxBytesPdf) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('El PDF supera los 10 MB')));
       return;
@@ -318,8 +318,8 @@ class _GuiasScreenState extends State<GuiasScreen> {
     try {
       await ApiClient.instance.postMultipart(
         '/api/maquinarias/guias/${guia['id']}/archivo',
-        bytes: resultado.files.single.bytes!,
-        filename: resultado.files.single.name,
+        bytes: archivo.bytes!,
+        filename: archivo.name,
       );
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Documento adjuntado')));

@@ -8,6 +8,7 @@ import '../../theme/gomaq_theme.dart';
 import '../../utils/cobranza.dart';
 import '../../utils/envio_factura.dart';
 import '../../utils/numeros.dart';
+import '../../utils/selector_pdf.dart';
 import '../../utils/formato.dart';
 import '../../widgets/campo_fecha_opcional.dart';
 import '../../widgets/dialogos.dart';
@@ -367,8 +368,7 @@ class _FacturaPendienteDialogState extends State<FacturaPendienteDialog> {
     if (widget.elegirArchivo != null) {
       archivo = await widget.elegirArchivo!();
     } else {
-      final resultado = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['pdf'], withData: true);
-      archivo = resultado?.files.single;
+      archivo = await elegirPdf();
     }
     if (archivo == null) return;
     await _recibirArchivo(archivo);
