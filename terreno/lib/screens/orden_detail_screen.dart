@@ -12,8 +12,8 @@ import '../services/connectivity_service.dart';
 import '../services/posicion_service.dart';
 import '../services/sync_service.dart';
 import '../theme/gomaq_theme.dart';
-import '../widgets/estado_chip.dart';
-import '../widgets/foto_del_cliente.dart';
+import '../widgets/cabecera_orden.dart';
+import '../widgets/secciones_orden.dart';
 import '../widgets/foto_thumbnail.dart';
 import '../utils/accion_unica.dart';
 import '../utils/datos_finales.dart';
@@ -26,7 +26,6 @@ import '../widgets/seccion_bloqueada.dart';
 import '../widgets/selector_equipo.dart';
 import '../widgets/sync_banner.dart' show SyncBanner;
 import 'cerrar_orden_screen.dart';
-import 'maquinaria_historial_screen.dart';
 
 class OrdenDetailScreen extends StatefulWidget {
   final int ordenId;
@@ -801,121 +800,6 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
     _intentarSincronizarAhora();
   }
 
-  /// `completa`: true = listo (verde), false = falta completarlo (amarillo), null = sin estado
-  /// (seccion opcional o la orden ya esta cerrada). Ademas del color lleva texto e icono, para
-  /// que no dependa solo del color.
-  Widget _tituloSeccion(IconData icono, String texto, {bool? completa}) {
-    return Row(
-      children: [
-        Icon(icono, size: 18, color: GomaqColors.primario),
-        const SizedBox(width: 8),
-        Expanded(child: Text(texto, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
-        if (completa != null) ...[
-          Icon(
-            completa ? Icons.check_circle : Icons.pending_outlined,
-            size: 16,
-            color: completa ? GomaqColors.estadoPositivo : GomaqColors.estadoAdvertencia,
-          ),
-          const SizedBox(width: 4),
-          Text(
-            completa ? 'Listo' : 'Falta',
-            style: TextStyle(
-              fontSize: 12,
-              fontWeight: FontWeight.w600,
-              color: completa ? GomaqColors.estadoPositivo : GomaqColors.estadoAdvertencia,
-            ),
-          ),
-        ],
-      ],
-    );
-  }
-
-  /// Tarjeta de seccion que se tine segun este completa (verde) o falte (amarillo).
-  Widget _tarjeta({required Widget child, bool? completa}) {
-    if (completa == null) return Card(child: child);
-    final color = completa ? GomaqColors.estadoPositivo : GomaqColors.estadoAdvertencia;
-    return Card(
-      color: color.withValues(alpha: 0.08),
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(12),
-        side: BorderSide(color: color.withValues(alpha: 0.6)),
-      ),
-      child: child,
-    );
-  }
-
-  Widget _cabecera(OrdenTrabajo orden) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                EstadoChip(estado: orden.estado),
-                Text(
-                  etiquetaOt(orden.id),
-                  style: const TextStyle(color: GomaqColors.textoSecundario, fontSize: 12),
-                ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    orden.maquinariaCodigo ?? 'Sin código',
-                    style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
-                  ),
-                ),
-                TextButton.icon(
-                  onPressed: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => MaquinariaHistorialScreen(
-                        maquinariaId: orden.maquinariaId,
-                        codigo: orden.maquinariaCodigo ?? '',
-                      ),
-                    ),
-                  ),
-                  icon: const Icon(Icons.history, size: 16),
-                  label: const Text('Historial', style: TextStyle(fontSize: 12)),
-                ),
-              ],
-            ),
-            if (orden.motivo != null && orden.motivo!.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(orden.motivo!, style: const TextStyle(color: GomaqColors.textoSecundario, fontSize: 13)),
-            ],
-            FotoDelCliente(ordenId: orden.id),
-            if (orden.clienteNombre != null) ...[
-              const SizedBox(height: 8),
-              Text.rich(
-                TextSpan(
-                  style: const TextStyle(fontSize: 13),
-                  children: [
-                    const TextSpan(text: 'Cliente: ', style: TextStyle(color: GomaqColors.textoSecundario)),
-                    TextSpan(text: orden.clienteNombre!),
-                  ],
-                ),
-              ),
-            ],
-            if (orden.estado != 'finalizada') ...[
-              const SizedBox(height: 10),
-              OutlinedButton.icon(
-                onPressed: _registrarHorometro,
-                icon: const Icon(Icons.speed, size: 18),
-                label: const Text('Agregar lectura de horómetro'),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _seccionFotos({
     required String tipo,
     required String titulo,
@@ -927,14 +811,14 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
     final completa = puedeAgregar
         ? (tipo == 'despues' ? fotos.length >= ReglasNegocio.minFotosDespues : fotos.isNotEmpty)
         : null;
-    return _tarjeta(
+    return TarjetaSeccion(
       completa: completa,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion(Icons.photo_camera_outlined, titulo, completa: completa),
+            TituloSeccion(Icons.photo_camera_outlined, titulo, completa: completa),
             if (ayuda != null) ...[
               const SizedBox(height: 4),
               Text(ayuda, style: const TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
@@ -983,14 +867,14 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
   /// Observaciones INICIALES del talonario: que se encontro al llegar. Va arriba, antes de intervenir.
   Widget _seccionObservacionesIniciales({required bool soloLectura}) {
     final completa = soloLectura ? null : (_orden?.diagnostico ?? '').trim().isNotEmpty;
-    return _tarjeta(
+    return TarjetaSeccion(
       completa: completa,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion(Icons.build_outlined, 'Observaciones iniciales', completa: completa),
+            TituloSeccion(Icons.build_outlined, 'Observaciones iniciales', completa: completa),
             const SizedBox(height: 4),
             const Text('Qué se encontró al llegar',
                 style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
@@ -1047,13 +931,13 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
   }
 
   Widget _seccionObservacionesFinales({required bool soloLectura}) {
-    return _tarjeta(
+    return TarjetaSeccion(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion(Icons.fact_check_outlined, 'Observaciones finales'),
+            TituloSeccion(Icons.fact_check_outlined, 'Observaciones finales'),
             const SizedBox(height: 4),
             const Text('Qué se hizo', style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario)),
             const SizedBox(height: 8),
@@ -1099,14 +983,14 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
     // opcional: sin repuestos la orden no se cobra, y eso es valido. Solo se marca cuando ya hay.
     final hayRepuestos = _insumosLocales.any((l) => l['anulada'] != 1);
     final bool? completa = soloLectura ? null : (hayRepuestos ? true : null);
-    return _tarjeta(
+    return TarjetaSeccion(
       completa: completa,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion(Icons.inventory_2_outlined, 'Repuestos utilizados', completa: completa),
+            TituloSeccion(Icons.inventory_2_outlined, 'Repuestos utilizados', completa: completa),
             const SizedBox(height: 4),
             if (!soloLectura) ...[
               const Text(
@@ -1321,14 +1205,14 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
 
   Widget _seccionTipoServicio({required bool soloLectura}) {
     final completa = soloLectura ? null : _tipoServicio != null;
-    return _tarjeta(
+    return TarjetaSeccion(
       completa: completa,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion(Icons.assignment_outlined, 'Tipo de servicio', completa: completa),
+            TituloSeccion(Icons.assignment_outlined, 'Tipo de servicio', completa: completa),
             const SizedBox(height: 8),
             Wrap(
               spacing: 8,
@@ -1371,14 +1255,14 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
       grupos.putIfAbsent(item['grupo'] as String, () => []).add(item);
     }
     final completa = soloLectura ? null : _serviciosMarcados.isNotEmpty;
-    return _tarjeta(
+    return TarjetaSeccion(
       completa: completa,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion(Icons.checklist_outlined, 'Sistemas intervenidos', completa: completa),
+            TituloSeccion(Icons.checklist_outlined, 'Sistemas intervenidos', completa: completa),
             const Text(
               'Marca dónde se intervino en esta visita',
               style: TextStyle(fontSize: 12, color: GomaqColors.textoSecundario),
@@ -1435,14 +1319,14 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
   Widget _seccionTramos({required bool soloLectura}) {
     final abierto = _tramosLocales.where((t) => t['termino'] == null).toList();
     final completa = soloLectura ? null : _tramosLocales.isNotEmpty;
-    return _tarjeta(
+    return TarjetaSeccion(
       completa: completa,
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            _tituloSeccion(Icons.schedule_outlined, 'Tiempos de trabajo', completa: completa),
+            TituloSeccion(Icons.schedule_outlined, 'Tiempos de trabajo', completa: completa),
             const SizedBox(height: 8),
             if (_tramosLocales.isEmpty)
               const Text('Sin tramos registrados', style: TextStyle(color: GomaqColors.textoSecundario)),
@@ -1667,7 +1551,7 @@ class _OrdenDetailScreenState extends State<OrdenDetailScreen> with WidgetsBindi
       body: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          _cabecera(orden),
+          CabeceraOrden(orden: orden, alRegistrarHorometro: _registrarHorometro),
 
           // en el lugar pero sin empezar a reparar: el paso que sigue va arriba, a la vista
           if (orden.estado == 'en_terreno') _tarjetaPasarAReparacion(),
